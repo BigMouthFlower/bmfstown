@@ -757,22 +757,24 @@ public class Resident extends PathfinderMob {
         if (zone == null) {
             return; // 没绑城镇或城镇没有就餐区——安静放弃，下轮再查
         }
-        Town town = boundTown();
-        List<TownZone> allZones = town == null
-                ? List.of()
-                : town.zones(com.bmf.bmfstown.town.TownWandMode.DINING);
-        LOGGER.info("[BmfTown][觅食] 城镇共有 {} 个就餐区：{}",
-                allZones.size(),
-                allZones.stream()
-                        .map(z -> z.min().toShortString() + "~" + z.max().toShortString())
-                        .collect(java.util.stream.Collectors.joining("、")));
+        if (LOGGER.isDebugEnabled()) {
+            Town town = boundTown();
+            List<TownZone> allZones = town == null
+                    ? List.of()
+                    : town.zones(com.bmf.bmfstown.town.TownWandMode.DINING);
+            LOGGER.debug("[BmfTown][觅食] 城镇共有 {} 个就餐区：{}",
+                    allZones.size(),
+                    allZones.stream()
+                            .map(z -> z.min().toShortString() + "~" + z.max().toShortString())
+                            .collect(java.util.stream.Collectors.joining("、")));
+        }
         this.beginForaging();
         if (zone.contains(this.blockPosition())) {
             // 人已经在就餐区里：直接扫箱
             this.scanForChest(zone);
         } else {
             this.navigateToZone(zone);
-            LOGGER.info("[BmfTown][觅食] {} 出发去就餐区 ({})~({})",
+            LOGGER.debug("[BmfTown][觅食] {} 出发去就餐区 ({})~({})",
                     this.getName().getString(), zone.min().toShortString(),
                     zone.max().toShortString());
         }
@@ -898,21 +900,25 @@ public class Resident extends PathfinderMob {
             }
             containers++;
             if (!containerHasFood(container)) {
-                // 排障：把容器里的东西逐格报出来，看是"真的没食物"还是"食物判定没认出来"
-                StringBuilder contents = new StringBuilder();
-                for (int i = 0; i < container.getContainerSize(); i++) {
-                    ItemStack st = container.getItem(i);
-                    if (!st.isEmpty()) {
-                        if (contents.length() > 0) {
-                            contents.append(", ");
+                // 排障：把容器里的东西逐格报出来，看是"真的没食物"还是"食物判定没认出来"。
+                // 注意用 isDebugEnabled 包住：LOGGER.debug 的参数会先求值，
+                // 不加判断的话即使关日志也照样遍历整个容器，白耗性能。
+                if (LOGGER.isDebugEnabled()) {
+                    StringBuilder contents = new StringBuilder();
+                    for (int i = 0; i < container.getContainerSize(); i++) {
+                        ItemStack st = container.getItem(i);
+                        if (!st.isEmpty()) {
+                            if (contents.length() > 0) {
+                                contents.append(", ");
+                            }
+                            contents.append(BuiltInRegistries.ITEM.getKey(st.getItem()))
+                                    .append("x").append(st.getCount());
                         }
-                        contents.append(BuiltInRegistries.ITEM.getKey(st.getItem()))
-                                .append("x").append(st.getCount());
                     }
+                    LOGGER.debug("[BmfTown][觅食] {} 扫到容器 {}，内容物=[{}]，均无食物组件",
+                            this.getName().getString(), pos.immutable().toShortString(),
+                            contents.length() == 0 ? "空" : contents);
                 }
-                LOGGER.info("[BmfTown][觅食] {} 扫到容器 {}，内容物=[{}]，均无食物组件",
-                        this.getName().getString(), pos.immutable().toShortString(),
-                        contents.length() == 0 ? "空" : contents);
                 continue;
             }
             double d = pos.distSqr(this.blockPosition());
@@ -922,7 +928,7 @@ public class Resident extends PathfinderMob {
             }
         }
         if (best == null) {
-            LOGGER.info("[BmfTown][觅食] {} 扫描就餐区 ({})~({}) 完成：容器 {} 个，均无食物或无容器",
+            LOGGER.debug("[BmfTown][觅食] {} 扫描就餐区 ({})~({}) 完成：容器 {} 个，均无食物或无容器",
                     this.getName().getString(), zone.min().toShortString(),
                     zone.max().toShortString(), containers);
             this.giveUpForaging("就餐区里没有带食物的容器");
@@ -933,7 +939,7 @@ public class Resident extends PathfinderMob {
         this.forageRepicks = 0;
         this.getNavigation().moveTo(
                 best.getX() + 0.5D, best.getY(), best.getZ() + 0.5D, Config.STROLL_SPEED.get());
-        LOGGER.info("[BmfTown][觅食] {} 锁定食物容器 {}",
+        LOGGER.debug("[BmfTown][觅食] {} 锁定食物容器 {}",
                 this.getName().getString(), best.toShortString());
     }
 
@@ -987,7 +993,7 @@ public class Resident extends PathfinderMob {
             this.giveUpForaging(reason);
             return;
         }
-        LOGGER.info("[BmfTown][觅食] {} 导航未达（{}），第 {} 次重推",
+        LOGGER.debug("[BmfTown][觅食] {} 导航未达（{}），第 {} 次重推",
                 this.getName().getString(), reason, this.forageRepicks);
         repath.run();
     }
