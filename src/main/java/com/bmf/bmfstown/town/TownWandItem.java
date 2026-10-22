@@ -3,6 +3,7 @@ package com.bmf.bmfstown.town;
 import com.bmf.bmfstown.ModDataComponents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -58,10 +59,13 @@ public class TownWandItem extends Item {
         ItemStack stack = context.getItemInHand();
         BlockPos pos = context.getClickedPos();
 
-        // 潜行 + 右键 = 确认创建
+        // 潜行 + 右键 = 确认创建。
+        // 注意这只是"兜底路径"：正常流程由客户端判定潜行后发
+        // WandConfirmPayload（见 TownWandClient），因为服务端读潜行状态
+        // 会与使用包竞速——潜行比点击晚到一瞬时，确认就被当成选点了。
         if (player.isShiftKeyDown()) {
-            if (!level.isClientSide) {
-                handleConfirm(player, stack);
+            if (!level.isClientSide && player instanceof net.minecraft.server.level.ServerPlayer sp) {
+                confirm(sp);
             }
             return InteractionResult.SUCCESS;
         }
@@ -86,8 +90,12 @@ public class TownWandItem extends Item {
                         "msg.bmfstown.wand.point_same"), true);
             } else {
                 stack.set(ModDataComponents.WAND_POINT_B.get(), pos.immutable());
+                // 选完立刻报尺寸：哪个轴是 1 一眼看出（薄片选区是床扫不到的头号原因）
+                String size = (Math.abs(pos.getX() - a.getX()) + 1) + "x"
+                        + (Math.abs(pos.getY() - a.getY()) + 1) + "x"
+                        + (Math.abs(pos.getZ() - a.getZ()) + 1);
                 player.displayClientMessage(Component.translatable(
-                        "msg.bmfstown.wand.point2", modeDisplay(mode), fmt(pos)), true);
+                        "msg.bmfstown.wand.point2", modeDisplay(mode), fmt(pos), size), true);
             }
         } else {
             // 两点已齐：不覆盖（防手滑），提示玩家想重选就切走魔杖再回来
@@ -98,29 +106,39 @@ public class TownWandItem extends Item {
     }
 
     /**
-     * 确认创建（潜行 + 右键）。
+     * 确认创建（服务端执行）。
      *
      * <p>校验与存档都在 {@link TownManager}：城镇模式 → 画新城镇（不能与
      * 已有城镇重叠）；子区域模式 → 选区必须完整落在某城镇内。
      * 成功后清空选点并给客户端推手册数据（自动打开手册，可视化确认）。
+     *
+     * <p>两个点都没选时静默返回——按住右键会连发确认包，
+     * 创建成功后的后续包不该刷"请先选点"。
      */
-    private void handleConfirm(Player player, ItemStack stack) {
+    public static void confirm(ServerPlayer player) {
+        ItemStack stack = player.getMainHandItem();
+        if (!(stack.getItem() instanceof TownWandItem)) {
+            return; // 确认包到达时魔杖可能已切走
+        }
         BlockPos a = stack.get(ModDataComponents.WAND_POINT_A.get());
         BlockPos b = stack.get(ModDataComponents.WAND_POINT_B.get());
+        if (a == null && b == null) {
+            return;
+        }
         if (a == null || b == null) {
             player.displayClientMessage(Component.translatable(
                     "msg.bmfstown.wand.need_points"), true);
             return;
         }
-        if (!(player instanceof net.minecraft.server.level.ServerPlayer serverPlayer)) {
-            return; // 理论到不了这里（useOn 只在服务端调），保险起见
-        }
 
         TownWandMode mode = getMode(stack);
+        com.bmf.bmfstown.BmfTown.LOGGER.info(
+                "[BmfTown][确认] 模式 = {}，第1点 = {}，第2点 = {}",
+                mode, a.toShortString(), b.toShortString());
         if (mode == TownWandMode.TOWN) {
-            TownManager.tryCreateTown(serverPlayer, a, b);
+            TownManager.tryCreateTown(player, a, b);
         } else {
-            TownManager.tryCreateZone(serverPlayer, mode, a, b);
+            TownManager.tryCreateZone(player, mode, a, b);
         }
 
         // 无论成功与否都清选点：失败（重叠/越界）也让玩家重新选，
@@ -166,7 +184,7 @@ public class TownWandItem extends Item {
     }
 
     /** 模式的本地化名（lang 文件），玩家可见文本一律走这里。 */
-    private static Component modeDisplay(TownWandMode mode) {
+    public static Component modeDisplay(TownWandMode mode) {
         return Component.translatable(mode.displayName());
     }
 

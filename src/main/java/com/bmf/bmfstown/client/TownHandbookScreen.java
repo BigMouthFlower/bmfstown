@@ -205,25 +205,17 @@ public class TownHandbookScreen extends Screen {
     private void rebuildRows() {
         List<Row> list = new ArrayList<>();
         TownHandbookClient.TownView town = currentTown();
-        if (town != null) {
-            if (zonePage >= 0) {
-                // 子页：只列当前城镇、当前类型的区域，名字不带类型前缀
-                for (TownHandbookClient.ZoneView zone : town.zones()) {
-                    if (zone.kind() != zonePage) {
-                        continue;
-                    }
-                    list.add(new Row(zone.name(),
-                            fmt(zone.min()) + "~" + fmt(zone.max()),
-                            "Z:" + zone.id(), false, zone.kind()));
+        if (town != null && zonePage >= 0) {
+            // 子页：只列当前城镇、当前类型的区域，名字不带类型前缀。
+            // 城镇页（zonePage < 0）不再铺区域列表——子区域的浏览/编辑
+            // 统一走右侧"区域管理"入口，避免两页混在一起。
+            for (TownHandbookClient.ZoneView zone : town.zones()) {
+                if (zone.kind() != zonePage) {
+                    continue;
                 }
-            } else {
-                // 城镇页：列全部子区域（带类型前缀）
-                for (TownHandbookClient.ZoneView zone : town.zones()) {
-                    TownWandMode mode = TownWandMode.byIndex(zone.kind());
-                    list.add(new Row(I18n.get(mode.displayName()) + "·" + zone.name(),
-                            fmt(zone.min()) + "~" + fmt(zone.max()),
-                            "Z:" + zone.id(), false, zone.kind()));
-                }
+                list.add(new Row(zone.name(),
+                        fmt(zone.min()) + "~" + fmt(zone.max()),
+                        "Z:" + zone.id(), false, zone.kind()));
             }
         }
         this.rows = list;
@@ -457,23 +449,6 @@ public class TownHandbookScreen extends Screen {
                 Component.literal(I18n.get("gui.bmfstown.handbook.range",
                         fmt(town.min()), fmt(town.max()))),
                 lx, bookY + 50, TEXT_W, INK_FADED);
-        graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.zones_header"), lx, bookY + 70, INK_HEADER, false);
-
-        if (rows.isEmpty()) {
-            graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.zones_empty"), lx, listTop, INK_FADED, false);
-        }
-        for (int i = 0; i < visibleRows(); i++) {
-            int index = scroll + i;
-            if (index >= rows.size()) {
-                break;
-            }
-            Row row = rows.get(index);
-            int y = listTop + i * ROW_H;
-            if (index == selected) {
-                graphics.fill(lx - 4, y - 2, lx + TEXT_W + 2, y + ROW_H - 3, 0x28000000);
-            }
-            graphics.drawString(this.font, fit("· " + row.name()), lx, y, INK_FADED, false);
-        }
 
         // 页码
         graphics.drawCenteredString(this.font, (pageIndex + 1) + " / "
@@ -524,16 +499,8 @@ public class TownHandbookScreen extends Screen {
             }
             return; // EditBox 由 super.render() 画
         }
-        if (selected >= 0 && selected < rows.size()) {
-            Row sel = rows.get(selected);
-            graphics.drawString(this.font, fit(sel.name()), rx, bookY + 84, INK, false);
-            graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.type",
-                            I18n.get(TownWandMode.byIndex(sel.kind()).displayName())),
-                    rx, bookY + 96, INK_FADED, false);
-            graphics.drawWordWrap(this.font, Component.literal(
-                            I18n.get("gui.bmfstown.handbook.bounds", sel.bounds())),
-                    rx, bookY + 108, TEXT_W, INK_FADED);
-        }
+        // 城镇页右页：预览图 + 区域管理入口，不再显示"选中子区域"详情——
+        // 子区域的选择和详情都在对应的管理子页里进行。
     }
 
     /**
@@ -627,6 +594,11 @@ public class TownHandbookScreen extends Screen {
         if (rows.isEmpty()) {
             graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.zones_empty"),
                     lx, listTop, INK_FADED, false);
+        } else {
+            // 与城镇页"区域管理"同款风格：整块深色底 + 悬停提亮 + 选中加深
+            int shown = Math.min(rows.size() - scroll, visibleRows());
+            graphics.fill(lx - 4, listTop - 2, lx + TEXT_W + 2,
+                    listTop + shown * ROW_H + 2, 0x28201508);
         }
         for (int i = 0; i < visibleRows(); i++) {
             int index = scroll + i;
@@ -635,10 +607,15 @@ public class TownHandbookScreen extends Screen {
             }
             Row row = rows.get(index);
             int y = listTop + i * ROW_H;
+            boolean hover = mouseX >= lx - 4 && mouseX < lx + TEXT_W + 2
+                    && mouseY >= y && mouseY < y + ROW_H;
             if (index == selected) {
-                graphics.fill(lx - 4, y - 2, lx + TEXT_W + 2, y + ROW_H - 3, 0x28000000);
+                graphics.fill(lx - 4, y - 2, lx + TEXT_W + 2, y + ROW_H - 3, 0x40000000);
+            } else if (hover) {
+                graphics.fill(lx - 4, y - 1, lx + TEXT_W + 2, y + ROW_H - 2, 0x40201508);
             }
-            graphics.drawString(this.font, fit("· " + row.name()), lx, y, INK_FADED, false);
+            graphics.drawString(this.font, fit("· " + row.name()), lx, y,
+                    hover || index == selected ? INK : INK_FADED, false);
         }
 
         // ---- 右页 ----
@@ -785,6 +762,10 @@ public class TownHandbookScreen extends Screen {
                 if (index >= 0 && index < rows.size() && mouseY >= listTop) {
                     selected = index;
                     clampScroll();
+                    // 选中变化 = 重命名/删除按钮的目标变了，必须重建控件
+                    //（按钮只在 init() 里生成，不重建就永远不出现）
+                    this.clearWidgets();
+                    this.init();
                     return true;
                 }
             }

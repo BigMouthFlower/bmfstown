@@ -47,6 +47,7 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -135,6 +136,32 @@ public class Resident extends PathfinderMob {
     private int forageRepicks = 0;
     /** TAKE 状态的停留倒计时（开箱动画时间）。 */
     private int takeDelay = 0;
+
+    // ---- 睡眠状态（住宅区床位，v0.7） ----
+    // 状态机：AWAKE（醒着）→ GO_HOME（回住宅区）→ FIND_BED（挑空床）
+    //        → SLEEPING（躺下）→ AWAKE
+    private enum SleepState { AWAKE, GO_HOME, FIND_BED, SLEEPING }
+
+    private SleepState sleepState = SleepState.AWAKE;
+    /** 已锁定的目标床位（住宅区内扫描得出，HEAD 坐标）。 */
+    @Nullable
+    private BlockPos targetBed = null;
+    /** 住宅区床位缓存：扫描有成本，按配置间隔刷新。 */
+    private final List<BlockPos> cachedBeds = new ArrayList<>();
+    /** 床位缓存剩余有效期（tick）。 */
+    private int bedCacheCooldown = 0;
+    /** 夜晚入睡检查节流（tick）。 */
+    private int sleepCheckCooldown = 0;
+    /** 本轮回家/找床已进行的 tick 数（超时兜底）。 */
+    private int sleepTravelTicks = 0;
+    /** 睡觉失败后的重试倒计时（tick）。 */
+    private int sleepRetryCooldown = 0;
+    /**
+     * 被吵醒后的"冷静期"（tick）。
+     * 被玩家从床上赶下来就立刻重新躺回去的话，玩家根本赶不动他，
+     * 所以吵醒后 100 tick（5 秒）内不允许再次自动入睡。
+     */
+    private int sleepKickCooldown = 0;
 
     /**
      * 距离上一次回血累积的 tick 数。
@@ -598,8 +625,13 @@ public class Resident extends PathfinderMob {
         // ---- 4. 城镇归属约束 ----
         this.tickTownConfinement();
 
-        // ---- 5. 觅食（就餐区箱子补给） ----
-        this.tickForaging();
+        // ---- 5. 觅食（就餐区箱子补给；睡着/回家路上不觅食）----
+        if (this.sleepState == SleepState.AWAKE) {
+            this.tickForaging();
+        }
+
+        // ---- 6. 睡眠（夜晚回住宅区躺床）----
+        this.tickSleep();
     }
 
     // ==========================================================
@@ -1083,6 +1115,303 @@ public class Resident extends PathfinderMob {
                 (zone.min().getZ() + zone.max().getZ()) / 2);
     }
 
+    // ==========================================================
+    //  睡眠（v0.7：夜晚回住宅区躺床）
+    // ==========================================================
+    //
+    //  设计（与产品决策一致）：
+    //   · 住宅手动分配，一人一个住宅区；床不指定——就近挑没人躺的；
+    //   · 占用判定 = 原版 Pose.SLEEPING（与 HousingZones 同口径），
+     //    所以玩家躺上去天然互斥，玩家点村民睡的床，原版 BedBlock
+    //    会直接 wakeUp()，我们靠"睡姿消失"感知被叫醒；
+    //   · 白天在城里游荡（既有漫步 Goal 不动），晚上回住宅区睡觉；
+    //   · 兜底：任何一步失败 → 放弃本轮，SLEEP_RETRY_TICKS 后重试；
+    //     走不到家/床没了/被吵醒都有明确出口，无死态。
+
+    /**
+     * 睡眠状态机。每 tick 服务端跑一次。
+     *
+     * <p>入口判断收敛在 AWAKE 态（节流查"天黑没"），一旦出发
+     * 就由超时与天亮两个出口保证必然回到 AWAKE。
+     */
+    private void tickSleep() {
+        if (!(this.level() instanceof net.minecraft.server.level.ServerLevel level)) {
+            return;
+        }
+        if (this.sleepRetryCooldown > 0) {
+            this.sleepRetryCooldown--;
+        }
+        if (this.sleepKickCooldown > 0) {
+            this.sleepKickCooldown--;
+        }
+        boolean night = isNightTime(level.getDayTime());
+
+        switch (this.sleepState) {
+            case AWAKE -> {
+                if (!night || this.sleepRetryCooldown > 0 || this.sleepKickCooldown > 0) {
+                    return;
+                }
+                if (this.sleepCheckCooldown-- > 0) {
+                    return;
+                }
+                this.sleepCheckCooldown = Config.SLEEP_CHECK_INTERVAL.get();
+                this.tryGoHomeToSleep();
+            }
+            case GO_HOME -> this.tickGoHome(night);
+            case FIND_BED -> this.tickFindBed(level, night);
+            case SLEEPING -> this.tickSleeping(level, night);
+        }
+    }
+
+    /** 当前时间是否在睡觉窗口内（支持跨午夜，如 22000~6000）。 */
+    private static boolean isNightTime(long dayTime) {
+        int t = (int) (dayTime % 24000L);
+        int start = Config.SLEEP_START_TIME.get();
+        int end = Config.SLEEP_END_TIME.get();
+        return start <= end ? (t >= start && t < end) : (t >= start || t < end);
+    }
+
+    /** 档案里绑定的住宅区（仅当前维度有效时返回，否则 null）。 */
+    @Nullable
+    private TownZone housingZone() {
+        UUID housingId = this.getProfile().housingZoneId();
+        if (housingId == null) {
+            return null;
+        }
+        Town town = boundTown();
+        if (town == null) {
+            return null;
+        }
+        for (TownZone zone : town.zones(com.bmf.bmfstown.town.TownWandMode.HOUSING)) {
+            if (zone.id().equals(housingId)) {
+                return zone;
+            }
+        }
+        return null;
+    }
+
+    /** 天黑了：有住宅就出发；没住宅（或住宅被删）安静跳过今晚。 */
+    private void tryGoHomeToSleep() {
+        TownZone zone = housingZone();
+        if (zone == null) {
+            this.sleepRetryCooldown = Config.SLEEP_RETRY_TICKS.get();
+            return;
+        }
+        if (zone.contains(this.blockPosition())) {
+            // 人已经在住宅区：直接挑床
+            this.sleepState = SleepState.FIND_BED;
+            this.sleepTravelTicks = 0;
+            return;
+        }
+        this.sleepState = SleepState.GO_HOME;
+        this.sleepTravelTicks = 0;
+        BlockPos c = zoneCenter(zone);
+        this.getNavigation().moveTo(
+                c.getX() + 0.5D, c.getY(), c.getZ() + 0.5D,
+                Config.SLEEP_WALK_SPEED.get());
+        LOGGER.debug("[BmfTown][睡眠] {} 天黑了，回家睡觉 ({})~({})",
+                this.getName().getString(),
+                zone.min().toShortString(), zone.max().toShortString());
+    }
+
+    /** 阶段 1：走回住宅区；到了转挑床，天亮/超时收工。 */
+    private void tickGoHome(boolean night) {
+        if (!night) {
+            this.abortSleep();
+            return;
+        }
+        if (++this.sleepTravelTicks > Config.SLEEP_TRAVEL_TIMEOUT_TICKS.get()) {
+            LOGGER.debug("[BmfTown][睡眠] {} 走不到住宅区，放弃本轮",
+                    this.getName().getString());
+            this.abortSleep();
+            return;
+        }
+        TownZone zone = housingZone();
+        if (zone == null) {
+            this.abortSleep(); // 住宅被删（任务 3 会清绑定，这里是兜底）
+            return;
+        }
+        if (zone.contains(this.blockPosition())) {
+            this.sleepState = SleepState.FIND_BED;
+            return;
+        }
+        if (this.getNavigation().isDone()) {
+            BlockPos c = zoneCenter(zone);
+            this.getNavigation().moveTo(
+                    c.getX() + 0.5D, c.getY(), c.getZ() + 0.5D,
+                    Config.SLEEP_WALK_SPEED.get());
+        }
+    }
+
+    /** 阶段 2：挑最近的空床并走过去；没有空床就放弃本轮。 */
+    private void tickFindBed(net.minecraft.server.level.ServerLevel level, boolean night) {
+        if (!night) {
+            this.abortSleep();
+            return;
+        }
+        if (++this.sleepTravelTicks > Config.SLEEP_TRAVEL_TIMEOUT_TICKS.get()) {
+            LOGGER.debug("[BmfTown][睡眠] {} 挑床超时，放弃本轮",
+                    this.getName().getString());
+            this.abortSleep();
+            return;
+        }
+        TownZone zone = housingZone();
+        if (zone == null) {
+            this.abortSleep();
+            return;
+        }
+
+        // 床位缓存到期（且手里没锁定床）时重扫一次
+        if (this.bedCacheCooldown > 0) {
+            this.bedCacheCooldown--;
+        } else if (this.targetBed == null) {
+            this.cachedBeds.clear();
+            this.cachedBeds.addAll(
+                    com.bmf.bmfstown.town.HousingZones.bedsIn(level, zone));
+            this.cachedBeds.sort(java.util.Comparator.comparingDouble(
+                    p -> p.distSqr(this.blockPosition())));
+            this.bedCacheCooldown = Config.SLEEP_BED_CACHE_TICKS.get();
+            LOGGER.debug("[BmfTown][睡眠] {} 扫描住宅区 ({})~({})，共 {} 张床",
+                    this.getName().getString(),
+                    zone.min().toShortString(), zone.max().toShortString(),
+                    this.cachedBeds.size());
+        }
+
+        if (this.targetBed == null) {
+            // 从近到远挑第一张"还存在着且没人躺"的床
+            while (!this.cachedBeds.isEmpty()) {
+                BlockPos bed = this.cachedBeds.get(0);
+                if (level.getBlockState(bed).is(net.minecraft.tags.BlockTags.BEDS)
+                        && !com.bmf.bmfstown.town.HousingZones.isBedOccupied(level, bed)) {
+                    this.targetBed = bed;
+                    break;
+                }
+                this.cachedBeds.remove(0);
+            }
+            if (this.targetBed == null) {
+                LOGGER.debug("[BmfTown][睡眠] {} 的住宅区没有空床，稍后重试",
+                        this.getName().getString());
+                this.abortSleep();
+                return;
+            }
+            BlockPos bed = this.targetBed;
+            this.getNavigation().moveTo(
+                    bed.getX() + 0.5D, bed.getY(), bed.getZ() + 0.5D,
+                    Config.SLEEP_WALK_SPEED.get());
+            LOGGER.debug("[BmfTown][睡眠] {} 锁定床位 {}",
+                    this.getName().getString(), bed.toShortString());
+            return;
+        }
+
+        // 已锁定床：够近就躺；走丢了再推一把（推不动靠超时兜底）
+        BlockPos bed = this.targetBed;
+        if (bed.closerThan(this.blockPosition(), 2.0D)) {
+            this.lieDown(level);
+            return;
+        }
+        if (this.getNavigation().isDone()) {
+            this.getNavigation().moveTo(
+                    bed.getX() + 0.5D, bed.getY(), bed.getZ() + 0.5D,
+                    Config.SLEEP_WALK_SPEED.get());
+        }
+    }
+
+    /** 躺下：走原版 {@code startSleeping}，占用旗标/睡姿/渲染全部由原版接管。 */
+    private void lieDown(net.minecraft.server.level.ServerLevel level) {
+        BlockPos bed = this.targetBed;
+        if (bed == null) {
+            this.abortSleep();
+            return;
+        }
+        if (!level.getBlockState(bed).is(net.minecraft.tags.BlockTags.BEDS)
+                || com.bmf.bmfstown.town.HousingZones.isBedOccupied(level, bed)) {
+            // 床刚被拆/刚被占：让出这一轮（缓存还没过期时下一轮会重新挑）
+            this.targetBed = null;
+            this.cachedBeds.remove(bed);
+            this.bedCacheCooldown = 0; // 立即重扫，别拿旧缓存继续撞
+            this.abortSleep();
+            return;
+        }
+        this.startSleeping(bed);
+        if (this.getPose() == net.minecraft.world.entity.Pose.SLEEPING) {
+            this.sleepState = SleepState.SLEEPING;
+            this.getNavigation().stop();
+            LOGGER.info("[BmfTown][睡眠] {} 上床睡觉 {}",
+                    this.getName().getString(), bed.toShortString());
+        } else {
+            LOGGER.debug("[BmfTown][睡眠] {} 躺下失败（床被占？），放弃本轮",
+                    this.getName().getString());
+            this.targetBed = null;
+            this.abortSleep();
+        }
+    }
+
+    /** 睡着后的每 tick：天亮起床、床被拆重找、被玩家叫醒则同步状态。 */
+    private void tickSleeping(net.minecraft.server.level.ServerLevel level, boolean night) {
+        // 玩家右键我们睡的床 → 原版 BedBlock 直接 wakeUp()（睡姿被清）。
+        // 我们没有钩子能收到通知，只能靠"睡姿还在不在"反推——
+        // 这也是为什么这里必须每 tick 查而不是节流。
+        if (this.getSleepingPos().isEmpty()
+                || this.getPose() != net.minecraft.world.entity.Pose.SLEEPING) {
+            this.sleepState = SleepState.AWAKE;
+            this.targetBed = null;
+            this.sleepTravelTicks = 0;
+            LOGGER.debug("[BmfTown][睡眠] {} 被叫醒了", this.getName().getString());
+            return;
+        }
+        if (!night) {
+            this.wakeFromBed(true);
+            return;
+        }
+        // 床被拆了：爬起来重新找（今晚还有别的床就换一张）
+        BlockPos bed = this.targetBed;
+        if (bed == null || !level.getBlockState(bed).is(net.minecraft.tags.BlockTags.BEDS)) {
+            this.stopSleeping();
+            this.sleepState = SleepState.FIND_BED;
+            this.targetBed = null;
+            this.sleepTravelTicks = 0;
+            this.bedCacheCooldown = 0;
+            LOGGER.debug("[BmfTown][睡眠] {} 的床没了，起来重新找",
+                    this.getName().getString());
+            return;
+        }
+        // 睡着就不动：漫步/受击位移都会推导航，每 tick 压住
+        this.getNavigation().stop();
+    }
+
+    /** 放弃本轮睡觉：回 AWAKE，等 SLEEP_RETRY_TICKS 后再试。 */
+    private void abortSleep() {
+        this.sleepState = SleepState.AWAKE;
+        this.targetBed = null;
+        this.sleepTravelTicks = 0;
+        this.sleepRetryCooldown = Config.SLEEP_RETRY_TICKS.get();
+    }
+
+    /** 起床：清睡姿（原版会一并清床的 OCCUPIED 旗标）与状态。 */
+    private void wakeFromBed(boolean natural) {
+        this.stopSleeping();
+        this.sleepState = SleepState.AWAKE;
+        this.targetBed = null;
+        this.sleepTravelTicks = 0;
+        if (!natural) {
+            // 被吵醒（被打/被玩家从床上赶下来）：5 秒内不再自动上床，
+            // 否则玩家刚把人赶下去转头就看见他躺回去了
+            this.sleepKickCooldown = 100;
+        }
+        LOGGER.debug("[BmfTown][睡眠] {} {}醒来了",
+                this.getName().getString(), natural ? "天亮，" : "被吵");
+    }
+
+    /**
+     * 玩家右键睡着的床时由 {@link SleepWakeHandler} 调用：立刻起床。
+     * 走"被吵"路径，带 5 秒冷静期。
+     */
+    public void kickFromBed() {
+        if (this.sleepState == SleepState.SLEEPING) {
+            this.wakeFromBed(false);
+        }
+    }
+
     /**
      * 受限漫步：有城镇归属时，随机目标永远落在城镇长方体内。
      *
@@ -1107,6 +1436,16 @@ public class Resident extends PathfinderMob {
 
         TownBoundedStrollGoal(Resident mob, double speedModifier) {
             super(mob, speedModifier);
+        }
+
+        @Override
+        public boolean canUse() {
+            // 睡着了不溜达：漫步一开跑就会把躺好的镇民拽下床
+            if (this.mob instanceof Resident resident
+                    && resident.sleepState == SleepState.SLEEPING) {
+                return false;
+            }
+            return super.canUse();
         }
 
         @Override
@@ -1595,5 +1934,19 @@ public class Resident extends PathfinderMob {
     @Override
     protected SoundEvent getDeathSound() {
         return SoundEvents.VILLAGER_DEATH;
+    }
+
+    /**
+     * 被打会醒。睡姿下受击还继续装睡很怪，而且原版玩家被打也会醒；
+     * 醒来走 AWAKE 流程（夜里过一会儿还会重新尝试回床）。
+     */
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        boolean result = super.hurt(source, amount);
+        if (!this.level().isClientSide && this.isAlive()
+                && this.sleepState == SleepState.SLEEPING) {
+            this.wakeFromBed(false);
+        }
+        return result;
     }
 }

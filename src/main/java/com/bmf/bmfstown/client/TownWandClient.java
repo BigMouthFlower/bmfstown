@@ -10,6 +10,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -88,6 +89,97 @@ public final class TownWandClient {
         TownWandMode cur = TownWandItem.getMode(held);
         TownWandMode next = event.getScrollDeltaY() > 0 ? cur.next() : cur.prev();
         ModNetworking.sendToServer(new ModNetworking.WandModePayload(next.ordinal()));
+    }
+
+    // ==========================================================
+    //  右键选点 / 确认：客户端权威接管
+    // ==========================================================
+
+    /**
+     * 为什么选点不走服务端 useOn（血泪教训）：
+     * <ol>
+     *   <li><b>潜行竞速</b>：shift+右键时，"开始潜行"包和"使用物品"包
+     *       同 tick 发出，服务端可能先处理点击——isShiftKeyDown 为 false，
+     *       确认点击被当成选点，选区变成"包含脚下方块的薄片"。</li>
+     *   <li><b>高处选点被静默拒收</b>：1.20.5+ 服务端会拒绝够不到的方块的
+     *       使用请求且无任何提示——选房间上方角块时第 2 点悄悄丢了。</li>
+     * </ol>
+     * 所以：潜行状态用客户端键盘状态（100% 准），准星方块用客户端命中结果
+     * （所见即所得），打包发给服务端执行；同时取消原版交互，
+     * 让服务端 useOn 兜底路径永远不被脏数据触发。
+     */
+    private static long nextClickMs = 0; // 按住右键连发节流
+
+    @SubscribeEvent
+    public static void onUseKey(InputEvent.InteractionKeyMappingTriggered event) {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || !event.isUseItem()) {
+            return;
+        }
+        ItemStack held = player.getMainHandItem();
+        if (!(held.getItem() instanceof TownWandItem)) {
+            return;
+        }
+
+        // 这次右键由本 mod 全权处理，原版的"使用物品"包不再发出
+        event.setCanceled(true);
+
+        long now = System.currentTimeMillis();
+        if (now < nextClickMs) {
+            return; // 按住不放每 4 tick 触发一次，250ms 内的重复全忽略
+        }
+        nextClickMs = now + 250;
+
+        BlockPos a = held.get(ModDataComponents.WAND_POINT_A.get());
+        BlockPos b = held.get(ModDataComponents.WAND_POINT_B.get());
+
+        // 潜行 + 右键 = 确认。客户端自己读键盘，绝无竞速问题。
+        if (player.isShiftKeyDown()) {
+            if (a == null && b == null) {
+                return; // 没选点：静默，不刷"请先选点"
+            }
+            com.bmf.bmfstown.BmfTown.LOGGER.info(
+                    "[BmfTown][客户端] 发送确认包（潜行，A={}，B={}）",
+                    a == null ? "未选" : a.toShortString(),
+                    b == null ? "未选" : b.toShortString());
+            ModNetworking.sendToServer(new ModNetworking.WandConfirmPayload());
+            return;
+        }
+
+        BlockPos aimed = getAimedBlock(mc);
+        if (aimed == null) {
+            return;
+        }
+        TownWandMode mode = TownWandItem.getMode(held);
+        if (a == null) {
+            com.bmf.bmfstown.BmfTown.LOGGER.info(
+                    "[BmfTown][客户端] 发送第1点 = {}", aimed.toShortString());
+            ModNetworking.sendToServer(new ModNetworking.WandPointPayload(0, aimed));
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.wand.point1", TownWandItem.modeDisplay(mode),
+                    TownWandItem.fmt(aimed)), true);
+        } else if (b == null) {
+            if (aimed.equals(a)) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.wand.point_same"), true);
+                return;
+            }
+            ModNetworking.sendToServer(new ModNetworking.WandPointPayload(1, aimed));
+            com.bmf.bmfstown.BmfTown.LOGGER.info(
+                    "[BmfTown][客户端] 发送第2点 = {}（第1点 = {}）",
+                    aimed.toShortString(), a.toShortString());
+            String size = (Math.abs(aimed.getX() - a.getX()) + 1) + "x"
+                    + (Math.abs(aimed.getY() - a.getY()) + 1) + "x"
+                    + (Math.abs(aimed.getZ() - a.getZ()) + 1);
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.wand.point2", TownWandItem.modeDisplay(mode),
+                    TownWandItem.fmt(aimed), size), true);
+        } else {
+            // 两点已齐：普通右键不覆盖（防手滑），想重选就切走魔杖再回来
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.wand.both_set"), true);
+        }
     }
 
     // ==========================================================
@@ -182,24 +274,26 @@ public final class TownWandClient {
         pose.translate(-cam.x, -cam.y, -cam.z);
 
         // ---- 先画填充面（半透明白），再画线框叠在上面 ----
-        // 填充用 debugFilledBox：半透明、无深度写入，多个区域叠加不会互相糊死。
+        // 填充用 debugFilledBox：半透明、无深度写入。
+        // 只画朝向相机的面（见 boxFaces）——6 面全画会让半透明面互相叠加，
+        // 内部出现大量斜线重影，完全没法观察。
         VertexConsumer fill = mc.renderBuffers().bufferSource()
                 .getBuffer(RenderType.debugFilledBox());
         Matrix4f mat = pose.last().pose();
-        com.mojang.blaze3d.systems.RenderSystem.disableCull();
         for (TownHandbookClient.TownView town : towns) {
             boxFaces(fill, mat,
                     town.min().getX() - 0.008, town.min().getY() - 0.008, town.min().getZ() - 0.008,
                     town.max().getX() + 1.008, town.max().getY() + 1.008, town.max().getZ() + 1.008,
+                    cam.x, cam.y, cam.z,
                     255, 255, 255, TOWN_FILL_ALPHA);
             for (TownHandbookClient.ZoneView zone : town.zones()) {
                 boxFaces(fill, mat,
                         zone.min().getX() - 0.008, zone.min().getY() - 0.008, zone.min().getZ() - 0.008,
                         zone.max().getX() + 1.008, zone.max().getY() + 1.008, zone.max().getZ() + 1.008,
+                        cam.x, cam.y, cam.z,
                         255, 255, 255, ZONE_FILL_ALPHA);
             }
         }
-        com.mojang.blaze3d.systems.RenderSystem.enableCull();
         mc.renderBuffers().bufferSource().endBatch(RenderType.debugFilledBox());
 
         // ---- 线框（白=城镇，彩=子区域，颜色与手册一致） ----
@@ -270,10 +364,7 @@ public final class TownWandClient {
         VertexConsumer buf = mc.renderBuffers().bufferSource()
                 .getBuffer(RenderType.debugFilledBox());
         Matrix4f mat = pose.last().pose();
-        // 关面剔除：六个面都要从各个角度可见
-        com.mojang.blaze3d.systems.RenderSystem.disableCull();
-        boxFaces(buf, mat, x0, y0, z0, x1, y1, z1, r, g, b, a);
-        com.mojang.blaze3d.systems.RenderSystem.enableCull();
+        boxFaces(buf, mat, x0, y0, z0, x1, y1, z1, cam.x, cam.y, cam.z, r, g, b, a);
         mc.renderBuffers().bufferSource().endBatch(RenderType.debugFilledBox());
 
         pose.popPose();
@@ -300,13 +391,11 @@ public final class TownWandClient {
         pose.translate(-cam.x, -cam.y, -cam.z);
         Matrix4f mat = pose.last().pose();
 
-        // ---- 半透明填充（6 个面）----
+        // ---- 半透明填充（只画朝向相机的面）----
         VertexConsumer fill = mc.renderBuffers().bufferSource()
                 .getBuffer(RenderType.debugFilledBox());
-        com.mojang.blaze3d.systems.RenderSystem.disableCull();
         boxFaces(fill, mat, minX, minY, minZ, maxX, maxY, maxZ,
-                255, 255, 255, WHITE_FILL_ALPHA);
-        com.mojang.blaze3d.systems.RenderSystem.enableCull();
+                cam.x, cam.y, cam.z, 255, 255, 255, WHITE_FILL_ALPHA);
         mc.renderBuffers().bufferSource().endBatch(RenderType.debugFilledBox());
 
         // ---- 白色线框（12 条边）----
@@ -320,12 +409,24 @@ public final class TownWandClient {
         pose.popPose();
     }
 
-    /** 画盒子的全部 6 个面（12 个三角形），面方向不重要（已关剔除）。 */
+    /**
+     * 画盒子的"朝向相机的那一面"（最多 3 个面），其余面直接跳过。
+     *
+     * <p>为什么不做 6 面全画 + 面剔除开关：debugFilledBox 这个渲染类型本身
+     * 不写深度、半透明，6 面全画时前后表面在屏幕上互相叠加，
+     * 再叠上每个面 2 个三角形的对角接缝，盒子内部就会出现大量
+     * 斜线重影——区域一多根本没法看。按"外法线是否朝向相机"逐面判断后，
+     * 从外面看只剩干净的 1~3 个外表面，从里面看也只剩包着自己的那层壳。
+     *
+     * @param camX/camY/camZ 相机世界坐标（判断面朝向用）
+     */
     private static void boxFaces(VertexConsumer buf, Matrix4f mat,
                                  double x0, double y0, double z0,
                                  double x1, double y1, double z1,
+                                 double camX, double camY, double camZ,
                                  int r, int g, int b, int a) {
-        // 每个面 4 角（双向绘制由 disableCull 保证）
+        // 每个面 4 角（周角顺序）+ 该面的可见条件（外法线朝向相机）
+        // 例：min-x 面 (x = x0) 的外法线是 (-1,0,0)，只有相机在它左边时可见
         double[][][] faces = {
                 // 南北面（z = 常量）
                 {{x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0}},
@@ -337,7 +438,16 @@ public final class TownWandClient {
                 {{x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}, {x0, y0, z1}},
                 {{x0, y1, z0}, {x1, y1, z0}, {x1, y1, z1}, {x0, y1, z1}},
         };
-        for (double[][] f : faces) {
+        boolean[] visible = {
+                camZ < z0, camZ > z1,   // z 两面
+                camX < x0, camX > x1,   // x 两面
+                camY < y0, camY > y1,   // y 两面
+        };
+        for (int fIdx = 0; fIdx < faces.length; fIdx++) {
+            if (!visible[fIdx]) {
+                continue;
+            }
+            double[][] f = faces[fIdx];
             for (int i : new int[]{0, 1, 2, 0, 2, 3}) {
                 double[] c = f[i];
                 buf.addVertex(mat, (float) c[0], (float) c[1], (float) c[2])

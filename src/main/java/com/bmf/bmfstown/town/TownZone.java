@@ -21,14 +21,17 @@ public record TownZone(UUID id, String name, BlockPos min, BlockPos max) {
 
     public TownZone {
         // record 的紧凑构造器：保证 min ≤ max，存档和创建两侧统一。
-        min = new BlockPos(
-                Math.min(min.getX(), max.getX()),
-                Math.min(min.getY(), max.getY()),
-                Math.min(min.getZ(), max.getZ()));
-        max = new BlockPos(
-                Math.max(min.getX(), max.getX()),
-                Math.max(min.getY(), max.getY()),
-                Math.max(min.getZ(), max.getZ()));
+        // 注意：必须先用局部变量算好两组坐标，再一起赋值——
+        // 如果先改写参数 min，下面 max 那行读到的就是改写后的值，
+        // 第 1 点在某个轴上比第 2 点大时，该轴会塌成第 2 点的值（薄片 bug）。
+        int minX = Math.min(min.getX(), max.getX());
+        int minY = Math.min(min.getY(), max.getY());
+        int minZ = Math.min(min.getZ(), max.getZ());
+        int maxX = Math.max(min.getX(), max.getX());
+        int maxY = Math.max(min.getY(), max.getY());
+        int maxZ = Math.max(min.getZ(), max.getZ());
+        min = new BlockPos(minX, minY, minZ);
+        max = new BlockPos(maxX, maxY, maxZ);
     }
 
     /** 此方块（含整格空间）是否在区域内。 */

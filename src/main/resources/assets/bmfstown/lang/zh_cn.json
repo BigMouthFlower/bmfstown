@@ -42,7 +42,7 @@
   "name.bmfstown.zone.default": "%s%s",
   "msg.bmfstown.wand.point1": "［%s］已选第 1 点 %s，再右键选对角的第 2 点",
   "msg.bmfstown.wand.point_same": "第 2 点不能和第 1 点是同一个方块",
-  "msg.bmfstown.wand.point2": "［%s］已选第 2 点 %s，潜行+右键确认创建；换下魔杖则作废",
+  "msg.bmfstown.wand.point2": "［%s］已选第 2 点 %s（尺寸 %s），潜行+右键确认创建；换下魔杖则作废",
   "msg.bmfstown.wand.both_set": "两点已选定。潜行+右键确认；想重选就把魔杖换下主手再拿回来",
   "msg.bmfstown.wand.need_points": "还没有选好两点，先右键选两个对角",
   "msg.bmfstown.wand.invalidated": "选区已作废",

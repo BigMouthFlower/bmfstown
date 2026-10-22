@@ -6,6 +6,7 @@ import com.bmf.bmfstown.town.TownManager;
 import com.bmf.bmfstown.town.TownWandItem;
 import com.bmf.bmfstown.town.TownWandMode;
 import io.netty.buffer.ByteBuf;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
@@ -60,6 +61,50 @@ public final class ModNetworking {
          * 接口要求的"这个包是谁"。
          * record 组件名叫 mode，不会自动映射，必须手动指回 TYPE。
          */
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    // ==========================================================
+    //  C → S：魔杖选点 / 确认（客户端权威，见 TownWandClient）
+    // ==========================================================
+
+    /**
+     * 客户端 → 服务端：选角点。index 0 = 第 1 点（A），1 = 第 2 点（B）。
+     *
+     * <p>为什么坐标由客户端提供：潜行状态、准星命中都是客户端本地信息，
+     * 走服务端 useOn 判定会出现两类真实事故——潜行包和使用包同 tick 竞速
+     * 导致"确认点击被当成选点"；高处方块超服务端判定距离被静默拒收。
+     * 客户端发指令、服务端只执行，所见即所得。
+     */
+    public record WandPointPayload(int index, BlockPos pos) implements CustomPacketPayload {
+
+        public static final Type<WandPointPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "wand_point"));
+
+        public static final StreamCodec<ByteBuf, WandPointPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, WandPointPayload::index,
+                        BlockPos.STREAM_CODEC, WandPointPayload::pos,
+                        WandPointPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /** 客户端 → 服务端：确认创建（原"潜行+右键"，由客户端判定潜行后发包）。 */
+    public record WandConfirmPayload() implements CustomPacketPayload {
+
+        public static final Type<WandConfirmPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "wand_confirm"));
+
+        public static final StreamCodec<ByteBuf, WandConfirmPayload> STREAM_CODEC =
+                StreamCodec.unit(new WandConfirmPayload());
+
         @Override
         public Type<? extends CustomPacketPayload> type() {
             return TYPE;
@@ -191,6 +236,44 @@ public final class ModNetworking {
         });
     }
 
+    private static void handleWandPoint(WandPointPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            ItemStack held = serverPlayer.getMainHandItem();
+            if (!(held.getItem() instanceof TownWandItem)) {
+                return; // 手里没拿魔杖（切走了/包延迟），忽略
+            }
+            if (payload.index() == 0) {
+                held.set(ModDataComponents.WAND_POINT_A.get(), payload.pos().immutable());
+                held.remove(ModDataComponents.WAND_POINT_B.get());
+                com.bmf.bmfstown.BmfTown.LOGGER.info(
+                        "[BmfTown][选点] 第1点 = {}", payload.pos().toShortString());
+            } else {
+                BlockPos a = held.get(ModDataComponents.WAND_POINT_A.get());
+                if (a == null || payload.pos().equals(a)) {
+                    com.bmf.bmfstown.BmfTown.LOGGER.warn(
+                            "[BmfTown][选点] 收到第2点 {} 但第1点未定或相同，忽略", payload.pos().toShortString());
+                    return;
+                }
+                held.set(ModDataComponents.WAND_POINT_B.get(), payload.pos().immutable());
+                com.bmf.bmfstown.BmfTown.LOGGER.info(
+                        "[BmfTown][选点] 第2点 = {}（第1点 = {}）",
+                        payload.pos().toShortString(), a.toShortString());
+            }
+        });
+    }
+
+    private static void handleWandConfirm(WandConfirmPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer serverPlayer) {
+                TownWandItem.confirm(serverPlayer);
+            }
+        });
+    }
+
     private static void handleHandbookRequest(HandbookRequestPayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             if (ctx.player() instanceof ServerPlayer serverPlayer) {
@@ -231,6 +314,10 @@ public final class ModNetworking {
         PayloadRegistrar registrar = event.registrar("1");
         registrar.playToServer(WandModePayload.TYPE, WandModePayload.STREAM_CODEC,
                 ModNetworking::handleWandMode);
+        registrar.playToServer(WandPointPayload.TYPE, WandPointPayload.STREAM_CODEC,
+                ModNetworking::handleWandPoint);
+        registrar.playToServer(WandConfirmPayload.TYPE, WandConfirmPayload.STREAM_CODEC,
+                ModNetworking::handleWandConfirm);
         registrar.playToServer(HandbookRequestPayload.TYPE, HandbookRequestPayload.STREAM_CODEC,
                 ModNetworking::handleHandbookRequest);
         registrar.playToServer(HandbookRenamePayload.TYPE, HandbookRenamePayload.STREAM_CODEC,

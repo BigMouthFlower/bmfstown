@@ -42,7 +42,7 @@
   "name.bmfstown.zone.default": "%s %s",
   "msg.bmfstown.wand.point1": "[%s] Point 1 set at %s. Right-click the opposite corner for point 2.",
   "msg.bmfstown.wand.point_same": "Point 2 cannot be the same block as point 1",
-  "msg.bmfstown.wand.point2": "[%s] Point 2 set at %s. Sneak + right-click to confirm; swapping the wand discards it.",
+  "msg.bmfstown.wand.point2": "[%s] Point 2 set at %s (size %s). Sneak + right-click to confirm; swapping the wand discards it.",
   "msg.bmfstown.wand.both_set": "Both points set. Sneak + right-click to confirm; to re-select, swap the wand away and back.",
   "msg.bmfstown.wand.need_points": "No points selected yet. Right-click two opposite corners first.",
   "msg.bmfstown.wand.invalidated": "Selection discarded",
