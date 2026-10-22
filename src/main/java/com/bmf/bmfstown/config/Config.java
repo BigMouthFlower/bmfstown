@@ -168,6 +168,58 @@ public final class Config {
             .comment("检查是否该睡觉的频率（tick）", "Sleep check interval (ticks)")
             .defineInRange("sleep.checkIntervalTicks", 100, 1, 1200);
 
+    // ==========================================================
+    //  战士工作（跟随 / 站岗）
+    // ==========================================================
+
+    /** 站岗时的活动半径（格）。战士只能在岗哨位置周围这么大范围里移动/索敌。 */
+    public static final ModConfigSpec.IntValue WARRIOR_GUARD_RADIUS = BUILDER
+            .comment("站岗活动半径（格）", "Guard post patrol radius (blocks)")
+            .defineInRange("warrior.guardRadius", 10, 2, 64);
+
+    /** 跟随玩家时的移速。 */
+    public static final ModConfigSpec.DoubleValue WARRIOR_FOLLOW_SPEED = BUILDER
+            .comment("跟随玩家时的移速", "Speed when following a player")
+            .defineInRange("warrior.followSpeed", 1.15D, 0.05D, 4.0D);
+
+    /** 站岗巡逻的移速。 */
+    public static final ModConfigSpec.DoubleValue WARRIOR_GUARD_SPEED = BUILDER
+            .comment("站岗巡逻的移速", "Speed when patrolling a guard post")
+            .defineInRange("warrior.guardSpeed", 0.9D, 0.05D, 4.0D);
+
+    /** 离跟随目标超过这个距离（格）时直接传送归队。 */
+    public static final ModConfigSpec.IntValue WARRIOR_TELEPORT_DIST = BUILDER
+            .comment("离跟随目标超过这个距离（格）时传送归队",
+                    "Teleport back to the followed player beyond this distance (blocks)")
+            .defineInRange("warrior.teleportDistance", 14, 4, 128);
+
+    /** 战士的基础攻击力（属性注册早于配置加载，读取走 {@link #attackDamageOrDefault()}）。 */
+    public static final ModConfigSpec.DoubleValue WARRIOR_ATTACK_DAMAGE = BUILDER
+            .comment("战士的攻击力", "Warrior attack damage")
+            .defineInRange("warrior.attackDamage", 3.0D, 0.5D, 40.0D);
+
+    /** 是否把苦力怕纳入索敌。默认否——近战打苦力怕会触发自爆，得不偿失。 */
+    public static final ModConfigSpec.BooleanValue WARRIOR_ATTACK_CREEPERS = BUILDER
+            .comment("战士是否攻击苦力怕（近战打它容易触发自爆）",
+                    "Whether warriors target creepers (meleeing them usually triggers the explosion)")
+            .define("warrior.attackCreepers", false);
+
+    /** 击杀敌人一次涨多少格斗经验。 */
+    public static final ModConfigSpec.IntValue WARRIOR_XP_PER_KILL = BUILDER
+            .comment("战士击杀敌人获得的格斗经验", "Combat xp per kill for warriors")
+            .defineInRange("warrior.xpPerKill", 30, 0, 1000);
+
+    /** 工作期间多久结算一次经验（tick）。1200 = 每分钟 1 次。 */
+    public static final ModConfigSpec.IntValue WARRIOR_VIGILANCE_INTERVAL = BUILDER
+            .comment("工作期间警戒经验的结算间隔（tick），1200 = 每 60 秒",
+                    "Vigilance xp interval while working (ticks), 1200 = once a minute")
+            .defineInRange("warrior.vigilanceIntervalTicks", 1200, 20, 24000);
+
+    /** 每次结算的警戒经验。 */
+    public static final ModConfigSpec.IntValue WARRIOR_VIGILANCE_XP = BUILDER
+            .comment("每次结算的警戒经验", "Vigilance xp per interval")
+            .defineInRange("warrior.vigilanceXp", 1, 0, 1000);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     // ==========================================================
@@ -198,6 +250,11 @@ public final class Config {
     /** 感知范围；配置未加载时回落到默认值。 */
     public static double followRangeOrDefault() {
         return loaded() ? FOLLOW_RANGE.get() : 32.0D;
+    }
+
+    /** 战士攻击力；配置未加载时回落到默认值。 */
+    public static double attackDamageOrDefault() {
+        return loaded() ? WARRIOR_ATTACK_DAMAGE.get() : 3.0D;
     }
 
     private Config() {

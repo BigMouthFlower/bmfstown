@@ -76,6 +76,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final int PAGE_INFO = ResidentMenu.PAGE_INFO;
     /** 页编号：归属页（城镇列表）。 */
     private static final int PAGE_TOWN = ResidentMenu.PAGE_TOWN;
+    /** 页编号：工作页（职业分配 + 战士工作模式）。 */
+    private static final int PAGE_WORK = ResidentMenu.PAGE_WORK;
 
     /** 当前页。切页是纯客户端状态，不进网络。 */
     private int page = PAGE_INFO;
@@ -224,6 +226,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private void switchPage(int newPage) {
         this.page = newPage;
         this.townScroll = 0; // 每次进归属页都回到列表头，别让玩家一进来就对着列表中段发呆
+        this.workScroll = 0; // 工作页职业列表同理归零
 
         // 关键一步：把页码写回 menu 的静态状态，驱动 Slot.isActive()。
         //
@@ -264,6 +267,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
         if (this.page == PAGE_TOWN) {
             renderTownPageBg(gfx, mouseX, mouseY);
+        } else if (this.page == PAGE_WORK) {
+            renderWorkPageBg(gfx, mouseX, mouseY);
         } else {
             renderInfoPageBg(gfx);
         }
@@ -453,6 +458,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (this.page == PAGE_TOWN && slot.y < ResidentMenu.PLAYER_INV_Y) {
             return;
         }
+        // 工作页同样用列表顶替了镇民格子，一并隐藏
+        if (this.page == PAGE_WORK && slot.y < ResidentMenu.PLAYER_INV_Y) {
+            return;
+        }
         super.renderSlot(gfx, slot);
     }
 
@@ -474,6 +483,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
         if (this.page == PAGE_TOWN) {
             renderTownPageText(gfx);
+        } else if (this.page == PAGE_WORK) {
+            renderWorkPageText(gfx);
         } else {
             renderInfoPageText(gfx);
         }
@@ -515,10 +526,19 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 I18n.get(ResidentProfile.affectionTierOf(affection).displayName())
                         + " (" + affection + ")", 0x3B3BC4);
 
-        // 5. 专长 + 等级（静态信息，从档案读）
+        // 5. 专长 + 主技能段位（与工作页经验条同一数据源：技能经验体系）。
+        //    旧的全局 xp/level 已休眠，这里若还读 p.title()/p.level()，
+        //    就会出现"工作页显示老练、资料页显示新手"的两套口径打架。
         ResidentProfile p = resident.getProfile();
-        String profLine = I18n.get(p.profession().displayName())
-                + (p.profession().isReal() ? " · " + p.title() + " Lv" + p.level() : "");
+        String profLine = I18n.get(p.profession().displayName());
+        var mainSkill = p.profession().mainSkill();
+        if (mainSkill != null) {
+            int xp = p.skillXp(mainSkill);
+            int tier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
+            profLine += " · " + I18n.get(mainSkill.displayName())
+                    + I18n.get("gui.bmfstown.resident.stat.tier",
+                            com.bmf.bmfstown.entity.profile.SkillTiers.tierZh(tier));
+        }
         drawStat(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.profession"), profLine, 0x555555);
 
         // 6. 爱好一行（压缩显示，UI 空间有限）
@@ -614,6 +634,190 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private void drawStat(GuiGraphics gfx, int y, String label, String value, int color) {
         gfx.drawString(this.font, label, TEXT_PAD, y, 0x707070, false);
         gfx.drawString(this.font, value, TEXT_PAD + 32, y, color, false);
+    }
+
+    // ==========================================================
+    //  工作页（职业分配 + 战士工作模式）
+    // ==========================================================
+
+    /** 工作页按钮高度。 */
+    private static final int WORK_BTN_H = 14;
+    /** 工作页按钮之间的间距。 */
+    private static final int WORK_BTN_GAP = 3;
+    /** 工作页职业列表可见行数。职业再多，列表高度也固定，其余滚轮翻。 */
+    private static final int VISIBLE_PROF_ROWS = 3;
+    /** 职业列表行数。客户端与服务端都按 {@code ProfessionType.values()} 原顺序列，下标天然一致。 */
+    private static final int PROFESSION_ROW_COUNT = com.bmf.bmfstown.entity.profile.ProfessionType.values().length;
+    /** 工作页职业列表的滚动偏移。 */
+    private int workScroll = 0;
+
+    /** 工作模式按钮区的起始 y（GUI 相对）。列表区高度固定（见 {@link #VISIBLE_PROF_ROWS}）。 */
+    private int workButtonsTop() {
+        return rowsTop() + VISIBLE_PROF_ROWS * ROW_H + 3;
+    }
+
+    /** 当前镇民的职业（客户端档案已同步；镇民不在时返回 null）。 */
+    private com.bmf.bmfstown.entity.profile.ProfessionType currentProfession() {
+        Resident r = this.menu.getResident();
+        return r == null ? null : r.getProfile().profession();
+    }
+
+    /** 当前工作模式序号（读实体同步数据；镇民不在/数据未到时按无工作处理）。 */
+    private int currentWorkMode() {
+        Resident r = this.menu.getResident();
+        return r == null ? 0 : r.getWorkMode().ordinal();
+    }
+
+    /**
+     * 工作页背景：深灰列表（职业）+ 两个工作模式按钮。
+     * 视觉语言与归属页一致（深底 / 悬停提亮 / 选中加深 + 亮边）。
+     */
+    private void renderWorkPageBg(GuiGraphics gfx, int mouseX, int mouseY) {
+        int x = this.leftPos;
+        int y = this.topPos;
+        gfx.fill(x + 4, listTop(), x + this.imageWidth - 4, listBottom(), 0xFF373737);
+
+        // ---- 职业列表（滚动窗口：可见 3 行，其余滚轮翻） ----
+        var professions = com.bmf.bmfstown.entity.profile.ProfessionType.values();
+        var current = currentProfession();
+        for (int v = 0; v < VISIBLE_PROF_ROWS; v++) {
+            int i = this.workScroll + v;
+            if (i >= professions.length) {
+                break;
+            }
+            int rowY = y + rowsTop() + v * ROW_H;
+            boolean cur = current != null && current.ordinal() == i;
+            boolean hovered = !cur && mouseX >= x + 5 && mouseX < x + this.imageWidth - 5
+                    && mouseY >= rowY && mouseY < rowY + ROW_H;
+            if (cur) {
+                gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF141414);
+                gfx.renderOutline(x + 5, rowY, this.imageWidth - 10, ROW_H, 0xFFE0E0E0);
+            } else if (hovered) {
+                gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF4C4C4C);
+            }
+        }
+
+        // ---- 工作模式按钮（互斥：激活的那个亮起并描边） ----
+        int workMode = currentWorkMode();
+        int bx = x + 5;
+        int bw = this.imageWidth - 10;
+        int followY = y + workButtonsTop();
+        int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
+        drawWorkButton(gfx, bx, bw, followY, workMode == 1, mouseX, mouseY);
+        drawWorkButton(gfx, bx, bw, guardY, workMode == 2, mouseX, mouseY);
+    }
+
+    /**
+     * 画一个工作模式按钮。
+     *
+     * <h2>开/关的视觉语言（拟物按压）</h2>
+     * <ul>
+     *   <li><b>开（激活）</b>：整体下沉变暗（凹陷），上/左暗棱、下/右亮棱
+     *       ——像被按进去的实体按钮</li>
+     *   <li><b>关</b>：正常凸起，上/左亮棱、下/右暗棱，悬停提亮暗示可点</li>
+     * </ul>
+     */
+    private void drawWorkButton(GuiGraphics gfx, int x, int w, int y,
+                                boolean active, int mouseX, int mouseY) {
+        boolean hovered = !active && mouseX >= x && mouseX < x + w
+                && mouseY >= y && mouseY < y + WORK_BTN_H;
+        if (active) {
+            // 按下去：深底 + 上/左暗棱 + 下/右亮棱（凹陷感）
+            gfx.fill(x, y, x + w, y + WORK_BTN_H, 0xFF2E2E2E);
+            gfx.fill(x, y, x + w, y + 1, 0xFF161616);
+            gfx.fill(x, y, x + 1, y + WORK_BTN_H, 0xFF161616);
+            gfx.fill(x, y + WORK_BTN_H - 1, x + w, y + WORK_BTN_H, 0xFF8A8A8A);
+            gfx.fill(x + w - 1, y, x + w, y + WORK_BTN_H, 0xFF8A8A8A);
+        } else {
+            // 起来：亮底 + 上/左亮棱 + 下/右暗棱（凸起感）
+            gfx.fill(x, y, x + w, y + WORK_BTN_H, hovered ? 0xFF767676 : 0xFF666666);
+            gfx.fill(x, y, x + w, y + 1, 0xFF9E9E9E);
+            gfx.fill(x, y, x + 1, y + WORK_BTN_H, 0xFF9E9E9E);
+            gfx.fill(x, y + WORK_BTN_H - 1, x + w, y + WORK_BTN_H, 0xFF3A3A3A);
+            gfx.fill(x + w - 1, y, x + w, y + WORK_BTN_H, 0xFF3A3A3A);
+        }
+    }
+
+    /** 工作页文字：页名、职业行（✔ 选中）、按钮文字、底部提示。 */
+    private void renderWorkPageText(GuiGraphics gfx) {
+        Resident resident = this.menu.getResident();
+        if (resident != null) {
+            String name = resident.getName().getString();
+            gfx.drawString(this.font, name,
+                    this.imageWidth - 6 - this.font.width(name), 4, 0x303030, false);
+        }
+
+        // ---- 职业行文字（滚动窗口，与背景层同一偏移） ----
+        var professions = com.bmf.bmfstown.entity.profile.ProfessionType.values();
+        var current = currentProfession();
+        for (int v = 0; v < VISIBLE_PROF_ROWS; v++) {
+            int i = this.workScroll + v;
+            if (i >= professions.length) {
+                break;
+            }
+            int rowY = rowsTop() + v * ROW_H + 3;
+            boolean cur = current != null && current.ordinal() == i;
+            String label = I18n.get(professions[i].displayName());
+            int color = cur ? 0xFFFFFF : 0xE0E0E0;
+            gfx.drawString(this.font, (cur ? "✔ " : "  ") + label, 8, rowY, color, false);
+        }
+
+        // ---- 按钮文字（水平居中） ----
+        int workMode = currentWorkMode();
+        int bw = this.imageWidth - 10;
+        int followY = workButtonsTop();
+        int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
+        String followLabel = I18n.get(workMode == 1
+                ? "gui.bmfstown.resident.work.follow_btn_on"
+                : "gui.bmfstown.resident.work.follow_btn_off");
+        String guardLabel = I18n.get(workMode == 2
+                ? "gui.bmfstown.resident.work.guard_btn_on"
+                : "gui.bmfstown.resident.work.guard_btn");
+        // 开启态文字用亮绿（配合凹陷底），关闭态普通亮灰——一眼分清开关
+        drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
+        drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
+
+        // ---- 说明（两行短句，避免超框） ----
+        int hintY = ResidentMenu.STATS_Y;
+        if (current != null && current.mainSkill() != null) {
+            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.hint_follow"), 8, hintY, 0x555555, false);
+            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.hint_guard"), 8, hintY + LINE, 0x555555, false);
+        } else {
+            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.hint_need_warrior"), 8, hintY, 0x555555, false);
+        }
+
+        // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框） ----
+        if (current != null && current.mainSkill() != null && resident != null) {
+            var skill = current.mainSkill();
+            int xp = resident.getProfile().skillXp(skill);
+            int tier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
+            String skillName = I18n.get(skill.displayName());
+            String tierName = com.bmf.bmfstown.entity.profile.SkillTiers.tierZh(tier);
+            String text = tier >= com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER
+                    ? I18n.get("gui.bmfstown.resident.work.xp_max", skillName, tierName)
+                    : I18n.get("gui.bmfstown.resident.work.xp",
+                            skillName, tierName, xp,
+                            com.bmf.bmfstown.entity.profile.SkillTiers.xpToNext(xp) + xp);
+            int textY = hintY + 2 * LINE + 1;
+            gfx.drawString(this.font, text, 8, textY, 0x303030, false);
+
+            int barX = 8;
+            int barY = textY + 11;
+            int barW = this.imageWidth - 16;
+            int barH = 5;
+            gfx.fill(barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, 0xFF000000);
+            gfx.fill(barX, barY, barX + barW, barY + barH, 0xFF3D3D3D);
+            double frac = com.bmf.bmfstown.entity.profile.SkillTiers.progress(xp);
+            int filled = (int) Math.round(barW * frac);
+            if (filled > 0) {
+                gfx.fill(barX, barY, barX + filled, barY + barH, 0xFF7EFC20);
+            }
+        }
+    }
+
+    /** 在面板横向范围内居中画一行字。 */
+    private void drawCenteredInPanel(GuiGraphics gfx, String text, int x, int w, int y, int color) {
+        gfx.drawString(this.font, text, x + (w - this.font.width(text)) / 2, y, color, false);
     }
 
     // ==========================================================
@@ -748,13 +952,15 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
     /** 页签文字的语言文件 key，下标即页编号。 */
     private static final String[] TAB_KEYS = {
-            "gui.bmfstown.resident.tab.info", "gui.bmfstown.resident.tab.town"};
+            "gui.bmfstown.resident.tab.info",
+            "gui.bmfstown.resident.tab.town",
+            "gui.bmfstown.resident.tab.work"};
     /** 页签文字（每次绘制时从 lang 取，语言切换即时生效）。 */
     private static String[] tabNames() {
-        return new String[]{I18n.get(TAB_KEYS[0]), I18n.get(TAB_KEYS[1])};
+        return new String[]{I18n.get(TAB_KEYS[0]), I18n.get(TAB_KEYS[1]), I18n.get(TAB_KEYS[2])};
     }
     /** 页签宽度（px），与 TAB_KEYS 一一对应。 */
-    private static final int[] TAB_WIDTHS = {38, 32};
+    private static final int[] TAB_WIDTHS = {38, 32, 32};
 
     /**
      * 画左上角的页签。
@@ -820,6 +1026,56 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (button == 0 && clickTab(mouseX, mouseY)) {
             return true;
         }
+        // ---- 工作页点击：职业行 + 两个工作模式按钮 ----
+        if (this.page == PAGE_WORK && button == 0) {
+            int listX = this.leftPos + 5;
+            int listW = this.imageWidth - 10;
+
+            // 职业行（滚动窗口：可见行 v → 实际下标 workScroll + v）
+            int rowTop = this.topPos + rowsTop();
+            int rel = (int) (mouseY - rowTop);
+            if (mouseX >= listX && mouseX < listX + listW
+                    && rel >= 0 && rel < VISIBLE_PROF_ROWS * ROW_H) {
+                int index = this.workScroll + rel / ROW_H;
+                if (index < PROFESSION_ROW_COUNT) {
+                    clickMenu(ResidentMenu.BTN_PROFESSION_BASE + index);
+                }
+                return true;
+            }
+
+            // 跟随按钮（切换开/关，服务端落账并互斥清除站岗）
+            int followY = this.topPos + workButtonsTop();
+            int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
+            if (mouseX >= listX && mouseX < listX + listW) {
+                if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
+                    // 走自定义包（与站岗同链路），菜单按钮协议留作兜底
+                    Resident r = this.menu.getResident();
+                    if (r != null) {
+                        ModNetworking.sendToServer(new ModNetworking.WorkFollowPayload(r.getId()));
+                    }
+                    return true;
+                }
+                // 站岗按钮：关界面 → 客户端进入红色预览，右键确认/Shift 取消
+                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H) {
+                    Resident r = this.menu.getResident();
+                    if (r != null && r.isWarrior()) {
+                        clickMenu(ResidentMenu.BTN_GUARD_POST);
+                        if (this.minecraft != null) {
+                            this.minecraft.setScreen(null);
+                        }
+                        GuardPostClient.startPick(r.getId());
+                    }
+                    return true; // 非战士点也吞掉（服务端会给提示）
+                }
+            }
+
+            // 上板其余区域是死区（下面躺着被隐藏的格子）
+            if (mouseX >= this.leftPos && mouseX < this.leftPos + this.imageWidth
+                    && mouseY >= this.topPos && mouseY < this.topPos + ResidentMenu.PLAYER_INV_Y - 4) {
+                return true;
+            }
+        }
+
         if (this.page == PAGE_TOWN && button == 0) {
             // ---- 分节标签点击（城镇 / 住宅）----
             if (clickSectionTab(mouseX, mouseY)) {
@@ -868,6 +1124,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (this.page == PAGE_TOWN) {
             int max = Math.max(0, currentRows().size() - MAX_VISIBLE);
             this.townScroll = Mth.clamp(this.townScroll - (int) Math.signum(scrollY), 0, max);
+            return true;
+        }
+        if (this.page == PAGE_WORK) {
+            // 职业列表滚轮：可见 3 行，翻到列表尾为止
+            int max = Math.max(0, PROFESSION_ROW_COUNT - VISIBLE_PROF_ROWS);
+            this.workScroll = Mth.clamp(this.workScroll - (int) Math.signum(scrollY), 0, max);
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);

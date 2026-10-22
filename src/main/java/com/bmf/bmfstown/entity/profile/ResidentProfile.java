@@ -6,6 +6,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.util.RandomSource;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -67,7 +71,13 @@ public record ResidentProfile(
         long housingAssignedAt,
 
         // ---- E 组：关系 ----
-        int affection
+        int affection,
+
+        // ---- F 组：技能与成长（v0.8 矮人要塞式"干中学"） ----
+        /** 每个技能一条独立经验条，只增不减。读写走 {@link #skillXp} / {@link #withSkillXp}。 */
+        Map<SkillType, Integer> skills,
+        /** 已选的 perk id 列表（perk 系统占位，当前只存不用）。 */
+        List<String> perks
 ) {
 
     // ==========================================================
@@ -122,7 +132,9 @@ public record ResidentProfile(
                 null,                                        // 无住所
                 null,                                        // 未分配住宅区
                 0L,                                          // 无分配时间
-                Config.INITIAL_AFFECTION.get()               // 好感（可配置）
+                Config.INITIAL_AFFECTION.get(),              // 好感（可配置）
+                Map.of(),                                    // 技能：全新镇民全 0
+                List.of()                                    // 尚未选择任何 perk
         );
     }
 
@@ -304,21 +316,22 @@ public record ResidentProfile(
         return new ResidentProfile(clamp(value, 0, MAX_HUNGER), mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection);
+                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
     }
 
     public ResidentProfile withMood(int value) {
         return new ResidentProfile(hunger, clamp(value, 0, MAX_MOOD), profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection);
+                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
     }
 
     public ResidentProfile withAffection(int value) {
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, clamp(value, 0, MAX_AFFECTION));
+                housingZoneId, housingAssignedAt, clamp(value, 0, MAX_AFFECTION),
+                this.skills, this.perks);
     }
 
     public ResidentProfile withProfession(ProfessionType type) {
@@ -326,28 +339,28 @@ public record ResidentProfile(
         return new ResidentProfile(hunger, mood, type, 0,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection);
+                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
     }
 
     public ResidentProfile withXp(int value) {
         return new ResidentProfile(hunger, mood, profession, Math.max(0, value),
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection);
+                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
     }
 
     public ResidentProfile withTownId(UUID value) {
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, value, homePos,
-                housingZoneId, housingAssignedAt, affection);
+                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
     }
 
     public ResidentProfile withHomePos(BlockPos value) {
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, value,
-                housingZoneId, housingAssignedAt, affection);
+                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
     }
 
     /**
@@ -360,7 +373,7 @@ public record ResidentProfile(
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                value, value == null ? 0L : this.housingAssignedAt, affection);
+                value, value == null ? 0L : this.housingAssignedAt, affection, this.skills, this.perks);
     }
 
     /** 只改分配时间戳（一般由 {@link #withHousingZoneId} 配合使用）。 */
@@ -368,7 +381,7 @@ public record ResidentProfile(
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, value, affection);
+                housingZoneId, value, affection, this.skills, this.perks);
     }
 
     /** 一次设置住宅绑定 + 分配时间（服务端分配入口用）。 */
@@ -376,11 +389,82 @@ public record ResidentProfile(
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                zoneId, zoneId == null ? 0L : assignedAt, affection);
+                zoneId, zoneId == null ? 0L : assignedAt, affection, this.skills, this.perks);
     }
 
     private static int clamp(int v, int min, int max) {
         return Math.max(min, Math.min(max, v));
+    }
+
+    // ==========================================================
+    //  技能（v0.8：每个技能一条独立经验条，干中学）
+    // ==========================================================
+
+    /** 某个技能的累计经验（没涨过返回 0）。 */
+    public int skillXp(SkillType type) {
+        return this.skills.getOrDefault(type, 0);
+    }
+
+    /** 某个技能的当前段位（0 生疏 ~ 9 神话，见 {@link SkillTiers}）。 */
+    public int skillTier(SkillType type) {
+        return SkillTiers.tierOf(this.skillXp(type));
+    }
+
+    /** 增加技能经验并返回新档案（amount 只增不减，负数按 0 处理）。 */
+    public ResidentProfile addSkillXp(SkillType type, int amount) {
+        if (amount <= 0) {
+            return this;
+        }
+        return withSkillXp(type, this.skillXp(type) + amount);
+    }
+
+    /** 直接设置某个技能的经验（一般只有初始化/命令用；常规成长走 {@link #addSkillXp}）。 */
+    public ResidentProfile withSkillXp(SkillType type, int value) {
+        Map<SkillType, Integer> copy = new HashMap<>(this.skills);
+        copy.put(type, Math.max(0, value));
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, housingAssignedAt, affection, copy, this.perks);
+    }
+
+    /** 选择一个 perk（去重）。perk 系统占位——当前没有调用方，数据层先行。 */
+    public ResidentProfile withPerk(String perkId) {
+        if (perkId == null || this.perks.contains(perkId)) {
+            return this;
+        }
+        List<String> copy = new ArrayList<>(this.perks);
+        copy.add(perkId);
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, housingAssignedAt, affection, this.skills, copy);
+    }
+
+    // ---- NBT 辅助：老存档没有 Skills/Perks 时给空值 ----
+
+    private static Map<SkillType, Integer> loadSkills(CompoundTag tag) {
+        Map<SkillType, Integer> map = new HashMap<>();
+        if (tag.contains("Skills")) {
+            CompoundTag skillTag = tag.getCompound("Skills");
+            for (SkillType type : SkillType.values()) {
+                if (skillTag.contains(type.getSerializedName())) {
+                    map.put(type, Math.max(0, skillTag.getInt(type.getSerializedName())));
+                }
+            }
+        }
+        return map;
+    }
+
+    private static List<String> loadPerks(CompoundTag tag) {
+        List<String> list = new ArrayList<>();
+        if (tag.contains("Perks")) {
+            net.minecraft.nbt.ListTag perkTag = tag.getList("Perks", net.minecraft.nbt.Tag.TAG_STRING);
+            for (int i = 0; i < perkTag.size(); i++) {
+                list.add(perkTag.getString(i));
+            }
+        }
+        return list;
     }
 
     // ==========================================================
@@ -420,6 +504,26 @@ public record ResidentProfile(
             tag.putUUID("HousingZoneId", this.housingZoneId);
         }
         tag.putLong("HousingAssignedAt", this.housingAssignedAt);
+
+        // 技能经验（v0.8）：一个复合标签，key = 技能小写名。
+        // 没涨过的技能不写，老存档/新档都兼容。
+        CompoundTag skillTag = new CompoundTag();
+        for (Map.Entry<SkillType, Integer> e : this.skills.entrySet()) {
+            if (e.getValue() > 0) {
+                skillTag.putInt(e.getKey().getSerializedName(), e.getValue());
+            }
+        }
+        if (!skillTag.isEmpty()) {
+            tag.put("Skills", skillTag);
+        }
+        // perk（占位）：只存已选 id，perk 系统上线后语义不变
+        if (!this.perks.isEmpty()) {
+            net.minecraft.nbt.ListTag perkTag = new net.minecraft.nbt.ListTag();
+            for (String id : this.perks) {
+                perkTag.add(net.minecraft.nbt.StringTag.valueOf(id));
+            }
+            tag.put("Perks", perkTag);
+        }
         return tag;
     }
 
@@ -446,7 +550,9 @@ public record ResidentProfile(
                 tag.contains("HomePos") ? BlockPos.of(tag.getLong("HomePos")) : null,
                 tag.hasUUID("HousingZoneId") ? tag.getUUID("HousingZoneId") : null,
                 tag.getLong("HousingAssignedAt"),
-                tag.contains("Affection") ? tag.getInt("Affection") : Config.INITIAL_AFFECTION.get()
+                tag.contains("Affection") ? tag.getInt("Affection") : Config.INITIAL_AFFECTION.get(),
+                loadSkills(tag),
+                loadPerks(tag)
         );
     }
 

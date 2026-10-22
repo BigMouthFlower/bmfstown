@@ -2,6 +2,7 @@ package com.bmf.bmfstown.menu;
 
 import com.bmf.bmfstown.entity.Resident;
 import com.bmf.bmfstown.network.ModNetworking;
+import com.bmf.bmfstown.entity.profile.ProfessionType;
 import com.bmf.bmfstown.entity.profile.ResidentInventory;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
@@ -144,8 +145,10 @@ public class ResidentMenu extends AbstractContainerMenu {
     public static final int DATA_MOOD = 2;
     /** 数据槽索引：好感度（0~100）。 */
     public static final int DATA_AFFECTION = 3;
+    /** 数据槽索引：工作模式（{@code WorkMode.ordinal()}：0 无 / 1 跟随 / 2 站岗）。 */
+    public static final int DATA_WORKMODE = 4;
     /** 数据槽总数。客户端和服务端必须一致，否则索引会错位。 */
-    public static final int DATA_COUNT = 4;
+    public static final int DATA_COUNT = 5;
 
     // ==========================================================
     //  菜单按钮（归属城镇，v0.5）
@@ -162,6 +165,8 @@ public class ResidentMenu extends AbstractContainerMenu {
     public static final int PAGE_INFO = 0;
     /** 页编号：归属页（城镇列表）。 */
     public static final int PAGE_TOWN = 1;
+    /** 页编号：工作页（职业分配 + 战士工作模式）。 */
+    public static final int PAGE_WORK = 2;
 
     /**
      * 客户端当前页（0=资料页）。
@@ -207,6 +212,30 @@ public class ResidentMenu extends AbstractContainerMenu {
      */
     public static final int BTN_HOUSING_BASE = 400;
 
+    // ==========================================================
+    //  菜单按钮（工作页）
+    // ==========================================================
+
+    /**
+     * 按钮编号：跟随开关。开着 → 关（回 NONE）；关着 → 开（FOLLOW，
+     * 目标玩家 = 点击按钮的玩家）。
+     */
+    public static final int BTN_FOLLOW = 600;
+
+    /**
+     * 按钮编号：站岗（选取位置）。服务端对它<b>只做职业校验</b>——
+     * 真正进入"选位置"状态是客户端本地行为（关闭界面 + 红色预览），
+     * 玩家右键确认后走 {@code WorkGuardPostPayload} 由服务端落账。
+     */
+    public static final int BTN_GUARD_POST = 601;
+
+    /**
+     * 按钮编号基准：分配职业 = 700 + {@code ProfessionType.values()} 下标。
+     * 客户端工作页的职业列表与服务端都按 {@code values()} 原顺序列，
+     * 下标天然一致（与城镇分配同一套约定）。
+     */
+    public static final int BTN_PROFESSION_BASE = 700;
+
     /**
      * 客户端点了按钮，服务端在这里处理。
      *
@@ -250,6 +279,60 @@ public class ResidentMenu extends AbstractContainerMenu {
                     .withTownId(null).withHousing(null, 0L));
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.resident.unbound", this.resident.getName().getString()), true);
+            return true;
+        }
+
+        // ---- 工作页按钮（600/700+）：必须放在住宅(400+)判断之前，
+        // 否则会被 `id >= BTN_HOUSING_BASE` 分支吞掉 ----
+        if (id == BTN_FOLLOW) {
+            if (!this.resident.isWarrior()) {
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_warrior"), true);
+                return true;
+            }
+            if (this.resident.getWorkMode() == com.bmf.bmfstown.entity.WorkMode.FOLLOW) {
+                this.resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.NONE, null, null);
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.follow_off", this.resident.getName().getString()), true);
+            } else {
+                this.resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.FOLLOW,
+                        player.getUUID(), null);
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.follow_on", this.resident.getName().getString()), true);
+            }
+            return true;
+        }
+
+        if (id == BTN_GUARD_POST) {
+            if (!this.resident.isWarrior()) {
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_warrior"), true);
+                return true;
+            }
+            // 职业合法：客户端已经在本地进入"选取岗哨位置"状态，
+            // 服务端等 WorkGuardPostPayload 确认包再落账，这里无事可做。
+            return true;
+        }
+
+        if (id >= BTN_PROFESSION_BASE) {
+            int index = id - BTN_PROFESSION_BASE;
+            ProfessionType[] all = ProfessionType.values();
+            if (index < 0 || index >= all.length) {
+                return true; // 列表刚变过，下标失效：忽略
+            }
+            ProfessionType type = all[index];
+            if (this.resident.getProfession() == type) {
+                return true; // 重复点不算错
+            }
+            this.resident.setProfile(this.resident.getProfile().withProfession(type));
+            // 换成非战士职业 → 战士工作模式一并作废（岗位跟着职业走）
+            if (type != ProfessionType.WARRIOR) {
+                this.resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.NONE, null, null);
+            }
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.work.profession_set",
+                    this.resident.getName().getString(),
+                    net.minecraft.network.chat.Component.translatable(type.displayName()).getString()), true);
             return true;
         }
 
@@ -416,6 +499,7 @@ public class ResidentMenu extends AbstractContainerMenu {
                     case DATA_HUNGER -> resident.getProfile().hunger();
                     case DATA_MOOD -> resident.getProfile().mood();
                     case DATA_AFFECTION -> resident.getProfile().affection();
+                    case DATA_WORKMODE -> resident.getWorkMode().ordinal();
                     default -> 0;
                 };
             }

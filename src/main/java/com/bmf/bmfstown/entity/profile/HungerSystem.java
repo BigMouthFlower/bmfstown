@@ -73,6 +73,21 @@ public final class HungerSystem {
      * @return 背包槽位索引；没有能吃的就返回 {@code -1}
      */
     public static int findFoodSlot(ResidentInventory inventory, ResidentProfile profile) {
+        return findFoodSlot(inventory, profile, false);
+    }
+
+    /**
+     * 在背包里找"该吃的那个"（带"回血优先"放宽）。
+     *
+     * <p>{@code allowWaste} 为 true 时跳过"不浪费"门槛——用于
+     * "血没满且饥饿够不到回血线"的场合：这时哪怕撑溢出也要吃，
+     * 否则饥饿 16 拿着牛排(8)的镇民会因为"溢出"永远不开口，
+     * 卡在回血线（18）下面，一点点血都回不上。
+     *
+     * @return 背包槽位索引；没有能吃的就返回 {@code -1}
+     */
+    public static int findFoodSlot(ResidentInventory inventory, ResidentProfile profile,
+                                   boolean allowWaste) {
         int bestSlot = -1;
         int bestNutrition = Integer.MAX_VALUE;
 
@@ -86,8 +101,8 @@ public final class HungerSystem {
                 continue;
             }
             int nutrition = food.nutrition();
-            // 必须"吃了不浪费"
-            if (!profile.canEatWithoutWaste(nutrition)) {
+            // 必须"吃了不浪费"（回血优先模式下放宽）
+            if (!allowWaste && !profile.canEatWithoutWaste(nutrition)) {
                 continue;
             }
             // 优先营养值最低的

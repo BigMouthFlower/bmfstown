@@ -25,12 +25,12 @@ public enum ProfessionType implements StringRepresentable {
     NONE("none", "无", 0),
 
     /**
-     * 卫士。守卫城镇，击杀入侵的敌对生物。
+     * 战士。两种工作模式：跟随玩家战斗（可离开领地）/ 在岗哨位置周围站岗。
      *
-     * <p>需要岗位（巡逻点/范围）才会真正开始工作。岗位系统尚未实现，
-     * 因此当前版本即使设为卫士也不会主动攻击——这是<b>预期行为</b>。
+     * <p>历史注记：最初这个职业叫"卫士"（guard），与"战士"讨论后合并——
+     * 老存档里序列化的 "guard" 会在 {@link #byName} 中自动映射到本职业。
      */
-    GUARD("guard", "卫士", 8);
+    WARRIOR("warrior", "战士", 10);
 
     private final String name;
     private final String zhName;
@@ -66,8 +66,23 @@ public enum ProfessionType implements StringRepresentable {
         return this != NONE;
     }
 
-    /** 反序列化。未知名字一律回落到 {@link #NONE}，保证老存档不崩。 */
+    /**
+     * 该职业的主技能（UI 经验条显示用）。
+     * 无业没有经验条；战士主修格斗（警戒是副修，入账但不在此显示）。
+     * 以后新职业在这里补映射。
+     */
+    public SkillType mainSkill() {
+        return this == WARRIOR ? SkillType.COMBAT : null;
+    }
+
+    /**
+     * 反序列化。未知名字一律回落到 {@link #NONE}，保证老存档不崩。
+     * 兼容映射：老存档的 "guard"（卫士）合并进战士。
+     */
     public static ProfessionType byName(String name) {
+        if ("guard".equals(name)) {
+            return WARRIOR;
+        }
         for (ProfessionType v : values()) {
             if (v.name.equals(name)) {
                 return v;

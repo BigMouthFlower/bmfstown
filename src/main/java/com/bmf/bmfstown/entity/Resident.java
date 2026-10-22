@@ -33,9 +33,12 @@ import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.SpawnGroupData;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import com.bmf.bmfstown.entity.profile.SkillType;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
+import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
+import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.ItemStack;
@@ -92,6 +95,17 @@ public class Resident extends PathfinderMob {
      */
     private static final EntityDataAccessor<ResidentProfile> DATA_PROFILE =
             SynchedEntityData.defineId(Resident.class, ModDataSerializers.PROFILE.get());
+
+    /**
+     * 工作模式（{@code WorkMode.ordinal()}）。
+     *
+     * <h2>为什么走 SynchedEntityData 而不是菜单数据槽</h2>
+     * 工作页的按钮开/关状态要从这里读。曾用菜单数据槽
+     * （{@code ContainerData}）同步，实测客户端收不到更新（按钮状态卡死）；
+     * 而档案/饥饿等走实体同步数据一直是通的。统一走已被验证的通道。
+     */
+    private static final EntityDataAccessor<Integer> DATA_WORK =
+            SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.INT);
 
     /**
      * 背包（27 格）。
@@ -162,6 +176,16 @@ public class Resident extends PathfinderMob {
      * 所以吵醒后 100 tick（5 秒）内不允许再次自动入睡。
      */
     private int sleepKickCooldown = 0;
+
+    // ---- 战士工作状态（跟随 / 站岗） ----
+    // 模式值存在实体同步数据 DATA_WORK 上（见 getWorkMode）；
+    // 互斥由 setWorkMode 保证：设置一种时另一种（连同旧数据）一并清除。
+    /** 站岗模式的岗哨方块（GUARD_POST 模式的锚点）。 */
+    @Nullable
+    private BlockPos guardPost = null;
+    /** 跟随模式的目标玩家 UUID（FOLLOW 模式的锚点）。 */
+    @Nullable
+    private UUID followPlayerId = null;
 
     /**
      * 距离上一次回血累积的 tick 数。
@@ -305,7 +329,8 @@ public class Resident extends PathfinderMob {
         return PathfinderMob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, Config.maxHealthOrDefault())
                 .add(Attributes.MOVEMENT_SPEED, Config.movementSpeedOrDefault())
-                .add(Attributes.FOLLOW_RANGE, Config.followRangeOrDefault());
+                .add(Attributes.FOLLOW_RANGE, Config.followRangeOrDefault())
+                .add(Attributes.ATTACK_DAMAGE, Config.attackDamageOrDefault());
     }
 
     // ==========================================================
@@ -334,6 +359,17 @@ public class Resident extends PathfinderMob {
 
         // 优先级 7：无事可做时东张西望
         this.goalSelector.addGoal(7, new RandomLookAroundGoal(this));
+
+        // ---- 战士工作（只在 workMode 对应时激活，见 WarriorGoals） ----
+        // 移动战（近战攻击）优先级 3，能打断漫步；
+        // 跟随/站岗两个移动 Goal 优先级 4，由 workMode 互斥，同时只活一个。
+        this.goalSelector.addGoal(3, new MeleeAttackGoal(this, 1.0D, true));
+        this.goalSelector.addGoal(4, new WarriorGoals.FollowPlayerGoal(this));
+        this.goalSelector.addGoal(4, new WarriorGoals.GuardPostGoal(this));
+        // 索敌：锚点半径内的敌对生物（跟随=玩家身边，站岗=岗哨周围）；
+        // 被打还手是所有镇民的保底本能。
+        this.targetSelector.addGoal(2, new WarriorGoals.MonsterTargetGoal(this));
+        this.targetSelector.addGoal(3, new HurtByTargetGoal(this));
     }
 
     // ==========================================================
@@ -345,6 +381,7 @@ public class Resident extends PathfinderMob {
         super.defineSynchedData(builder);
         // 默认档案：先给一份"满饥饿满心情"的，finalizeSpawn 里会替换成随机的
         builder.define(DATA_PROFILE, ResidentProfile.createRandom(this.random));
+        builder.define(DATA_WORK, WorkMode.NONE.ordinal());
     }
 
     // ==========================================================
@@ -391,6 +428,85 @@ public class Resident extends PathfinderMob {
 
     public int getLevel() {
         return this.getProfile().level();
+    }
+
+    // ---- 战士工作状态 ----
+
+    /** 当前工作模式。客户端/服务端都走实体同步数据（见 {@link #DATA_WORK}）。 */
+    public WorkMode getWorkMode() {
+        int ordinal = this.entityData.get(DATA_WORK);
+        WorkMode[] all = WorkMode.values();
+        return ordinal >= 0 && ordinal < all.length ? all[ordinal] : WorkMode.NONE;
+    }
+
+    /** 写工作模式（同步到客户端）。仅服务端调用。 */
+    private void setWorkModeRaw(WorkMode mode) {
+        this.entityData.set(DATA_WORK, mode.ordinal());
+    }
+
+    /** 站岗模式的岗哨方块（其他模式为 null）。 */
+    @Nullable
+    public BlockPos getGuardPost() {
+        return this.guardPost;
+    }
+
+    /** 跟随模式的目标玩家 UUID（其他模式为 null）。 */
+    @Nullable
+    public UUID getGuardFollowPlayerId() {
+        return this.followPlayerId;
+    }
+
+    /**
+     * 设置工作模式——两种模式互斥的唯一权威入口。
+     *
+     * <p>切换模式时清掉所有与旧模式绑定的状态：
+     * 旧锚点、攻击目标、导航、半截的觅食/睡觉流程
+     * （跟着你打怪时他不该突然躺回床上）。
+     *
+     * @param mode           新模式
+     * @param followPlayerId FOLLOW 模式的目标玩家；其他模式传 null
+     * @param post           GUARD_POST 模式的岗哨方块；其他模式传 null
+     */
+    public void setWorkMode(WorkMode mode, @Nullable UUID followPlayerId, @Nullable BlockPos post) {
+        this.setWorkModeRaw(mode);
+        this.followPlayerId = followPlayerId;
+        this.guardPost = post;
+        // 旧流程全部作废
+        this.setTarget(null);
+        this.getNavigation().stop();
+        this.forageState = ForageState.NONE;
+        this.forageChest = null;
+        if (this.sleepState != SleepState.AWAKE) {
+            // 半截的回家/找床/睡姿就地终止；wakeFromBed 会给 5 秒防回床冷却
+            this.abortSleep();
+            this.wakeFromBed(false);
+        }
+    }
+
+    /** 是否是战士（能否执行战斗类工作）。 */
+    public boolean isWarrior() {
+        return this.getProfession() == ProfessionType.WARRIOR;
+    }
+
+    /** 涨一条职业技能经验（干中学的唯一入口，服务端专用）。 */
+    public void addSkillXp(SkillType type, int amount) {
+        if (this.level().isClientSide()) {
+            return;
+        }
+        this.updateProfile(p -> p.addSkillXp(type, amount));
+    }
+
+    /**
+     * "回血优先"进食放宽：血没满、且当前饥饿够不到回血线。
+     *
+     * <p>此时宁可让饥饿溢出（浪费一点营养）也要吃——否则会出现
+     * "饥饿 16、拿着牛排(8)，因溢出永远不吃 → 永远卡在回血线(18)
+     * 下面 → 一滴血都回不上"的死锁。正常场合（满血或已过回血线）
+     * 仍严格遵守"吃了不浪费"。
+     */
+    private boolean wantsMedicalEat() {
+        return this.getHealth() < this.getMaxHealth()
+                && this.getProfile().hunger() < Config.REGEN_HUNGER_THRESHOLD.get();
     }
 
     /** 背包（仅服务端有意义）。 */
@@ -564,6 +680,16 @@ public class Resident extends PathfinderMob {
         tag.put("ResidentProfile", this.getProfile().save());
         // 背包（需要注册表来保存物品的数据组件）
         tag.put("ResidentInventory", this.inventory.save(this.registryAccess()));
+        // 战士工作状态（跨存档保留；NONE 时不用写）
+        if (this.getWorkMode() != WorkMode.NONE) {
+            tag.putString("WorkMode", this.getWorkMode().name());
+        }
+        if (this.guardPost != null) {
+            tag.putLong("GuardPost", this.guardPost.asLong());
+        }
+        if (this.followPlayerId != null) {
+            tag.putUUID("FollowPlayer", this.followPlayerId);
+        }
     }
 
     @Override
@@ -580,6 +706,21 @@ public class Resident extends PathfinderMob {
         if (tag.contains("ResidentInventory", Tag.TAG_COMPOUND)) {
             this.inventory.load(tag.getCompound("ResidentInventory"), this.registryAccess());
         }
+
+        // 战士工作状态（老存档没有这些键，保持默认 NONE）
+        WorkMode savedMode = WorkMode.NONE;
+        if (tag.contains("WorkMode", Tag.TAG_STRING)) {
+            try {
+                savedMode = WorkMode.valueOf(tag.getString("WorkMode"));
+            } catch (IllegalArgumentException ignored) {
+                // 未知模式名：当作无工作
+            }
+        }
+        this.setWorkModeRaw(savedMode);
+        this.guardPost = tag.contains("GuardPost", Tag.TAG_LONG)
+                ? BlockPos.of(tag.getLong("GuardPost")) : null;
+        this.followPlayerId = tag.hasUUID("FollowPlayer")
+                ? tag.getUUID("FollowPlayer") : null;
 
         // 兜底：老存档 / summon 出来的镇民没有名字，补一个
         if (!this.hasCustomName()) {
@@ -622,16 +763,21 @@ public class Resident extends PathfinderMob {
         // ---- 3. 回血 ----
         this.tickRegeneration();
 
-        // ---- 4. 城镇归属约束 ----
-        this.tickTownConfinement();
+        // ---- 4. 城镇归属约束（跟随玩家时允许出领地，跳过） ----
+        if (this.getWorkMode() != WorkMode.FOLLOW) {
+            this.tickTownConfinement();
+        }
 
-        // ---- 5. 觅食（就餐区箱子补给；睡着/回家路上不觅食）----
-        if (this.sleepState == SleepState.AWAKE) {
+        // ---- 5. 觅食（就餐区箱子补给；睡着/回家路上/跟随玩家时不觅食）----
+        if (this.sleepState == SleepState.AWAKE && this.getWorkMode() != WorkMode.FOLLOW) {
             this.tickForaging();
         }
 
-        // ---- 6. 睡眠（夜晚回住宅区躺床）----
-        this.tickSleep();
+        // ---- 6. 睡眠（夜晚回住宅区躺床；战士工作中不睡觉——
+        //      跟随时贴身守夜，站岗时守岗到天亮；饮食区照常去）----
+        if (this.getWorkMode() == WorkMode.NONE) {
+            this.tickSleep();
+        }
     }
 
     // ==========================================================
@@ -1441,9 +1587,14 @@ public class Resident extends PathfinderMob {
         @Override
         public boolean canUse() {
             // 睡着了不溜达：漫步一开跑就会把躺好的镇民拽下床
-            if (this.mob instanceof Resident resident
-                    && resident.sleepState == SleepState.SLEEPING) {
-                return false;
+            if (this.mob instanceof Resident resident) {
+                if (resident.sleepState == SleepState.SLEEPING) {
+                    return false;
+                }
+                // 工作中（跟随/站岗）不溜达——巡逻和跟着玩家就是他的"漫步"
+                if (resident.getWorkMode() != WorkMode.NONE) {
+                    return false;
+                }
             }
             return super.canUse();
         }
@@ -1656,7 +1807,10 @@ public class Resident extends PathfinderMob {
      */
     private void startBite() {
         ResidentProfile profile = this.getProfile();
-        int slot = HungerSystem.findFoodSlot(this.inventory, profile);
+        // "回血优先"：血没满且饥饿够不到回血线时，溢出也吃（浪费换回血）。
+        // 否则饥饿 16 拿着牛排(8)会因为"吃了溢出"永远不开口，卡死在回血线下。
+        boolean allowWaste = this.wantsMedicalEat();
+        int slot = HungerSystem.findFoodSlot(this.inventory, profile, allowWaste);
         if (slot < 0) {
             return;
         }
@@ -1803,7 +1957,10 @@ public class Resident extends PathfinderMob {
         ResidentProfile now = this.getProfile();
         boolean stillHungry = now.hunger() < ResidentProfile.MAX_HUNGER;
         boolean hasMore = !this.eatingFood.isEmpty() && this.eatingFood.getCount() > 0;
-        boolean nextBiteWanted = hasMore && now.canEatWithoutWaste(nutrition);
+        // 续吃判据与挑食物一致：不浪费就吃；或者"回血优先"（血没满且
+        // 够不到回血线时，溢出也吃——见 startBite 的 wantsMedicalEat）
+        boolean nextBiteWanted = hasMore
+                && (now.canEatWithoutWaste(nutrition) || this.wantsMedicalEat());
 
         if (nextBiteWanted) {
             // 同一堆继续：主手不动、背包不动，直接再来一口。

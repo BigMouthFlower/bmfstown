@@ -201,8 +201,108 @@ public final class ModNetworking {
     }
 
     // ==========================================================
+    //  C → S：站岗位置确认（工作页"站岗"按钮 → 红色预览 → 右键确认）
+    // ==========================================================
+
+    /**
+     * @param entityId 镇民实体 id（客户端从 ResidentMenu.getResident().getId() 拿）
+     * @param pos      玩家右键确认的岗哨方块（服务端会复核职业后才落账）
+     */
+    public record WorkGuardPostPayload(int entityId, BlockPos pos)
+            implements CustomPacketPayload {
+
+        public static final Type<WorkGuardPostPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "work_guard_post"));
+
+        public static final StreamCodec<ByteBuf, WorkGuardPostPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, WorkGuardPostPayload::entityId,
+                        BlockPos.STREAM_CODEC, WorkGuardPostPayload::pos,
+                        WorkGuardPostPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：跟随开关（工作页"跟随"按钮）。与服务端 toggle 幂等，
+     * 走和站岗确认同一条自定义包链路（菜单按钮链路留作兜底）。
+     */
+    public record WorkFollowPayload(int entityId) implements CustomPacketPayload {
+
+        public static final Type<WorkFollowPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "work_follow"));
+
+        public static final StreamCodec<ByteBuf, WorkFollowPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, WorkFollowPayload::entityId,
+                        WorkFollowPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    // ==========================================================
     //  处理器
     // ==========================================================
+
+    /** 跟随开关：校验镇民存在且是战士，切换 FOLLOW / NONE。 */
+    private static void handleWorkFollow(WorkFollowPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (!resident.isWarrior()) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_warrior"), true);
+                return;
+            }
+            if (resident.getWorkMode() == com.bmf.bmfstown.entity.WorkMode.FOLLOW) {
+                resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.NONE, null, null);
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.follow_off", resident.getName().getString()), true);
+            } else {
+                resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.FOLLOW,
+                        serverPlayer.getUUID(), null);
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.follow_on", resident.getName().getString()), true);
+            }
+        });
+    }
+
+    /** 站岗确认：校验镇民存在且是战士，落账 GUARD_POST。 */
+    private static void handleWorkGuardPost(WorkGuardPostPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return; // 镇民不在了（走远/死亡）：静默丢弃
+            }
+            if (!resident.isWarrior()) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_warrior"), true);
+                return;
+            }
+            resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.GUARD_POST, null, payload.pos());
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.work.guard_set",
+                    resident.getName().getString(),
+                    payload.pos().toShortString(),
+                    com.bmf.bmfstown.config.Config.WARRIOR_GUARD_RADIUS.get()), true);
+        });
+    }
 
     private static void handleWandMode(WandModePayload payload, IPayloadContext ctx) {
         // enqueueWork：把处理挪到主线程。改物品组件、发消息都不是线程安全的。
@@ -324,6 +424,10 @@ public final class ModNetworking {
                 ModNetworking::handleHandbookRename);
         registrar.playToServer(HandbookDeletePayload.TYPE, HandbookDeletePayload.STREAM_CODEC,
                 ModNetworking::handleHandbookDelete);
+        registrar.playToServer(WorkGuardPostPayload.TYPE, WorkGuardPostPayload.STREAM_CODEC,
+                ModNetworking::handleWorkGuardPost);
+        registrar.playToServer(WorkFollowPayload.TYPE, WorkFollowPayload.STREAM_CODEC,
+                ModNetworking::handleWorkFollow);
         registrar.playToClient(HandbookSyncPayload.TYPE, HandbookSyncPayload.STREAM_CODEC,
                 ModNetworking::handleHandbookSync);
     }
