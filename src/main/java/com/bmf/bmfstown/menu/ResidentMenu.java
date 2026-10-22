@@ -1,6 +1,7 @@
 package com.bmf.bmfstown.menu;
 
 import com.bmf.bmfstown.entity.Resident;
+import com.bmf.bmfstown.network.ModNetworking;
 import com.bmf.bmfstown.entity.profile.ResidentInventory;
 import net.minecraft.util.Mth;
 import net.minecraft.world.Container;
@@ -252,6 +253,31 @@ public class ResidentMenu extends AbstractContainerMenu {
             return true;
         }
 
+        // 注意顺序：住宅按钮（300/400+）数字上比城镇按钮（100+）大，
+        // 必须先判住宅范围，否则会被下面的城镇分支吞掉——
+        // 400-100=300 远超城镇数，静默返回，玩家就看到"点了没反应"。
+        if (id >= BTN_HOUSING_BASE) {
+            java.util.List<com.bmf.bmfstown.town.TownZone> zones = housingZonesOf(level);
+            int index = id - BTN_HOUSING_BASE;
+            if (index < 0 || index >= zones.size()) {
+                return true; // 列表刚变过，下标失效：忽略
+            }
+            com.bmf.bmfstown.town.TownZone zone = zones.get(index);
+            assignHousing(player, level, zone);
+            return true;
+        }
+
+        if (id == BTN_HOUSING_UNASSIGN) {
+            if (this.resident.getProfile().housingZoneId() == null) {
+                return true; // 本来就没绑，别刷屏
+            }
+            this.resident.setProfile(this.resident.getProfile().withHousing(null, 0L));
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.housing.unassigned", this.resident.getName().getString()), true);
+            ModNetworking.sendHandbookSync((net.minecraft.server.level.ServerPlayer) player, false);
+            return true;
+        }
+
         if (id >= BTN_ASSIGN_BASE) {
             int index = id - BTN_ASSIGN_BASE;
             if (index >= towns.size()) {
@@ -264,28 +290,6 @@ public class ResidentMenu extends AbstractContainerMenu {
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.resident.bound",
                     this.resident.getName().getString(), town.name()), true);
-            return true;
-        }
-
-        // ---- 住宅分配 ----
-        if (id == BTN_HOUSING_UNASSIGN) {
-            if (this.resident.getProfile().housingZoneId() == null) {
-                return true; // 本来就没绑，别刷屏
-            }
-            this.resident.setProfile(this.resident.getProfile().withHousing(null, 0L));
-            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                    "msg.bmfstown.housing.unassigned", this.resident.getName().getString()), true);
-            return true;
-        }
-
-        if (id >= BTN_HOUSING_BASE) {
-            java.util.List<com.bmf.bmfstown.town.TownZone> zones = housingZonesOf(level);
-            int index = id - BTN_HOUSING_BASE;
-            if (index < 0 || index >= zones.size()) {
-                return true; // 列表刚变过，下标失效：忽略
-            }
-            com.bmf.bmfstown.town.TownZone zone = zones.get(index);
-            assignHousing(player, level, zone);
             return true;
         }
 
@@ -348,6 +352,8 @@ public class ResidentMenu extends AbstractContainerMenu {
                 "msg.bmfstown.housing.assigned",
                 this.resident.getName().getString(), zone.name(),
                 occupants + 1, capacity), true);
+        // 入住数变了 → 推一份新手册数据，客户端列表的 (n/床数) 立刻跟上
+        ModNetworking.sendHandbookSync((net.minecraft.server.level.ServerPlayer) player, false);
     }
 
     // ==========================================================

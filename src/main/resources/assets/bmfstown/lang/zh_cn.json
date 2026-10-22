@@ -112,6 +112,7 @@
   "gui.bmfstown.resident.section.town": "城镇",
   "gui.bmfstown.resident.section.housing": "住宅",
   "gui.bmfstown.resident.housing.unassigned": "（不分配 · 露宿）",
+  "gui.bmfstown.resident.housing.row": "%s（%s/%s）",
   "gui.bmfstown.resident.housing.need_town": "先在「城镇」分节绑定归属，才能分配住宅",
   "gui.bmfstown.resident.housing.full": "  [满]",
   "msg.bmfstown.housing.unassigned": "§e%s 不再绑定住宅",

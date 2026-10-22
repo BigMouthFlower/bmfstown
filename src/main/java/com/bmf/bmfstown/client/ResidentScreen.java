@@ -705,12 +705,14 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
             break;
         }
-        // 客户端拿不到"床数/入住人数"（手册同步不含这层统计），
-        // 所以满员判断交给服务端：点击后由 ResidentMenu.assignHousing 拒绝并
-        // 回一条聊天提示。这样最少同步、不会出现"界面显示 2/3 实际 3/3"的假象。
+        // 手册同步的 Z 行带"床数|入住数"（TownSaveData.toBlob 服务端实算），
+        // 这里直接显示占用、满员置灰；服务端分配时仍会再校验一次（双保险）。
         for (int i = 0; i < zones.size(); i++) {
             TownHandbookClient.ZoneView z = zones.get(i);
-            rows.add(new ListRow(z.name(), z.id(), ResidentMenu.BTN_HOUSING_BASE + i, false));
+            boolean full = z.beds() > 0 && z.occupants() >= z.beds();
+            String label = I18n.get("gui.bmfstown.resident.housing.row",
+                    z.name(), z.occupants(), z.beds());
+            rows.add(new ListRow(label, z.id(), ResidentMenu.BTN_HOUSING_BASE + i, full));
         }
         return rows;
     }

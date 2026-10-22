@@ -199,7 +199,7 @@ public class TownSaveData extends SavedData {
      * <p>不用 NBT/JSON 编码器过网络，是因为这个包是"纯展示数据"，
      * 文本行直观、好调试（抓包直接能读），且不受 codec 组合数限制。
      */
-    public String toBlob() {
+    public String toBlob(net.minecraft.server.level.ServerLevel level) {
         StringBuilder sb = new StringBuilder();
         for (Town town : allTowns()) {
             sb.append("T|").append(town.id()).append('|').append(town.name())
@@ -215,8 +215,16 @@ public class TownSaveData extends SavedData {
                     sb.append("Z|").append(town.id()).append('|').append(mode.ordinal())
                             .append('|').append(zone.id()).append('|').append(zone.name())
                             .append('|').append(zone.minText())
-                            .append('|').append(zone.maxText())
-                            .append('\n');
+                            .append('|').append(zone.maxText());
+                    // 住宅区附带"床数|已入住"——镇民面板和手册显示占用情况用。
+                    // 其他类型补 0|0 占位，保证所有 Z 行字段数一致，解析不用分支。
+                    if (mode == TownWandMode.HOUSING) {
+                        sb.append('|').append(HousingZones.capacity(level, zone))
+                                .append('|').append(HousingZones.occupantCount(level, zone));
+                    } else {
+                        sb.append("|0|0");
+                    }
+                    sb.append('\n');
                 }
             }
         }

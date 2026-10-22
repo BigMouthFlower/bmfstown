@@ -26,7 +26,14 @@ import java.util.UUID;
 public final class TownHandbookClient {
 
     /** 一条子区域的展示数据。 */
-    public record ZoneView(int kind, UUID id, String name, BlockPos min, BlockPos max) {
+    /**
+     * 一个子区域的展示数据。
+     *
+     * @param beds      住宅区专用：区域内床数；其他类型恒为 0
+     * @param occupants 住宅区专用：已入住村民数；其他类型恒为 0
+     */
+    public record ZoneView(int kind, UUID id, String name, BlockPos min, BlockPos max,
+                           int beds, int occupants) {
     }
 
     /** 一个城镇的展示数据（含它下面的子区域）。 */
@@ -110,12 +117,15 @@ public final class TownHandbookClient {
                             parsePos(f[5]), parsePos(f[6]));
                     byId.put(b.id, b);
                     order.add(b);
-                } else if (f[0].equals("Z") && f.length == 7) {
+                } else if (f[0].equals("Z") && (f.length == 7 || f.length == 9)) {
                     Builder b = byId.get(UUID.fromString(f[1]));
                     if (b != null) {
+                        // 末尾两个数字是住宅区的床数/入住数；老格式（7 字段）补 0
+                        int beds = f.length >= 9 ? Integer.parseInt(f[7]) : 0;
+                        int occ = f.length >= 9 ? Integer.parseInt(f[8]) : 0;
                         b.zones.add(new ZoneView(Integer.parseInt(f[2]),
                                 UUID.fromString(f[3]), f[4],
-                                parsePos(f[5]), parsePos(f[6])));
+                                parsePos(f[5]), parsePos(f[6]), beds, occ));
                     }
                 }
             } catch (RuntimeException e) {

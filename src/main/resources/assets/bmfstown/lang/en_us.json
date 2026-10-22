@@ -112,6 +112,7 @@
   "gui.bmfstown.resident.section.town": "Town",
   "gui.bmfstown.resident.section.housing": "Housing",
   "gui.bmfstown.resident.housing.unassigned": "(Unassigned · no home)",
+  "gui.bmfstown.resident.housing.row": "%s (%s/%s)",
   "gui.bmfstown.resident.housing.need_town": "Bind to a town first to assign housing",
   "gui.bmfstown.resident.housing.full": "  [Full]",
   "msg.bmfstown.housing.unassigned": "§e%s no longer has a home",

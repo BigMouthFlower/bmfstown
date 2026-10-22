@@ -260,7 +260,7 @@ public final class ModNetworking {
     /** 服务端给某个玩家推一份手册数据（open=true 时客户端自动打开手册）。 */
     public static void sendHandbookSync(ServerPlayer player, boolean open) {
         String blob = com.bmf.bmfstown.town.TownSaveData
-                .get(player.serverLevel()).toBlob();
+                .get(player.serverLevel()).toBlob(player.serverLevel());
         PacketDistributor.sendToPlayer(player, new HandbookSyncPayload(blob, open));
     }
 }
