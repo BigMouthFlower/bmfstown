@@ -85,13 +85,18 @@ public final class TownManager {
             return;
         }
 
+        // 默认名是"数据"不是"文案"——定下来就存进存档了，
+        // 所以在服务端取译文定稿（单人 = 客户端语言；专用服 = 服务端语言）
+        String kindName = Component.translatable(mode.displayName()).getString();
+        String name = Component.translatable("name.bmfstown.zone.default",
+                kindName, town.zones(mode).size() + 1).getString();
         TownZone created = new TownZone(UUID.randomUUID(), name, a, b);
         town.addZone(mode, created);
         data.setDirty();
         // 排障好帮手：范围对不对，一眼从日志看出（历史上 1x1x1 的锅不止一次）
         LOGGER.info("[BmfTown] {} 创建 {}「{}」范围 {}~{}",
                 player.getName().getString(),
-                Component.translatable(mode.displayName()).getString(), name,
+                kindName, name,
                 created.min().toShortString(), created.max().toShortString());
         // 两点同高 = 薄片选区：床/箱子都放在地板"上面"一格，薄片里扫不到。
         // 不替玩家改范围，只提醒一句，要不要重选由玩家决定。
