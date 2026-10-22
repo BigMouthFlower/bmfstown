@@ -59,6 +59,7 @@
   "msg.bmfstown.town.created": "§a城镇「%s」已创建！范围 %s ~ %s",
   "msg.bmfstown.zone.need_town": "§c%s必须完整落在一个城镇范围内——先切到城镇模式画外框，再回来画%s",
   "msg.bmfstown.zone.created": "§a城镇「%s」新增%s「%s」",
+  "msg.bmfstown.zone.flat_hint": "§6提示：两个选点同高，区域只有 1 格高——床/箱子在地板上方的话，请往上多选几格",
   "msg.bmfstown.name.empty": "§c名字不能为空",
   "msg.bmfstown.resident.unbound": "§7%s 恢复自由身了",
   "msg.bmfstown.resident.bound": "§a%s 现在属于「%s」§7（活动范围已限定在城镇内）",

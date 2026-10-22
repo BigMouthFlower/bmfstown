@@ -27,9 +27,6 @@ public final class TownManager {
     /** 名字最长 24 个字，防止刷屏。 */
     private static final int MAX_NAME_LENGTH = 24;
 
-    /** 平铺子区域自动向上扩的格数（容纳放在地板上的床/箱子）。 */
-    private static final int FLAT_ZONE_EXPAND = 4;
-
     private TownManager() {
     }
 
@@ -56,23 +53,18 @@ public final class TownManager {
         // 所以在服务端取译文定稿（单人 = 客户端语言；专用服 = 服务端语言）
         String name = Component.translatable("name.bmfstown.town.default",
                 data.townCount() + 1).getString();
-        // 领地是"立柱"：Y 方向自动扩到世界全高。
-        // 玩家选点基本都在地面上点两下（Y 范围只有 1 格），如果领地也
-        // 只有 1 格高，房子里放的床/箱子全都"不在领地内"——这正是
-        // "子区域明明贴着边却提示不在城镇里"的根源（子区域往上选就
-        // 超出了领地的天花板）。立柱语义下 X/Z 贴边即可，Y 永远够用。
-        BlockPos townMin = new BlockPos(Math.min(a.getX(), b.getX()), level.getMinBuildY(),
-                Math.min(a.getZ(), b.getZ()));
-        BlockPos townMax = new BlockPos(Math.max(a.getX(), b.getX()), level.getMaxBuildY() - 1,
-                Math.max(a.getZ(), b.getZ()));
         Town town = new Town(UUID.randomUUID(), name,
                 player.getName().getString(),
-                level.dimension().location().toString(), townMin, townMax);
+                level.dimension().location().toString(), a, b);
         data.add(town);
 
         player.displayClientMessage(Component.translatable(
                 "msg.bmfstown.town.created", name,
                 TownWandItem.fmt(town.min()), TownWandItem.fmt(town.max())), false);
+        if (town.min().getY() == town.max().getY()) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.zone.flat_hint"), false);
+        }
         ModNetworking.sendHandbookSync(player, true);
     }
 
@@ -93,18 +85,7 @@ public final class TownManager {
             return;
         }
 
-        // 平铺选区（两点同高）自动向上扩几格：玩家习惯沿着地板点两下，
-        // 但床/箱子都放在地板"上面"一格——不扩的话扫描区域里永远找不到它们。
-        // 非平铺（明确选了高度）的选区不动，尊重玩家输入。
-        BlockPos low = a.getY() <= b.getY() ? a : b;
-        BlockPos high = a.getY() <= b.getY() ? b : a;
-        if (low.getY() == high.getY()) {
-            high = new BlockPos(high.getX(), high.getY() + FLAT_ZONE_EXPAND, high.getZ());
-        }
-        String name = Component.translatable("name.bmfstown.zone.default",
-                Component.translatable(mode.displayName()).getString(),
-                town.zones(mode).size() + 1).getString();
-        TownZone created = new TownZone(UUID.randomUUID(), name, low, high);
+        TownZone created = new TownZone(UUID.randomUUID(), name, a, b);
         town.addZone(mode, created);
         data.setDirty();
         // 排障好帮手：范围对不对，一眼从日志看出（历史上 1x1x1 的锅不止一次）
@@ -112,6 +93,12 @@ public final class TownManager {
                 player.getName().getString(),
                 Component.translatable(mode.displayName()).getString(), name,
                 created.min().toShortString(), created.max().toShortString());
+        // 两点同高 = 薄片选区：床/箱子都放在地板"上面"一格，薄片里扫不到。
+        // 不替玩家改范围，只提醒一句，要不要重选由玩家决定。
+        if (created.min().getY() == created.max().getY()) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.zone.flat_hint"), false);
+        }
 
         player.displayClientMessage(Component.translatable(
                 "msg.bmfstown.zone.created", town.name(),

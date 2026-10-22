@@ -59,6 +59,7 @@
   "msg.bmfstown.town.created": "§aTown '%s' created! Bounds %s ~ %s",
   "msg.bmfstown.zone.need_town": "§c%s must be fully inside a town — draw the town outline first, then come back to draw %s.",
   "msg.bmfstown.zone.created": "§aTown '%s' gained %s '%s'",
+  "msg.bmfstown.zone.flat_hint": "§6Note: both points share the same Y - the zone is 1 block tall. Beds/chests sit ON the floor, so select a few blocks up.",
   "msg.bmfstown.name.empty": "§cName cannot be empty",
   "msg.bmfstown.resident.unbound": "§7%s is a free resident again",
   "msg.bmfstown.resident.bound": "§a%s now belongs to '%s' §7(movement confined to the town)",
