@@ -1,0 +1,25 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:cookie",
+    "minecraft:cake",
+    "minecraft:pumpkin_pie",
+    "minecraft:honey_bottle",
+    "minecraft:sweet_berries",
+    "minecraft:glow_berries",
+    "minecraft:melon_slice",
+    "minecraft:golden_apple",
+    "minecraft:enchanted_golden_apple",
+    "minecraft:cocoa_beans",
+
+    { "id": "farmersdelight:sweet_roll", "required": false },
+    { "id": "farmersdelight:apple_pie", "required": false },
+    { "id": "farmersdelight:sweet_berry_cookie", "required": false },
+    { "id": "farmersdelight:honey_cookie", "required": false },
+    { "id": "farmersdelight:melon_popsicle", "required": false },
+    { "id": "farmersdelight:glow_berry_custard", "required": false },
+
+    { "id": "create:sweet_roll", "required": false },
+    { "id": "create:honeyed_apple", "required": false }
+  ]
+}

@@ -1,0 +1,61 @@
+# The name of the mod loader type to load - for regular FML @Mod mods it should be javafml
+modLoader="javafml" #mandatory
+
+# A version range to match for said mod loader - for regular FML @Mod mods it will be the FML version.
+loaderVersion="${loader_version_range}" #mandatory
+
+# The license for you mod.
+license="${mod_license}"
+
+# A URL to refer people to when problems occur with this mod
+#issueTrackerURL="https://change.me.to.your.issue.tracker.example.invalid/" #optional
+
+# A list of mods
+[[mods]] #mandatory
+
+modId="${mod_id}" #mandatory
+
+version="${mod_version}" #mandatory
+
+displayName="${mod_name}" #mandatory
+
+#updateJSONURL="https://change.me.example.invalid/updates.json" #optional
+#displayURL="https://change.me.to.your.mods.homepage.example.invalid/" #optional
+##logoFile="bmfstown.png" #optional
+#credits=""
+authors="${mod_authors}"
+
+description='''
+${mod_description}
+'''
+
+# The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
+#[[mixins]]
+#config="${mod_id}.mixins.json"
+
+# The [[accessTransformers]] block allows you to declare where your AT file is.
+#[[accessTransformers]]
+#file="META-INF/accesstransformer.cfg"
+
+# ---- NeoForge 依赖 ----
+[[dependencies.${mod_id}]] #optional
+    modId="neoforge" #mandatory
+    type="required" #mandatory
+    # 版本区间：21.1.x 全系兼容（21.2 起不保证）。
+    #
+    # 这里刻意【不做】属性展开（不写属性占位符），直接写字面量。原因：
+    # Gradle 用 Groovy 模板引擎做 expand，properties 里的换行/回车会被带进
+    # 字符串，而 TOML 的 basic string 不允许跨行，会报
+    # "Invalid newline in basic string"，导致整个 jar 被判为无效 mod 文件。
+    versionRange="[21.1.0,21.2)" #mandatory
+    ordering="NONE"
+    side="BOTH"
+
+# ---- Minecraft 依赖 ----
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    # 仅接受 1.21.1。同样刻意不展开，理由见上面的 NeoForge 依赖块。
+    versionRange="[1.21.1]"
+    ordering="NONE"
+    side="BOTH"

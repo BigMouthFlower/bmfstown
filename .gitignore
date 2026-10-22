@@ -1,0 +1,35 @@
+# ===== 构建产物 =====
+build/
+out/
+bin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ===== Gradle =====
+.gradle/
+.gradletasknamecache
+
+# ===== IDEA / JetBrains =====
+.idea/
+*.iml
+*.ipr
+*.iws
+*.iws
+
+# ===== 游戏运行目录（存档、日志、mods、本地配置）=====
+run/
+runs/
+logs/
+
+# ===== 本地环境 =====
+local.properties
+*.log
+*.bak
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 其他 =====
+*.zip
+*.jar.tmp

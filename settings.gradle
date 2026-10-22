@@ -1,0 +1,12 @@
+pluginManagement {
+    repositories {
+        // Mainland-China mirrors first, official portal as fallback
+        maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+        maven { url = uri('https://maven.aliyun.com/repository/public') }
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
