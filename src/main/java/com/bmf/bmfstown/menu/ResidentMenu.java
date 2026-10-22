@@ -335,6 +335,11 @@ public class ResidentMenu extends AbstractContainerMenu {
         if (capacity <= 0) {
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.housing.no_beds", zone.name()), false);
+            // 排障：床扫不到多半是区域范围和床的位置对不上
+            //（比如区域是平铺的一格高，床在它上面一格）。把范围打进日志。
+            com.mojang.logging.LogUtils.getLogger().info(
+                    "[BmfTown] 「{}」扫不到床：区域 {}~{}",
+                    zone.name(), zone.min().toShortString(), zone.max().toShortString());
             return;
         }
         int occupants = com.bmf.bmfstown.town.HousingZones.occupantCount(level, zone);

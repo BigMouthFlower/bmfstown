@@ -657,10 +657,12 @@ public class Resident extends PathfinderMob {
             return; // 人在城里，一切正常
         }
 
-        // 越界了：走向城镇中心（y 夹回城镇的 y 范围，防止中心点悬空/埋地）
+        // 越界了：走向城镇中心。y 用自己当前的高度——
+        // 领地是全高立柱后，几何中心点会悬在半空（世界中线附近），
+        // 导航到半空必然失败；水平回到中心、高度就地取材才走得动。
         BlockPos center = townCenter(town);
         this.getNavigation().moveTo(
-                center.getX() + 0.5D, center.getY(), center.getZ() + 0.5D, Config.RETURN_HOME_SPEED.get());
+                center.getX() + 0.5D, this.getBlockY(), center.getZ() + 0.5D, Config.RETURN_HOME_SPEED.get());
         LOGGER.debug("[BmfTown] {} 跑出了城镇「{}」，正在返回 ({})",
                 this.getName().getString(), town.name(), center.toShortString());
     }
