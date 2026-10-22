@@ -190,6 +190,22 @@ public class ResidentMenu extends AbstractContainerMenu {
      */
     public static final int BTN_ASSIGN_BASE = 100;
 
+    // ==========================================================
+    //  菜单按钮（住宅分配）
+    // ==========================================================
+
+    /** 解除住宅绑定（住宅列表第 0 项）。 */
+    public static final int BTN_HOUSING_UNASSIGN = 300;
+
+    /**
+     * 按钮编号基准：分配住宅 = 400 + 列表下标。
+     *
+     * <p>下标口径：客户端列的是"当前归属城镇的全部住宅区，按 {@code Town.zones(HOUSING)}
+     * 的原顺序"。服务端必须用同一份数据、同一个顺序重新取一遍，
+     * 所以服务端不接收 UUID，只接收下标——和城镇分配同一套约定。
+     */
+    public static final int BTN_HOUSING_BASE = 400;
+
     /**
      * 客户端点了按钮，服务端在这里处理。
      *
@@ -228,7 +244,9 @@ public class ResidentMenu extends AbstractContainerMenu {
             if (this.resident.getProfile().townId() == null) {
                 return true; // 本来就自由身，别刷屏
             }
-            this.resident.setProfile(this.resident.getProfile().withTownId(null));
+            // 城镇解绑 → 住宅绑定同时失效（住宅区隶属于城镇）
+            this.resident.setProfile(this.resident.getProfile()
+                    .withTownId(null).withHousing(null, 0L));
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.resident.unbound", this.resident.getName().getString()), true);
             return true;
@@ -240,14 +258,96 @@ public class ResidentMenu extends AbstractContainerMenu {
                 return true; // 列表刚变过，下标失效：忽略
             }
             com.bmf.bmfstown.town.Town town = towns.get(index);
-            this.resident.setProfile(this.resident.getProfile().withTownId(town.id()));
+            // 换城镇 → 原住宅失效（住宅区隶属于城镇），一并清掉
+            this.resident.setProfile(this.resident.getProfile()
+                    .withTownId(town.id()).withHousing(null, 0L));
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.resident.bound",
                     this.resident.getName().getString(), town.name()), true);
             return true;
         }
 
+        // ---- 住宅分配 ----
+        if (id == BTN_HOUSING_UNASSIGN) {
+            if (this.resident.getProfile().housingZoneId() == null) {
+                return true; // 本来就没绑，别刷屏
+            }
+            this.resident.setProfile(this.resident.getProfile().withHousing(null, 0L));
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.housing.unassigned", this.resident.getName().getString()), true);
+            return true;
+        }
+
+        if (id >= BTN_HOUSING_BASE) {
+            java.util.List<com.bmf.bmfstown.town.TownZone> zones = housingZonesOf(level);
+            int index = id - BTN_HOUSING_BASE;
+            if (index < 0 || index >= zones.size()) {
+                return true; // 列表刚变过，下标失效：忽略
+            }
+            com.bmf.bmfstown.town.TownZone zone = zones.get(index);
+            assignHousing(player, level, zone);
+            return true;
+        }
+
         return true;
+    }
+
+    /**
+     * 当前镇民所属城镇的住宅区列表（顺序必须与客户端 {@code housingRows()} 一致）。
+     *
+     * <p>客户端取的是 {@code Town.zones(HOUSING)} 的原顺序，这里照搬，
+     * 不做任何额外排序——两边只要用同一个方法取，顺序就必然一致。
+     */
+    private java.util.List<com.bmf.bmfstown.town.TownZone> housingZonesOf(
+            net.minecraft.server.level.ServerLevel level) {
+        java.util.UUID townId = this.resident.getProfile().townId();
+        if (townId == null) {
+            return java.util.List.of();
+        }
+        com.bmf.bmfstown.town.Town town =
+                com.bmf.bmfstown.town.TownSaveData.get(level).findTown(townId.toString());
+        if (town == null) {
+            return java.util.List.of();
+        }
+        return town.zones(com.bmf.bmfstown.town.TownWandMode.HOUSING);
+    }
+
+    /**
+     * 把镇民分配到某个住宅区。
+     *
+     * <p>校验顺序有讲究：先看"是不是本来就在这儿"（重复点不算错），
+     * 再看容量。容量按"床数"算——没有床的区域住不了人，
+     * 这符合"几张床睡几个人"的直觉。
+     */
+    private void assignHousing(net.minecraft.world.entity.player.Player player,
+                               net.minecraft.server.level.ServerLevel level,
+                               com.bmf.bmfstown.town.TownZone zone) {
+        java.util.UUID current = this.resident.getProfile().housingZoneId();
+        if (zone.id().equals(current)) {
+            return; // 已经住这儿了，静默成功
+        }
+
+        int capacity = com.bmf.bmfstown.town.HousingZones.capacity(level, zone);
+        if (capacity <= 0) {
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.housing.no_beds", zone.name()), false);
+            return;
+        }
+        int occupants = com.bmf.bmfstown.town.HousingZones.occupantCount(level, zone);
+        if (occupants >= capacity) {
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.housing.full", zone.name(), capacity), false);
+            return;
+        }
+
+        // 时间戳用真实时间而不是游戏 tick：游戏 tick 读档会重置，
+        // 而"谁先住进来"必须跨存档稳定（超员踢人靠它排序）。
+        this.resident.setProfile(this.resident.getProfile()
+                .withHousing(zone.id(), System.currentTimeMillis()));
+        player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                "msg.bmfstown.housing.assigned",
+                this.resident.getName().getString(), zone.name(),
+                occupants + 1, capacity), true);
     }
 
     // ==========================================================

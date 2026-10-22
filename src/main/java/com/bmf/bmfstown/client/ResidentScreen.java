@@ -95,6 +95,21 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      */
     private static final int MAX_VISIBLE = 6;
 
+    /**
+     * 归属页的"分节偏移"：0 = 城镇列表分节，1 = 住宅列表分节。
+     *
+     * <p>两段共用同一块列表区域（6 行），点顶部的分节标题切换。
+     * 这样不用把面板加高就能同时管理"归属哪个城镇"和"住哪个住宅区"。
+     */
+    private int section = 0;
+
+    /** 城镇分节。 */
+    private static final int SECTION_TOWN = 0;
+    /** 住宅分节。 */
+    private static final int SECTION_HOUSING = 1;
+    /** 分节总数。 */
+    private static final int SECTION_COUNT = 2;
+
     /** 列表滚动偏移（跳过的行数，≥0）。 */
     private int townScroll = 0;
 
@@ -327,17 +342,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         // ---- 菜单底：整块深灰，和周围浅灰面板区分开（学原版语言列表） ----
         gfx.fill(x + 4, listTop(), x + this.imageWidth - 4, listBottom(), 0xFF373737);
 
-        List<TownRow> rows = townRows();
-        UUID current = currentTownId();
+        // ---- 顶部分节标签：城镇 / 住宅 ----
+        drawSectionTabs(gfx, mouseX, mouseY);
+
+        List<ListRow> rows = currentRows();
+        UUID current = currentSectionTargetId();
         for (int visible = 0; visible < MAX_VISIBLE; visible++) {
             int index = this.townScroll + visible;
             if (index >= rows.size()) {
                 break;
             }
-            int rowY = y + ResidentMenu.PANEL_Y + visible * ROW_H;
+            int rowY = y + rowsTop() + visible * ROW_H;
             boolean hovered = mouseX >= x + 5 && mouseX < x + this.imageWidth - 5
                     && mouseY >= rowY && mouseY < rowY + ROW_H;
-            TownRow row = rows.get(index);
+            ListRow row = rows.get(index);
             if (row.isCurrent(current)) {
                 // 选中行：更深的底 + 一圈亮边框（原版语言列表的选中样式）
                 gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF141414);
@@ -355,9 +373,71 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return ResidentMenu.PANEL_Y;
     }
 
+    /** 分节标签条的高度（两行：城镇 / 住宅）。 */
+    private static final int SECTION_TAB_H = ROW_H;
+
+    /** 行区起始 y（GUI 相对）：列表顶 + 分节标签条。 */
+    private int rowsTop() {
+        return listTop() + SECTION_TAB_H;
+    }
+
     /** 归属页菜单的底（GUI 相对坐标）。6 行用完镇民背包区的高度。 */
     private int listBottom() {
         return ResidentMenu.PANEL_Y + MAX_VISIBLE * ROW_H;
+    }
+
+    /**
+     * 画顶部两个分节标签（城镇 / 住宅）。
+     *
+     * <p>横向摊开、等宽：选中的那个底色更亮、字更白，与下面对应的列表
+     * 视觉上连成一体（和容器页签同一套语言）。
+     */
+    private void drawSectionTabs(GuiGraphics gfx, int mouseX, int mouseY) {
+        int x = this.leftPos;
+        int y = this.topPos;
+        int inner = this.imageWidth - 10;          // 左右各留 5px
+        int halfW = inner / 2;
+        String[] labels = {
+                I18n.get("gui.bmfstown.resident.section.town"),
+                I18n.get("gui.bmfstown.resident.section.housing")
+        };
+        for (int i = 0; i < SECTION_COUNT; i++) {
+            int tx = x + 5 + i * halfW;
+            int ty = y + listTop();
+            boolean sel = this.section == i;
+            boolean hovered = !sel && mouseX >= tx && mouseX < tx + halfW
+                    && mouseY >= ty && mouseY < ty + SECTION_TAB_H;
+            int fill = sel ? 0xFF5A5A5A : hovered ? 0xFF4C4C4C : 0xFF424242;
+            gfx.fill(tx, ty, tx + halfW, ty + SECTION_TAB_H, fill);
+            if (sel) {
+                // 选中标签下面压一条亮线，暗示"当前列表属于这个分节"
+                gfx.fill(tx, ty + SECTION_TAB_H - 1, tx + halfW, ty + SECTION_TAB_H, 0xFFE0E0E0);
+            }
+            String text = labels[i];
+            int textX = tx + (halfW - this.font.width(text)) / 2;
+            gfx.drawString(this.font, text, textX, ty + 3,
+                    sel ? 0xFFFFFF : 0xB0B0B0, false);
+        }
+    }
+
+    /** 分节标签命中判定。返回 true = 点中了某个分节（已切换）。 */
+    private boolean clickSectionTab(double mouseX, double mouseY) {
+        int y = this.topPos + listTop();
+        if (mouseY < y || mouseY >= y + SECTION_TAB_H) {
+            return false;
+        }
+        int inner = this.imageWidth - 10;
+        int halfW = inner / 2;
+        int rel = (int) (mouseX - (this.leftPos + 5));
+        if (rel < 0 || rel >= halfW * SECTION_COUNT) {
+            return false;
+        }
+        int clicked = rel / halfW;
+        if (clicked != this.section) {
+            this.section = clicked;
+            this.townScroll = 0; // 换分节后列表内容不同，滚动位置必须归零
+        }
+        return true;
     }
 
     @Override
@@ -482,28 +562,36 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     this.imageWidth - 6 - this.font.width(name), 4, 0x303030, false);
         }
 
-        List<TownRow> rows = townRows();
-        UUID current = currentTownId();
+        List<ListRow> rows = currentRows();
+        UUID current = currentSectionTargetId();
 
         for (int visible = 0; visible < MAX_VISIBLE; visible++) {
             int index = this.townScroll + visible;
             if (index >= rows.size()) {
                 break;
             }
-            TownRow row = rows.get(index);
+            ListRow row = rows.get(index);
             // 注意：renderLabels 的画笔已被平移到 GUI 原点，
             // 这里用 GUI 相对坐标——再叠加 topPos 就会双重偏移，
             // 文字和行背景错位（第一次实现就栽在这）。
-            int rowY = listTop() + visible * ROW_H + 3; // +3：文字在 13px 行内垂直居中
-            int color = row.isCurrent(current) ? 0xFFFFFF : 0xE0E0E0;
+            int rowY = rowsTop() + visible * ROW_H + 3; // +3：文字在 13px 行内垂直居中
+            int color = row.full() ? 0x707070
+                    : row.isCurrent(current) ? 0xFFFFFF : 0xE0E0E0;
             String prefix = row.isCurrent(current) ? "✔ " : "  ";
-            gfx.drawString(this.font, prefix + row.label(), 8, rowY, color, false);
+            String suffix = row.full() ? I18n.get("gui.bmfstown.resident.housing.full") : "";
+            gfx.drawString(this.font, prefix + row.label() + suffix, 8, rowY, color, false);
         }
 
         // 底部提示行：菜单下方（浅灰底上用深灰字）
-        String hint = rows.size() > MAX_VISIBLE
-                ? I18n.get("gui.bmfstown.resident.town.hint_scroll")
-                : I18n.get("gui.bmfstown.resident.town.hint_click");
+        String hint;
+        if (this.section == SECTION_HOUSING && currentTownId() == null) {
+            // 住宅分节但还没绑城镇：说明为什么列表是空的
+            hint = I18n.get("gui.bmfstown.resident.housing.need_town");
+        } else if (rows.size() > MAX_VISIBLE) {
+            hint = I18n.get("gui.bmfstown.resident.town.hint_scroll");
+        } else {
+            hint = I18n.get("gui.bmfstown.resident.town.hint_click");
+        }
         gfx.drawString(this.font, hint, 8, ResidentMenu.STATS_Y + LINE, 0x555555, false);
     }
 
@@ -532,37 +620,109 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     //  归属页：数据与交互
     // ==========================================================
 
-    /** 列表一行的展示数据：第 0 项固定"不分配"，其余是城镇。 */
-    private record TownRow(String label, UUID townId) {
+    /**
+     * 列表一行的展示数据。
+     *
+     * <p>城镇分节和住宅分节共用这个结构：{@code id} 为 null 的那行是
+     * "不分配"（解绑入口），其余行的 {@code id} 是要绑定的目标。
+     *
+     * @param label  显示的文本
+     * @param id     目标的 UUID；null = "不分配"
+     * @param button 点击后要发的菜单按钮号
+     * @param full   true = 目标已满（置灰、不可点）
+     */
+    private record ListRow(String label, UUID id, int button, boolean full) {
 
         boolean isCurrent(UUID currentId) {
-            // "不分配"行的 townId 是 null：只在镇民本来就自由身时算"当前"
-            if (this.townId == null) {
+            // "不分配"行的 id 是 null：只在镇民本来就未绑定时算"当前"
+            if (this.id == null) {
                 return currentId == null;
             }
-            return this.townId.equals(currentId);
+            return this.id.equals(currentId);
         }
     }
 
-    /** 当前归属（镇民档案里的 townId；镇民不在时 null）。 */
+    /** 当前归属的城镇（镇民档案里的 townId；镇民不在时 null）。 */
     private UUID currentTownId() {
         Resident r = this.menu.getResident();
         return r == null ? null : r.getProfile().townId();
     }
 
+    /** 当前绑定的住宅区（镇民档案里的 housingZoneId；镇民不在时 null）。 */
+    private UUID currentHousingId() {
+        Resident r = this.menu.getResident();
+        return r == null ? null : r.getProfile().housingZoneId();
+    }
+
     /**
-     * 组装归属页的完整列表：不分配 + 本维度城镇。
+     * 组装城镇分节的列表：不分配 + 本维度城镇。
      *
      * <p>维度取镇民所在维度（镇民不在时退回玩家维度）——跨维度的城镇
      * 锁不住镇民，列表里出现只会误导。
      */
-    private List<TownRow> townRows() {
-        java.util.List<TownRow> rows = new java.util.ArrayList<>();
-        rows.add(new TownRow(I18n.get("gui.bmfstown.resident.town.unassigned"), null));
-        for (TownHandbookClient.TownView t : TownHandbookClient.townsInDimension(residentDimension())) {
-            rows.add(new TownRow(I18n.get("gui.bmfstown.resident.town.row", t.name(), t.owner()), t.id()));
+    private List<ListRow> townRows() {
+        java.util.List<ListRow> rows = new java.util.ArrayList<>();
+        rows.add(new ListRow(I18n.get("gui.bmfstown.resident.town.unassigned"),
+                null, ResidentMenu.BTN_UNASSIGN, false));
+        List<TownHandbookClient.TownView> towns = TownHandbookClient.townsInDimension(residentDimension());
+        for (int i = 0; i < towns.size(); i++) {
+            TownHandbookClient.TownView t = towns.get(i);
+            rows.add(new ListRow(
+                    I18n.get("gui.bmfstown.resident.town.row", t.name(), t.owner()),
+                    t.id(), ResidentMenu.BTN_ASSIGN_BASE + i, false));
         }
         return rows;
+    }
+
+    /**
+     * 组装住宅分节的列表：不分配 + 当前城镇的所有住宅区。
+     *
+     * <p>只列"当前归属城镇"的住宅——住宅区隶属于城镇，跨城镇分配没有意义。
+     * 没绑城镇时列表里只有"不分配"一行，并给一句提示（见
+     * {@link #renderTownPageText}）。
+     *
+     * <p>满员的住宅项 {@code full = true}：文字置灰、点击无效，
+     * 避免"点了才知道满了"的挫败感。
+     */
+    private List<ListRow> housingRows() {
+        java.util.List<ListRow> rows = new java.util.ArrayList<>();
+        rows.add(new ListRow(I18n.get("gui.bmfstown.resident.housing.unassigned"),
+                null, ResidentMenu.BTN_HOUSING_UNASSIGN, false));
+
+        UUID townId = currentTownId();
+        if (townId == null) {
+            return rows; // 没绑城镇：只有"不分配"
+        }
+        List<TownHandbookClient.ZoneView> zones = new java.util.ArrayList<>();
+        for (TownHandbookClient.TownView t : TownHandbookClient.townsInDimension(residentDimension())) {
+            if (!t.id().equals(townId)) {
+                continue;
+            }
+            for (TownHandbookClient.ZoneView z : t.zones()) {
+                if (z.kind() == com.bmf.bmfstown.town.TownWandMode.HOUSING.ordinal()) {
+                    zones.add(z);
+                }
+            }
+            break;
+        }
+        // 客户端拿不到"床数/入住人数"（手册同步不含这层统计），
+        // 所以满员判断交给服务端：点击后由 ResidentMenu.assignHousing 拒绝并
+        // 回一条聊天提示。这样最少同步、不会出现"界面显示 2/3 实际 3/3"的假象。
+        for (int i = 0; i < zones.size(); i++) {
+            TownHandbookClient.ZoneView z = zones.get(i);
+            rows.add(new ListRow(z.name(), z.id(), ResidentMenu.BTN_HOUSING_BASE + i, false));
+        }
+        return rows;
+    }
+
+    /** 当前分节对应的行列表。 */
+    private List<ListRow> currentRows() {
+        return this.section == SECTION_HOUSING ? housingRows() : townRows();
+    }
+
+    /** 当前分节的"已选中"目标 id。 */
+    private UUID currentSectionTargetId() {
+        return this.section == SECTION_HOUSING ? currentHousingId() : currentTownId();
     }
 
     /** 镇民所在维度；镇民不在（客户端没同步到实体）时退回玩家维度。 */
@@ -659,21 +819,24 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             return true;
         }
         if (this.page == PAGE_TOWN && button == 0) {
+            // ---- 分节标签点击（城镇 / 住宅）----
+            if (clickSectionTab(mouseX, mouseY)) {
+                return true;
+            }
             // ---- 列表行点击 ----
-            int rowTop = this.topPos + listTop();
+            int rowTop = this.topPos + rowsTop();
             int rowBottom = this.topPos + listBottom();
             boolean inList = mouseX >= this.leftPos + 4 && mouseX < this.leftPos + this.imageWidth - 4
                     && mouseY >= rowTop && mouseY < rowBottom;
             if (inList) {
                 int visible = (int) ((mouseY - rowTop) / ROW_H);
                 int index = this.townScroll + visible;
-                List<TownRow> rows = townRows();
+                List<ListRow> rows = currentRows();
                 if (index < rows.size()) {
-                    TownRow row = rows.get(index);
-                    int buttonId = row.townId() == null
-                            ? ResidentMenu.BTN_UNASSIGN
-                            : ResidentMenu.BTN_ASSIGN_BASE + (index - 1);
-                    this.clickMenu(buttonId);
+                    ListRow row = rows.get(index);
+                    if (!row.full()) { // 满员的住宅项直接吞掉点击
+                        this.clickMenu(row.button());
+                    }
                 }
                 return true; // 点在菜单里（哪怕没点中行）都吞掉
             }
@@ -701,7 +864,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (this.page == PAGE_TOWN) {
-            int max = Math.max(0, townRows().size() - MAX_VISIBLE);
+            int max = Math.max(0, currentRows().size() - MAX_VISIBLE);
             this.townScroll = Mth.clamp(this.townScroll - (int) Math.signum(scrollY), 0, max);
             return true;
         }

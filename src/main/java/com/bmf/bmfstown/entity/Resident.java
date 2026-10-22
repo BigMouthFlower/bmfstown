@@ -648,7 +648,8 @@ public class Resident extends PathfinderMob {
             // 档案同步走 SynchedEntityData，面板上的"归属"行会立刻变回"自由身"。
             LOGGER.debug("[BmfTown] {} 的城镇 {} 已不存在，自动解除归属",
                     this.getName().getString(), townId);
-            this.setProfile(this.getProfile().withTownId(null));
+            // 住宅区属于某个城镇，城镇没了住宅绑定也就失效了，一并清掉
+            this.setProfile(this.getProfile().withTownId(null).withHousing(null, 0L));
             return;
         }
 

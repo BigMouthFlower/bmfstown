@@ -125,6 +125,49 @@ public final class Config {
                     "Retry delay after failing to find a usable dining chest (ticks)")
             .defineInRange("ai.forageRetryTicks", 600, 20, 24000);
 
+    // ==========================================================
+    //  睡觉（住宅区）
+    // ==========================================================
+
+    /** 一天的哪个 tick 开始回家睡觉（12000 = 日落）。 */
+    public static final ModConfigSpec.IntValue SLEEP_START_TIME = BUILDER
+            .comment("开始回家睡觉的时刻（0~24000，12000 是日落）",
+                    "Day time when residents start going home to sleep (12000 = sunset)")
+            .defineInRange("sleep.startTime", 12000, 0, 23999);
+
+    /** 一天的哪个 tick 起床（23000 是日出前）。 */
+    public static final ModConfigSpec.IntValue SLEEP_END_TIME = BUILDER
+            .comment("起床的时刻（0~24000，23000 是日出前）",
+                    "Day time when residents wake up (23000 = just before sunrise)")
+            .defineInRange("sleep.endTime", 23000, 1, 24000);
+
+    /** 回家睡觉的走路速度。 */
+    public static final ModConfigSpec.DoubleValue SLEEP_WALK_SPEED = BUILDER
+            .comment("回家睡觉的走路速度", "Speed when walking home to sleep")
+            .defineInRange("sleep.walkSpeed", 0.6D, 0.05D, 4.0D);
+
+    /** 床扫描结果缓存时长（tick）。住宅内床的变化最多延迟这么久才被察觉。 */
+    public static final ModConfigSpec.IntValue SLEEP_BED_CACHE_TICKS = BUILDER
+            .comment("住宅内床位扫描结果的缓存时间（tick）",
+                    "How long the bed list of a housing zone is cached (ticks)")
+            .defineInRange("sleep.bedCacheTicks", 100, 1, 1200);
+
+    /** 从出发到躺下允许的总时长（tick），超时就放弃本轮。 */
+    public static final ModConfigSpec.IntValue SLEEP_TRAVEL_TIMEOUT_TICKS = BUILDER
+            .comment("回家睡觉的总超时（tick），超时放弃本轮",
+                    "Total timeout for walking home to sleep (ticks)")
+            .defineInRange("sleep.travelTimeoutTicks", 1200, 20, 24000);
+
+    /** 睡觉失败后的重试间隔（tick）。 */
+    public static final ModConfigSpec.IntValue SLEEP_RETRY_TICKS = BUILDER
+            .comment("睡觉失败后多久重试（tick）", "Retry delay after failing to sleep (ticks)")
+            .defineInRange("sleep.retryTicks", 600, 20, 24000);
+
+    /** "该不该睡了"的检查频率（tick）。 */
+    public static final ModConfigSpec.IntValue SLEEP_CHECK_INTERVAL = BUILDER
+            .comment("检查是否该睡觉的频率（tick）", "Sleep check interval (ticks)")
+            .defineInRange("sleep.checkIntervalTicks", 100, 1, 1200);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     // ==========================================================

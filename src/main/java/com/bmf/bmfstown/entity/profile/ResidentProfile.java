@@ -31,7 +31,7 @@ import java.util.UUID;
  * <ul>
  *   <li>A 组 状态：{@code hunger} / {@code mood}</li>
  *   <li>B 组 身份：{@code profession} / {@code xp} / 六个爱好枚举</li>
- *   <li>C 组 归属：{@code townId} / {@code homePos}（都可为 null）</li>
+ *   <li>C 组 归属：{@code townId} / {@code homePos} / {@code housingZoneId}（都可为 null）</li>
  *   <li>E 组 关系：{@code affection}</li>
  * </ul>
  *
@@ -61,6 +61,10 @@ public record ResidentProfile(
         // ---- C 组：归属（可为 null） ----
         UUID townId,
         BlockPos homePos,
+        /** 绑定的住宅区 ID（{@code TownWandMode.HOUSING} 里的某个 zone）；null = 未分配。 */
+        UUID housingZoneId,
+        /** 分配住宅的时间戳（毫秒）——床数变少时据此踢出"最新加入的"村民。 */
+        long housingAssignedAt,
 
         // ---- E 组：关系 ----
         int affection
@@ -116,6 +120,8 @@ public record ResidentProfile(
                 Hobbies.DislikedEnvironment.random(random),
                 null,                                        // 无城镇
                 null,                                        // 无住所
+                null,                                        // 未分配住宅区
+                0L,                                          // 无分配时间
                 Config.INITIAL_AFFECTION.get()               // 好感（可配置）
         );
     }
@@ -297,45 +303,80 @@ public record ResidentProfile(
     public ResidentProfile withHunger(int value) {
         return new ResidentProfile(clamp(value, 0, MAX_HUNGER), mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos, affection);
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, housingAssignedAt, affection);
     }
 
     public ResidentProfile withMood(int value) {
         return new ResidentProfile(hunger, clamp(value, 0, MAX_MOOD), profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos, affection);
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, housingAssignedAt, affection);
     }
 
     public ResidentProfile withAffection(int value) {
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
                 dislikeItem, dislikeEnvironment, townId, homePos,
-                clamp(value, 0, MAX_AFFECTION));
+                housingZoneId, housingAssignedAt, clamp(value, 0, MAX_AFFECTION));
     }
 
     public ResidentProfile withProfession(ProfessionType type) {
         // 换专长时经验清零：不同专长的经验不可迁移（见需求文档 Q12）
         return new ResidentProfile(hunger, mood, type, 0,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos, affection);
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, housingAssignedAt, affection);
     }
 
     public ResidentProfile withXp(int value) {
         return new ResidentProfile(hunger, mood, profession, Math.max(0, value),
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos, affection);
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, housingAssignedAt, affection);
     }
 
     public ResidentProfile withTownId(UUID value) {
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, value, homePos, affection);
+                dislikeItem, dislikeEnvironment, value, homePos,
+                housingZoneId, housingAssignedAt, affection);
     }
 
     public ResidentProfile withHomePos(BlockPos value) {
         return new ResidentProfile(hunger, mood, profession, xp,
                 hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, value, affection);
+                dislikeItem, dislikeEnvironment, townId, value,
+                housingZoneId, housingAssignedAt, affection);
+    }
+
+    /**
+     * 绑定/解绑住宅区。
+     *
+     * <p>解绑（传 null）时顺手把分配时间也清零，避免残留的旧时间戳
+     * 影响下次超员踢人时的先后排序。
+     */
+    public ResidentProfile withHousingZoneId(UUID value) {
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                value, value == null ? 0L : this.housingAssignedAt, affection);
+    }
+
+    /** 只改分配时间戳（一般由 {@link #withHousingZoneId} 配合使用）。 */
+    public ResidentProfile withHousingAssignedAt(long value) {
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, value, affection);
+    }
+
+    /** 一次设置住宅绑定 + 分配时间（服务端分配入口用）。 */
+    public ResidentProfile withHousing(UUID zoneId, long assignedAt) {
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                zoneId, zoneId == null ? 0L : assignedAt, affection);
     }
 
     private static int clamp(int v, int min, int max) {
@@ -375,6 +416,10 @@ public record ResidentProfile(
         if (this.homePos != null) {
             tag.putLong("HomePos", this.homePos.asLong());
         }
+        if (this.housingZoneId != null) {
+            tag.putUUID("HousingZoneId", this.housingZoneId);
+        }
+        tag.putLong("HousingAssignedAt", this.housingAssignedAt);
         return tag;
     }
 
@@ -399,6 +444,8 @@ public record ResidentProfile(
                 // hasUUID 在 key 不存在时也返回 false，所以不用先 contains
                 tag.hasUUID("TownId") ? tag.getUUID("TownId") : null,
                 tag.contains("HomePos") ? BlockPos.of(tag.getLong("HomePos")) : null,
+                tag.hasUUID("HousingZoneId") ? tag.getUUID("HousingZoneId") : null,
+                tag.getLong("HousingAssignedAt"),
                 tag.contains("Affection") ? tag.getInt("Affection") : Config.INITIAL_AFFECTION.get()
         );
     }
