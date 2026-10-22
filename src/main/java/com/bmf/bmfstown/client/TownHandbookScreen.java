@@ -536,8 +536,20 @@ public class TownHandbookScreen extends Screen {
         }
     }
 
-    /** 管理入口列表的行数（就餐区/住宅/工作区三类，写死 3 行）。 */
-    private static final int MANAGE_ROWS = 3;
+    /**
+     * 管理入口列表涵盖的区域类型：枚举里除 TOWN（城镇本体）之外的全部。
+     *
+     * <p>用方法而非静态字段：避免"本类静态初始化 → 触发枚举静态初始化"
+     * 这种跨类初始化顺序的坑，也方便将来动态扩展。
+     *
+     * <p>按枚举动态取，将来新增区域类型（如"农田区"）只加枚举值即可，
+     * 手册的入口列表、数量统计、点击判定自动跟上，不会漏改。
+     */
+    private static java.util.List<TownWandMode> manageKinds() {
+        return java.util.Arrays.stream(TownWandMode.values())
+                .filter(m -> m != TownWandMode.TOWN)
+                .toList();
+    }
 
     /**
      * 城镇页右页的"区域管理"入口列表。
@@ -553,13 +565,14 @@ public class TownHandbookScreen extends Screen {
         graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.manage_header"),
                 rx, bookY + 88, INK_HEADER, false);
 
-        int[] kinds = {TownWandMode.DINING.ordinal(),
-                TownWandMode.HOUSING.ordinal(), TownWandMode.WORK.ordinal()};
+        java.util.List<TownWandMode> kinds = manageKinds();
         manageTop = bookY + 100;
-        // 深色底块：包住三行，和周围纸面区分开
-        graphics.fill(rx - 4, manageTop - 2, rx + TEXT_W + 2, manageTop + MANAGE_ROWS * ROW_H + 2, 0x28201508);
-        for (int i = 0; i < MANAGE_ROWS; i++) {
-            int kind = kinds[i];
+        // 深色底块：包住所有行，和周围纸面区分开
+        graphics.fill(rx - 4, manageTop - 2, rx + TEXT_W + 2,
+                manageTop + kinds.size() * ROW_H + 2, 0x28201508);
+        for (int i = 0; i < kinds.size(); i++) {
+            TownWandMode mode = kinds.get(i);
+            int kind = mode.ordinal();
             int count = 0;
             for (TownHandbookClient.ZoneView zone : town.zones()) {
                 if (zone.kind() == kind) {
@@ -572,7 +585,6 @@ public class TownHandbookScreen extends Screen {
             if (hover) {
                 graphics.fill(rx - 4, y - 1, rx + TEXT_W + 2, y + ROW_H - 2, 0x40201508);
             }
-            TownWandMode mode = TownWandMode.byIndex(kind);
             String label = fit(I18n.get(mode.displayName()) + " ×" + count);
             graphics.drawString(this.font, label, rx, y,
                     hover ? INK : INK_FADED, false);
@@ -587,15 +599,12 @@ public class TownHandbookScreen extends Screen {
         if (mouseX < rx - 4 || mouseX > rx + TEXT_W + 2) {
             return -1;
         }
+        java.util.List<TownWandMode> kinds = manageKinds();
         int row = (int) ((mouseY - manageTop) / ROW_H);
-        if (row < 0 || row >= MANAGE_ROWS || mouseY < manageTop) {
+        if (row < 0 || row >= kinds.size() || mouseY < manageTop) {
             return -1;
         }
-        return switch (row) {
-            case 0 -> TownWandMode.DINING.ordinal();
-            case 1 -> TownWandMode.HOUSING.ordinal();
-            default -> TownWandMode.WORK.ordinal();
-        };
+        return kinds.get(row).ordinal();
     }
 
     /**
