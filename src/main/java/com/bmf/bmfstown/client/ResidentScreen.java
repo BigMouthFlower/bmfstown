@@ -690,14 +690,28 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
         }
 
-        // ---- 工作模式按钮（互斥：激活的那个亮起并描边） ----
-        int workMode = currentWorkMode();
-        int bx = x + 5;
-        int bw = this.imageWidth - 10;
-        int followY = y + workButtonsTop();
-        int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
-        drawWorkButton(gfx, bx, bw, followY, workMode == 1, mouseX, mouseY);
-        drawWorkButton(gfx, bx, bw, guardY, workMode == 2, mouseX, mouseY);
+        // ---- 工作模式按钮（互斥：激活的那个亮起并描边）----
+        // 只有当前职业有"工作方式"时才画（无业 = 什么都没有）。
+        // 将来别的职业在这里按职业画各自的控件——这块区域不属于战士专属。
+        if (workControlsVisible()) {
+            int workMode = currentWorkMode();
+            int bx = x + 5;
+            int bw = this.imageWidth - 10;
+            int followY = y + workButtonsTop();
+            int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
+            drawWorkButton(gfx, bx, bw, followY, workMode == 1, mouseX, mouseY);
+            drawWorkButton(gfx, bx, bw, guardY, workMode == 2, mouseX, mouseY);
+        }
+    }
+
+    /**
+     * 当前职业是否渲染"工作方式"控件（按钮/经验条等）。
+     * 判据 = 该职业有主技能（有技能才有成长与工作产出可展示）。
+     * 无业 → false：列表下面留白，控件区不属于任何一个职业专属。
+     */
+    private boolean workControlsVisible() {
+        var current = currentProfession();
+        return current != null && current.mainSkill() != null;
     }
 
     /**
@@ -755,7 +769,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             gfx.drawString(this.font, (cur ? "✔ " : "  ") + label, 8, rowY, color, false);
         }
 
-        // ---- 按钮文字（水平居中） ----
+        // ---- 按钮文字（水平居中）——仅当前职业有工作控件时渲染 ----
+        if (!workControlsVisible()) {
+            return;
+        }
         int workMode = currentWorkMode();
         int bw = this.imageWidth - 10;
         int followY = workButtonsTop();
@@ -770,16 +787,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
         drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
 
-        // ---- 说明：只保留"非战士"的功能性提示；按钮本身已表意，不再写含义说明 ----
-        int hintY = ResidentMenu.STATS_Y;
-        if (current == null || current.mainSkill() == null) {
-            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.hint_need_warrior"), 8, hintY, 0x555555, false);
-        }
-
         // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框）----
         // 文字只报段位与进度（如"老练 · 1470/1500"）——职业名在上方列表，
         // 技能名对战士这种"一职业一技能"的结构是冗余信息，不显示。
-        if (current != null && current.mainSkill() != null && resident != null) {
+        if (resident != null) {
             var skill = current.mainSkill();
             int xp = resident.getProfile().skillXp(skill);
             int tier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
@@ -789,7 +800,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     : I18n.get("gui.bmfstown.resident.work.xp",
                             tierName, xp,
                             com.bmf.bmfstown.entity.profile.SkillTiers.xpToNext(xp) + xp);
-            int textY = hintY + 1;
+            int textY = ResidentMenu.STATS_Y + 1;
             gfx.drawString(this.font, text, 8, textY, 0x303030, false);
 
             int barX = 8;
@@ -1035,9 +1046,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
 
             // 跟随按钮（切换开/关，服务端落账并互斥清除站岗）
+            // 无业的职业下不渲染按钮，点击区也一并失效——
+            // 这块区域按职业动态分配，不属于战士专属。
             int followY = this.topPos + workButtonsTop();
             int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
-            if (mouseX >= listX && mouseX < listX + listW) {
+            if (workControlsVisible() && mouseX >= listX && mouseX < listX + listW) {
                 if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
                     // 走自定义包（与站岗同链路），菜单按钮协议留作兜底
                     Resident r = this.menu.getResident();

@@ -146,7 +146,6 @@
   "gui.bmfstown.resident.work.follow_btn_on": "跟随：开启（点击关闭）",
   "gui.bmfstown.resident.work.guard_btn": "站岗（选取岗哨位置）",
   "gui.bmfstown.resident.work.guard_btn_on": "站岗：已设置",
-  "gui.bmfstown.resident.work.hint_need_warrior": "先把职业设为战士，才能指派工作",
   "msg.bmfstown.work.follow_on": "§a%s 开始跟随你（跟随期间可离开领地）",
   "msg.bmfstown.work.follow_off": "§7%s 停止跟随",
   "msg.bmfstown.work.guard_set": "§a%s 开始在 (%s) 站岗（活动半径 %s 格）",

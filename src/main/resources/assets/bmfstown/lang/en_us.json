@@ -146,7 +146,6 @@
   "gui.bmfstown.resident.work.follow_btn_on": "Follow: ON (click to stop)",
   "gui.bmfstown.resident.work.guard_btn": "Guard post (pick a spot)",
   "gui.bmfstown.resident.work.guard_btn_on": "Guard post: set",
-  "gui.bmfstown.resident.work.hint_need_warrior": "Set profession to Warrior first to assign work",
   "msg.bmfstown.work.follow_on": "§a%s is now following you (may leave town)",
   "msg.bmfstown.work.follow_off": "§7%s stopped following",
   "msg.bmfstown.work.guard_set": "§a%s now guards (%s), radius %s blocks",
