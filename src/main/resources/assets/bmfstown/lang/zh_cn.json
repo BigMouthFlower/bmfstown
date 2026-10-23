@@ -154,9 +154,6 @@
   "msg.bmfstown.work.cancel_pick": "§7已取消站岗位置选取",
   "msg.bmfstown.work.need_warrior": "§c只有战士才能执行该工作",
   "msg.bmfstown.work.profession_set": "§a%s 的职业改为 %s",
-  "gui.bmfstown.resident.work.hint_follow": "跟随：跟着你战斗，可离开领地",
-  "gui.bmfstown.resident.work.hint_guard": "站岗：右键方块设岗 · Shift 取消选取",
-  "gui.bmfstown.resident.work.xp": "%s · %s · %s/%s",
-  "gui.bmfstown.resident.work.xp_max": "%s · %s · 已满级",
-  "gui.bmfstown.resident.stat.tier": "（%s）"
+  "gui.bmfstown.resident.work.xp": "%s · %s/%s",
+  "gui.bmfstown.resident.work.xp_max": "%s · 已满级"
 }

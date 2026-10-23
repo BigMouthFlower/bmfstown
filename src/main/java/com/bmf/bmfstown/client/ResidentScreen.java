@@ -530,15 +530,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         //    旧的全局 xp/level 已休眠，这里若还读 p.title()/p.level()，
         //    就会出现"工作页显示老练、资料页显示新手"的两套口径打架。
         ResidentProfile p = resident.getProfile();
+        // 职业行只写职业名——技能与段位在工作页的经验条上展示，这里不重复
         String profLine = I18n.get(p.profession().displayName());
-        var mainSkill = p.profession().mainSkill();
-        if (mainSkill != null) {
-            int xp = p.skillXp(mainSkill);
-            int tier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
-            profLine += " · " + I18n.get(mainSkill.displayName())
-                    + I18n.get("gui.bmfstown.resident.stat.tier",
-                            com.bmf.bmfstown.entity.profile.SkillTiers.tierZh(tier));
-        }
         drawStat(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.profession"), profLine, 0x555555);
 
         // 6. 爱好一行（压缩显示，UI 空间有限）
@@ -777,28 +770,26 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
         drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
 
-        // ---- 说明（两行短句，避免超框） ----
+        // ---- 说明：只保留"非战士"的功能性提示；按钮本身已表意，不再写含义说明 ----
         int hintY = ResidentMenu.STATS_Y;
-        if (current != null && current.mainSkill() != null) {
-            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.hint_follow"), 8, hintY, 0x555555, false);
-            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.hint_guard"), 8, hintY + LINE, 0x555555, false);
-        } else {
+        if (current == null || current.mainSkill() == null) {
             gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.hint_need_warrior"), 8, hintY, 0x555555, false);
         }
 
-        // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框） ----
+        // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框）----
+        // 文字只报段位与进度（如"老练 · 1470/1500"）——职业名在上方列表，
+        // 技能名对战士这种"一职业一技能"的结构是冗余信息，不显示。
         if (current != null && current.mainSkill() != null && resident != null) {
             var skill = current.mainSkill();
             int xp = resident.getProfile().skillXp(skill);
             int tier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
-            String skillName = I18n.get(skill.displayName());
             String tierName = com.bmf.bmfstown.entity.profile.SkillTiers.tierZh(tier);
             String text = tier >= com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER
-                    ? I18n.get("gui.bmfstown.resident.work.xp_max", skillName, tierName)
+                    ? I18n.get("gui.bmfstown.resident.work.xp_max", tierName)
                     : I18n.get("gui.bmfstown.resident.work.xp",
-                            skillName, tierName, xp,
+                            tierName, xp,
                             com.bmf.bmfstown.entity.profile.SkillTiers.xpToNext(xp) + xp);
-            int textY = hintY + 2 * LINE + 1;
+            int textY = hintY + 1;
             gfx.drawString(this.font, text, 8, textY, 0x303030, false);
 
             int barX = 8;

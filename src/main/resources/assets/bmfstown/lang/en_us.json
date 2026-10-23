@@ -154,9 +154,6 @@
   "msg.bmfstown.work.cancel_pick": "§7Guard post selection cancelled",
   "msg.bmfstown.work.need_warrior": "§cOnly a Warrior can take this job",
   "msg.bmfstown.work.profession_set": "§a%s is now a %s",
-  "gui.bmfstown.resident.work.hint_follow": "Follow: fights beside you, may leave town",
-  "gui.bmfstown.resident.work.hint_guard": "Guard: right-click a block to set post · Shift cancels",
-  "gui.bmfstown.resident.work.xp": "%s · %s · %s/%s",
-  "gui.bmfstown.resident.work.xp_max": "%s · %s · MAX",
-  "gui.bmfstown.resident.stat.tier": " (%s)"
+  "gui.bmfstown.resident.work.xp": "%s · %s/%s",
+  "gui.bmfstown.resident.work.xp_max": "%s · MAX"
 }
