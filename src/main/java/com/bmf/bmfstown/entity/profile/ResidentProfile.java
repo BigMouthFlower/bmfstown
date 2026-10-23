@@ -441,6 +441,41 @@ public record ResidentProfile(
                 housingZoneId, housingAssignedAt, affection, this.skills, copy);
     }
 
+    // ---- perk 分支选择（v0.5：每节点 2 选 1，存 "节点:分支" 字符串） ----
+
+    /**
+     * 选定某节点的一个分支，覆盖同节点的旧选择（免费改选，不锁死）。
+     *
+     * <p>存储格式沿用 {@link #perks} 列表：每条为 {@code "节点id:分支id"}，
+     * 例如 {@code "warrior.adept:regen"}。<b>老存档不炸</b>——旧数据里没有
+     * 带冒号的条目，{@link #perkChoice} 查不到就返回 null，天然兼容。
+     */
+    public ResidentProfile withPerkChoice(String node, String branch) {
+        String prefix = node + ":";
+        List<String> copy = new ArrayList<>();
+        for (String p : this.perks) {
+            if (!p.startsWith(prefix)) {
+                copy.add(p);
+            }
+        }
+        copy.add(prefix + branch);
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
+                dislikeItem, dislikeEnvironment, townId, homePos,
+                housingZoneId, housingAssignedAt, affection, this.skills, List.copyOf(copy));
+    }
+
+    /** 某节点当前选中的分支 id；未选返回 null。 */
+    public String perkChoice(String node) {
+        String prefix = node + ":";
+        for (String p : this.perks) {
+            if (p.startsWith(prefix)) {
+                return p.substring(prefix.length());
+            }
+        }
+        return null;
+    }
+
     // ---- NBT 辅助：老存档没有 Skills/Perks 时给空值 ----
 
     private static Map<SkillType, Integer> loadSkills(CompoundTag tag) {

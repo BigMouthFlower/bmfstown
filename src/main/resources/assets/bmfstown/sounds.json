@@ -1,0 +1,18 @@
+{
+  "perk.taunt_impact": {
+    "category": "hostile",
+    "sounds": [{"name": "bmfstown:taunt_impact", "volume": 1.0}]
+  },
+  "perk.execute_chop": {
+    "category": "hostile",
+    "sounds": [{"name": "bmfstown:execute_chop", "volume": 1.0}]
+  },
+  "perk.hunt_clang": {
+    "category": "hostile",
+    "sounds": [{"name": "bmfstown:hunt_clang", "volume": 0.9}]
+  },
+  "perk.bulwark_hit": {
+    "category": "hostile",
+    "sounds": [{"name": "bmfstown:bulwark_hit", "volume": 1.0}]
+  }
+}

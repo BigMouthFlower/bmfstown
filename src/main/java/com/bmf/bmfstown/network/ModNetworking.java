@@ -246,9 +246,63 @@ public final class ModNetworking {
         }
     }
 
+    /**
+     * C → S：perk 选档（成长区分支行点击）。
+     *
+     * <p>服务端用 {@code Perks.canChoose} 复核段位与分支合法性后才落档，
+     * 客户端改包跳级选传奇分支在这里被拒。
+     */
+    public record PerkChoosePayload(int entityId, String node, String branch)
+            implements CustomPacketPayload {
+
+        public static final Type<PerkChoosePayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "perk_choose"));
+
+        public static final StreamCodec<ByteBuf, PerkChoosePayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, PerkChoosePayload::entityId,
+                        ByteBufCodecs.STRING_UTF8, PerkChoosePayload::node,
+                        ByteBufCodecs.STRING_UTF8, PerkChoosePayload::branch,
+                        PerkChoosePayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     // ==========================================================
     //  处理器
     // ==========================================================
+
+    /** perk 选档：复核段位与分支合法性，覆盖同节点旧选择（免费改选）。 */
+    private static void handlePerkChoose(PerkChoosePayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return; // 镇民不在了：静默丢弃
+            }
+            var profile = resident.getProfile();
+            if (!com.bmf.bmfstown.entity.profile.Perks.canChoose(
+                    profile, payload.node(), payload.branch())) {
+                // 段位不够/节点或分支不认识：拒绝并提示（改包客户端会走到这）
+                serverPlayer.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.perk.rejected"), true);
+                com.mojang.logging.LogUtils.getLogger().info(
+                        "[BmfTown][perk] {} 选档被拒：node={}，branch={}",
+                        resident.getName().getString(), payload.node(), payload.branch());
+                return;
+            }
+            resident.setProfile(profile.withPerkChoice(payload.node(), payload.branch()));
+            com.mojang.logging.LogUtils.getLogger().info(
+                    "[BmfTown][perk] {} 选定分支：{} : {}",
+                    resident.getName().getString(), payload.node(), payload.branch());
+        });
+    }
 
     /** 跟随开关：校验镇民存在且是战士，切换 FOLLOW / NONE。 */
     private static void handleWorkFollow(WorkFollowPayload payload, IPayloadContext ctx) {
@@ -418,6 +472,45 @@ public final class ModNetworking {
     }
 
     // ==========================================================
+    //  S → C：嘲讽同步（客户端渲染红罩用）
+    // ==========================================================
+
+    /**
+     * 服务端 → 客户端：这只怪被嘲讽到游戏时间 untilGameTime。
+     *
+     * <p>为什么 UUID 用字符串而不用 VAR_INT 实体 id：实体 id 每次进服重排，
+     * 而渲染层恰好拿得到实体的 UUID——对键最稳。
+     */
+    public record TauntSyncPayload(String monsterId, long untilGameTime)
+            implements CustomPacketPayload {
+
+        public static final Type<TauntSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "taunt_sync"));
+
+        public static final StreamCodec<ByteBuf, TauntSyncPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.STRING_UTF8, TauntSyncPayload::monsterId,
+                        ByteBufCodecs.VAR_LONG, TauntSyncPayload::untilGameTime,
+                        TauntSyncPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    private static void handleTauntSync(TauntSyncPayload payload, IPayloadContext ctx) {
+        // 处理器体只在客户端执行；ClientTauntState 是 client 包的类，
+        // 专用服务器永远不会走到这行，类不会加载。
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof net.minecraft.client.player.LocalPlayer) {
+                com.bmf.bmfstown.client.ClientTauntState.handleSync(
+                        java.util.UUID.fromString(payload.monsterId()), payload.untilGameTime());
+            }
+        });
+    }
+
+    // ==========================================================
     //  注册
     // ==========================================================
 
@@ -440,8 +533,12 @@ public final class ModNetworking {
                 ModNetworking::handleWorkGuardPost);
         registrar.playToServer(WorkFollowPayload.TYPE, WorkFollowPayload.STREAM_CODEC,
                 ModNetworking::handleWorkFollow);
+        registrar.playToServer(PerkChoosePayload.TYPE, PerkChoosePayload.STREAM_CODEC,
+                ModNetworking::handlePerkChoose);
         registrar.playToClient(HandbookSyncPayload.TYPE, HandbookSyncPayload.STREAM_CODEC,
                 ModNetworking::handleHandbookSync);
+        registrar.playToClient(TauntSyncPayload.TYPE, TauntSyncPayload.STREAM_CODEC,
+                ModNetworking::handleTauntSync);
     }
 
     private ModNetworking() {

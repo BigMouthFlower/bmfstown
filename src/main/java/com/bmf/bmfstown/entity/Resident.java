@@ -763,6 +763,9 @@ public class Resident extends PathfinderMob {
         // ---- 3. 回血 ----
         this.tickRegeneration();
 
+        // ---- 3.5 perk 主动技能（坚盾/追猎：战斗中自动施放，30 秒冷却） ----
+        this.tickActivePerks();
+
         // ---- 4. 城镇归属约束（跟随玩家时允许出领地，跳过） ----
         if (this.getWorkMode() != WorkMode.FOLLOW) {
             this.tickTownConfinement();
@@ -1675,10 +1678,135 @@ public class Resident extends PathfinderMob {
         }
         this.regenTickAccumulator = 0;
         float before = this.getHealth();
-        this.heal(Config.REGEN_AMOUNT.get().floatValue());
+        // 精通"再生"分支：恢复量 ×倍率（默认 1.5，可配置）。血量是 float，小数无压力
+        float amount = Config.REGEN_AMOUNT.get().floatValue();
+        if (hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "regen")) {
+            amount *= Config.PERK_REGEN_MULTIPLIER.get().floatValue();
+        }
+        this.heal(amount);
         LOGGER.debug("[BmfTown] {} 自然回血 0.5 心，血量 {} → {}，饥饿 {}",
                 this.getName().getString(), before, this.getHealth(),
                 this.getProfile().hunger());
+    }
+
+    // ==========================================================
+    //  perk 主动技能（大师节点：坚盾 / 追猎）
+    // ==========================================================
+
+    /** 主动 perk 冷却（tick）。瞬态不落档：重启归零无伤大雅。 */
+    private int bulwarkCooldown;
+    private int huntCooldown;
+    private int tauntCooldown;
+
+    /** 主动 perk 共用冷却（tick）。默认 30 秒，可配置（perk.activeCooldownSeconds）。 */
+    private static int activePerkCooldown() {
+        return Config.PERK_ACTIVE_COOLDOWN_SECONDS.get() * 20;
+    }
+
+    /** 坚盾持续时间（tick）。 */
+    private static int bulwarkDuration() {
+        return Config.PERK_BULWARK_DURATION_SECONDS.get() * 20;
+    }
+
+    /** 追猎持续时间（tick）。 */
+    private static int huntDuration() {
+        return Config.PERK_HUNT_DURATION_SECONDS.get() * 20;
+    }
+
+    /** 嘲讽持续时间（tick）。 */
+    private static int tauntDuration() {
+        return Config.PERK_TAUNT_DURATION_SECONDS.get() * 20;
+    }
+
+    /**
+     * 主动 perk 每 tick 推进：冷却倒数 + 战斗中自动施放。
+     *
+     * <p><b>为什么自动施放而不是让玩家按钮</b>：镇民不是玩家操作的单位，
+     * "战斗中、冷却好了就放"是最符合"居民自己会打仗"幻想的行为，
+     * 也省一整套玩家指令 UI。冷却好了但没在战斗时憋着不放（用户定义：
+     * 没索敌的时候不用）。
+     */
+    private void tickActivePerks() {
+        if (this.bulwarkCooldown > 0) {
+            this.bulwarkCooldown--;
+        }
+        if (this.huntCooldown > 0) {
+            this.huntCooldown--;
+        }
+        if (this.tauntCooldown > 0) {
+            this.tauntCooldown--;
+        }
+        if (this.getTarget() == null) {
+            return; // 没索敌：主动 perk 一律不用
+        }
+
+        // ---- 坚盾：友军（镇民含自己 + 玩家）抗性提升 I，默认 15 秒 ----
+        if (hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_MASTER, "bulwark")
+                && this.bulwarkCooldown <= 0) {
+            this.bulwarkCooldown = activePerkCooldown();
+            double bulwarkRadius = Config.PERK_BULWARK_RADIUS.get();
+            int duration = bulwarkDuration();
+            var allyBox = this.getBoundingBox().inflate(bulwarkRadius);
+            int count = 0;
+            for (Resident ally : this.level().getEntitiesOfClass(Resident.class, allyBox)) {
+                ally.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                        net.minecraft.world.effect.MobEffects.DAMAGE_RESISTANCE,
+                        duration, 0));
+                count++;
+            }
+            // 玩家也是友军：带队作战时镇民的坚盾罩得住身边所有玩家
+            for (net.minecraft.world.entity.player.Player ally : this.level()
+                    .getEntitiesOfClass(net.minecraft.world.entity.player.Player.class, allyBox)) {
+                ally.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                        net.minecraft.world.effect.MobEffects.DAMAGE_RESISTANCE,
+                        duration, 0));
+                count++;
+            }
+            if (count > 0) {
+                this.playSound(com.bmf.bmfstown.ModSounds.BULWARK_HIT.get(), 1.0F, 1.0F);
+                LOGGER.info("[BmfTown][perk] {} 施放坚盾：{} 名友军（镇民+玩家）获得抗性提升 I（{} 秒）",
+                        this.getName().getString(), count, Config.PERK_BULWARK_DURATION_SECONDS.get());
+            }
+        }
+
+        // ---- 追猎：敌对生物发光标记（默认半径 20 格、20 秒） ----
+        if (hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_MASTER, "hunt")
+                && this.huntCooldown <= 0) {
+            this.huntCooldown = activePerkCooldown();
+            int count = 0;
+            int duration = huntDuration();
+            for (net.minecraft.world.entity.monster.Monster enemy : this.level()
+                    .getEntitiesOfClass(net.minecraft.world.entity.monster.Monster.class,
+                            this.getBoundingBox().inflate(Config.PERK_HUNT_RADIUS.get()))) {
+                enemy.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                        net.minecraft.world.effect.MobEffects.GLOWING, duration, 0));
+                count++;
+            }
+            if (count > 0) {
+                this.playSound(com.bmf.bmfstown.ModSounds.HUNT_CLANG.get(), 1.0F, 1.2F);
+                LOGGER.info("[BmfTown][perk] {} 施放追猎：{} 个敌人被标记发光（{} 秒）",
+                        this.getName().getString(), count, Config.PERK_HUNT_DURATION_SECONDS.get());
+            }
+        }
+
+        // ---- 嘲讽：敌对生物强制攻击自己（传奇防御分支，默认 5 格 / 10 秒） ----
+        if (hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_LEGENDARY, "taunt")
+                && this.tauntCooldown <= 0) {
+            this.tauntCooldown = activePerkCooldown();
+            int count = 0;
+            for (net.minecraft.world.entity.monster.Monster enemy : this.level()
+                    .getEntitiesOfClass(net.minecraft.world.entity.monster.Monster.class,
+                            this.getBoundingBox().inflate(Config.PERK_TAUNT_RADIUS.get()))) {
+                if (com.bmf.bmfstown.entity.TauntManager.taunt(enemy, this, tauntDuration())) {
+                    count++;
+                }
+            }
+            if (count > 0) {
+                this.playSound(com.bmf.bmfstown.ModSounds.TAUNT_IMPACT.get(), 1.2F, 0.9F);
+                LOGGER.info("[BmfTown][perk] {} 施放嘲讽：{} 个敌人被强制攻击自己（{} 秒）",
+                        this.getName().getString(), count, Config.PERK_TAUNT_DURATION_SECONDS.get());
+            }
+        }
     }
 
     /**
@@ -2143,6 +2271,7 @@ public class Resident extends PathfinderMob {
      * 当前职业效率（{@code SkillTiers} A 方案）：主技能等级越高伤害越高。
      *
      * <p>无职业 / 无主技能 → 1.0：效率是<b>职业</b>参数，无业不吃减益也不吃增益。
+     * 选了精通节点"强壮"分支再乘加成（默认 +10%，可配置；满级 150% → 160%）。
      */
     private double professionEfficiency() {
         var profession = this.getProfile().profession();
@@ -2150,7 +2279,19 @@ public class Resident extends PathfinderMob {
         if (skill == null) {
             return 1.0;
         }
-        return com.bmf.bmfstown.entity.profile.SkillTiers.efficiencyOf(this.getProfile().skillXp(skill));
+        double eff = com.bmf.bmfstown.entity.profile.SkillTiers.efficiencyOf(this.getProfile().skillXp(skill));
+        if (hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong")) {
+            eff *= 1.0 + Config.PERK_STRONG_BONUS_PERCENT.get() / 100.0;
+        }
+        return eff;
+    }
+
+    /**
+     * 是否选定了某个 perk 分支（数据层查询：{@code perks} 列表存 "节点:分支"）。
+     */
+    private boolean hasPerk(String node, String branch) {
+        String choice = this.getProfile().perkChoice(node);
+        return branch.equals(choice);
     }
 
     /**
@@ -2172,6 +2313,30 @@ public class Resident extends PathfinderMob {
     public boolean doHurtTarget(net.minecraft.world.entity.Entity target) {
         float before = target instanceof net.minecraft.world.entity.LivingEntity living
                 ? living.getHealth() : -1.0F;
+
+        // ---- 传奇"斩杀"：概率秒杀生命值低于阈值的目标（默认 10% / 50）----
+        // 走巨额 hurt 而不是 setHealth(0)：击杀归属、掉落、死亡事件全走原版正常流程。
+        if (target instanceof net.minecraft.world.entity.LivingEntity living
+                && living.getHealth() <= Config.PERK_EXECUTE_HEALTH_THRESHOLD.get().floatValue()
+                && hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_LEGENDARY, "execute")
+                && this.getRandom().nextFloat() < Config.PERK_EXECUTE_CHANCE_PERCENT.get() / 100.0F) {
+            boolean killed = living.hurt(this.damageSources().mobAttack(this), 1000.0F);
+            this.playSound(com.bmf.bmfstown.ModSounds.EXECUTE_CHOP.get(), 1.2F, 1.0F);
+            // 红色粒子迸发：目标胸口一圈染红粒子（用户定义的处决反馈）
+            if (this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                var red = new net.minecraft.core.particles.DustParticleOptions(
+                        new org.joml.Vector3f(0.85F, 0.05F, 0.05F), 1.6F);
+                serverLevel.sendParticles(red,
+                        target.getX(), target.getY() + target.getBbHeight() * 0.6, target.getZ(),
+                        30, target.getBbWidth() * 0.45, target.getBbHeight() * 0.3,
+                        target.getBbWidth() * 0.45, 0.12);
+            }
+            LOGGER.info("[BmfTown][perk] ⚡{} 斩杀触发：目标 {} 血量 {}，击杀={}",
+                    this.getName().getString(), target.getType().toShortString(),
+                    String.format("%.1f", before), killed);
+            return killed;
+        }
+
         double efficiency = professionEfficiency();
         var attackAttr = this.getAttribute(Attributes.ATTACK_DAMAGE);
         var modId = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("bmfstown", "profession_efficiency");

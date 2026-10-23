@@ -53,6 +53,7 @@ public class BmfTown {
         ModItems.register(modEventBus);
         ModCreativeTabs.register(modEventBus);
         ModEntities.register(modEventBus);
+        ModSounds.register(modEventBus);
         ModMenus.register(modEventBus);
         ModNetworking.register(modEventBus);
 
