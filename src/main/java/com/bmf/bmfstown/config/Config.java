@@ -46,8 +46,9 @@ public final class Config {
 
     /** 领地内漫步速度。 */
     public static final ModConfigSpec.DoubleValue STROLL_SPEED = BUILDER
-            .comment("镇民在领地内漫步的速度", "Resident stroll speed inside territory")
-            .defineInRange("residentAttributes.strollSpeed", 0.6D, 0.05D, 4.0D);
+            .comment("镇民在领地内漫步的速度（1.0 = 村民快步走）",
+                    "Resident stroll speed inside territory (1.0 = villager walking pace)")
+            .defineInRange("residentAttributes.strollSpeed", 1.0D, 0.05D, 4.0D);
 
     // ==========================================================
     //  饥饿与进食
@@ -122,8 +123,9 @@ public final class Config {
 
     /** 逃逸后返回领地的速度（比漫步快一点）。 */
     public static final ModConfigSpec.DoubleValue RETURN_HOME_SPEED = BUILDER
-            .comment("逃逸后返回领地的速度", "Speed when returning to territory after escaping")
-            .defineInRange("ai.returnHomeSpeed", 0.8D, 0.05D, 4.0D);
+            .comment("逃逸后返回领地的速度（介于走路与疾跑之间的赶路速度）",
+                    "Speed when returning to territory after escaping (between walk and sprint)")
+            .defineInRange("ai.returnHomeSpeed", 1.15D, 0.05D, 4.0D);
 
     /** 觅食一次从箱子里拿几个食物。 */
     public static final ModConfigSpec.IntValue FORAGE_TAKE_COUNT = BUILDER
@@ -190,13 +192,15 @@ public final class Config {
 
     /** 跟随玩家时的移速。 */
     public static final ModConfigSpec.DoubleValue WARRIOR_FOLLOW_SPEED = BUILDER
-            .comment("跟随玩家时的移速", "Speed when following a player")
-            .defineInRange("warrior.followSpeed", 1.15D, 0.05D, 4.0D);
+            .comment("跟随玩家时的移速（1.3 ≈ 玩家疾跑速度 5.6 格/秒）",
+                    "Speed when following a player (1.3 ~ player sprint, 5.6 m/s)")
+            .defineInRange("warrior.followSpeed", 1.3D, 0.05D, 4.0D);
 
     /** 站岗巡逻的移速。 */
     public static final ModConfigSpec.DoubleValue WARRIOR_GUARD_SPEED = BUILDER
-            .comment("站岗巡逻的移速", "Speed when patrolling a guard post")
-            .defineInRange("warrior.guardSpeed", 0.9D, 0.05D, 4.0D);
+            .comment("站岗巡逻的移速（1.0 = 村民快步走）",
+                    "Speed when patrolling a guard post (1.0 = villager walking pace)")
+            .defineInRange("warrior.guardSpeed", 1.0D, 0.05D, 4.0D);
 
     /** 离跟随目标超过这个距离（格）时直接传送归队。 */
     public static final ModConfigSpec.IntValue WARRIOR_TELEPORT_DIST = BUILDER
