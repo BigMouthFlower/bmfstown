@@ -259,20 +259,32 @@ public final class ModNetworking {
             }
             if (!(serverPlayer.level().getEntity(payload.entityId())
                     instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                com.mojang.logging.LogUtils.getLogger().info(
+                        "[BmfTown][工作] 收到跟随请求，但实体 {} 不是镇民（已走远/死亡？）",
+                        payload.entityId());
                 return;
             }
             if (!resident.isWarrior()) {
+                com.mojang.logging.LogUtils.getLogger().info(
+                        "[BmfTown][工作] {} 请求跟随被拒：职业={}，不是战士",
+                        resident.getName().getString(), resident.getProfession());
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.work.need_warrior"), true);
                 return;
             }
             if (resident.getWorkMode() == com.bmf.bmfstown.entity.WorkMode.FOLLOW) {
                 resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.NONE, null, null);
+                com.mojang.logging.LogUtils.getLogger().info(
+                        "[BmfTown][工作] {} 停止工作（跟随开关关闭）",
+                        resident.getName().getString());
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.work.follow_off", resident.getName().getString()), true);
             } else {
                 resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.FOLLOW,
                         serverPlayer.getUUID(), null);
+                com.mojang.logging.LogUtils.getLogger().info(
+                        "[BmfTown][工作] {} 进入跟随模式（跟随玩家 {}）",
+                        resident.getName().getString(), serverPlayer.getName().getString());
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.work.follow_on", resident.getName().getString()), true);
             }

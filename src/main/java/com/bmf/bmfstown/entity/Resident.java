@@ -2106,4 +2106,58 @@ public class Resident extends PathfinderMob {
         }
         return result;
     }
+
+    /**
+     * 近战出手判定盒——决定"隔多远能打到人"。
+     *
+     * <h2>为什么要重写</h2>
+     * 原版 {@code Mob} 的默认实现是
+     * {@code target.getBoundingBox().inflate(max(0, bbWidth*2 - target.bbWidth)/2 + 0.1)}，
+     * 对村民体型（宽 0.6）算下来只有 <b>约 1.2 格</b>。僵尸的移动速度不输战士、
+     * 攻击冷却还更短，结果就是双方被迫贴脸互换伤害——战士既打不出先手，
+     * 也享受不到"击退后拉开再打"的节奏。
+     *
+     * <h2>剑和斧有区别吗</h2>
+     * <b>没有。</b> 原版里武器只影响伤害、攻速、横扫、附魔，
+     * <b>攻击距离由实体本身决定</b>（玩家是硬编码 3 格，怪物走这个默认公式），
+     * 所以"换把更长的武器"在原版逻辑里不存在。想让战士打得更远，
+     * 只能从实体这边抬——这就是这个配置项存在的理由。
+     *
+     * <p>只对战士生效：普通镇民（无工作、非战士）保持原版贴脸手感，
+     * 免得他们被怪物摸到时隔空还手显得诡异。
+     */
+    @Override
+    public net.minecraft.world.phys.AABB getAttackBoundingBox() {
+        net.minecraft.world.phys.AABB box = super.getAttackBoundingBox();
+        if (!this.isWarrior()) {
+            return box;
+        }
+        double reach = Config.attackReachOrDefault();
+        // super 已经把"目标宽度差的一半 + 0.1"算进去了，这里补到 reach 的量级：
+        // 用自己身体半径 + reach 作为横向扩张量，纵向按原比例轻柔放大。
+        double extra = reach - this.getBbWidth() * 2.0D;
+        return extra <= 0.0D ? box : box.inflate(extra * 0.5D, 0.15D, extra * 0.5D);
+    }
+
+    /**
+     * 挥出一击（原版 {@code MeleeAttackGoal} 命中判定通过后由它调用）。
+     *
+     * <p>这里只做观测，不改伤害：把"谁打谁、打多少、对方剩多少血、
+     * 对方有没有还手能力"记下来。排查"战士似乎不打人"时，
+     * 有这条日志就能区分"根本没挥刀"和"挥了但没打中/伤害被吸收"。
+     */
+    @Override
+    public boolean doHurtTarget(net.minecraft.world.entity.Entity target) {
+        float before = target instanceof net.minecraft.world.entity.LivingEntity living
+                ? living.getHealth() : -1.0F;
+        boolean hit = super.doHurtTarget(target);
+        if (LOGGER.isDebugEnabled() && target instanceof net.minecraft.world.entity.LivingEntity living) {
+            LOGGER.info("[BmfTown][战斗] {} 攻击 {}：命中={}，血量 {} → {}，攻击力属性={}，主手={}",
+                    this.getName().getString(), target.getType().toShortString(), hit,
+                    String.format("%.1f", before), String.format("%.1f", living.getHealth()),
+                    String.format("%.1f", this.getAttributeValue(Attributes.ATTACK_DAMAGE)),
+                    this.getMainHandItem().isEmpty() ? "空手" : this.getMainHandItem().getItem().toString());
+        }
+        return hit;
+    }
 }

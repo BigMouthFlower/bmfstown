@@ -85,9 +85,20 @@ public final class Config {
     //  成长与社交
     // ==========================================================
 
-    /** 每级所需基础熟练度（实际曲线乘等级系数）。 */
+    /**
+     * 旧版"等级"曲线的基数（{@code ResidentProfile.level()} 用）。
+     *
+     * <p><b>注意：这条不控制当前显示的技能段位。</b> 现在的段位是
+     * {@code SkillTiers.XP_THRESHOLDS} 按累计经验<b>推导</b>出来的，
+     * 阈值刻意不做成配置项——它是存档语义，改了会让老存档段位跳变
+     * （详见 {@code SkillTiers} 类注释）。转职时旧等级会被清零，
+     * 这个基数实际上只在旧档案迁移路径上还有意义。
+     *
+     * <p>想调节成长节奏，调产出侧（如 {@code warrior.xpPerKill}），不要动这里。
+     */
     public static final ModConfigSpec.IntValue XP_PER_LEVEL_BASE = BUILDER
-            .comment("每级所需的基础熟练度", "Base XP required per level")
+            .comment("旧版等级曲线的基数（不影响技能段位，段位阈值固定在代码里）",
+                    "Base XP per level of the legacy level curve (does NOT affect skill tiers)")
             .defineInRange("growth.xpPerLevelBase", 100, 1, 100000);
 
     /** 出生时的心情。 */
@@ -209,16 +220,23 @@ public final class Config {
             .comment("战士击杀敌人获得的格斗经验", "Combat xp per kill for warriors")
             .defineInRange("warrior.xpPerKill", 30, 0, 1000);
 
-    /** 工作期间多久结算一次经验（tick）。1200 = 每分钟 1 次。 */
-    public static final ModConfigSpec.IntValue WARRIOR_VIGILANCE_INTERVAL = BUILDER
-            .comment("工作期间警戒经验的结算间隔（tick），1200 = 每 60 秒",
-                    "Vigilance xp interval while working (ticks), 1200 = once a minute")
-            .defineInRange("warrior.vigilanceIntervalTicks", 1200, 20, 24000);
+    /**
+     * 战士出手距离（格，从自己碰撞箱边缘算起）。
+     *
+     * <p>原版 {@code Mob} 的默认出手距离是 {@code bbWidth * 2}，
+     * 村民体型（宽 0.6）只有约 1.2 格——僵尸的移动速度、攻击冷却都不输他，
+     * 结果就是双方贴脸互换伤害，战士打不出"先手击退"。
+     *
+     * <p>剑和斧在原版里<b>攻击距离完全相同</b>（它们只差伤害/攻速/横扫，
+     * 距离由实体决定，不由武器决定），所以要拉开距离只能从实体这边调。
+     */
+    public static final ModConfigSpec.DoubleValue WARRIOR_ATTACK_REACH = BUILDER
+            .comment("战士出手距离（格，从自身碰撞箱边缘算起）",
+                    "Warrior attack reach in blocks, measured from its own hitbox edge")
+            .defineInRange("warrior.attackReach", 2.5D, 1.0D, 6.0D);
 
-    /** 每次结算的警戒经验。 */
-    public static final ModConfigSpec.IntValue WARRIOR_VIGILANCE_XP = BUILDER
-            .comment("每次结算的警戒经验", "Vigilance xp per interval")
-            .defineInRange("warrior.vigilanceXp", 1, 0, 1000);
+    // 经验口径（定稿）：经验只来自工作成功的过程（如击杀 +30 格斗），
+    // 不做"在岗时间挂机涨经验"——该设定已移除。
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 
@@ -255,6 +273,16 @@ public final class Config {
     /** 战士攻击力；配置未加载时回落到默认值。 */
     public static double attackDamageOrDefault() {
         return loaded() ? WARRIOR_ATTACK_DAMAGE.get() : 3.0D;
+    }
+
+    /**
+     * 战士出手距离（格）；配置未加载时回落到默认值。
+     *
+     * <p>实体 tick 里读属性比较频繁，这个方法包了一层 {@code loaded()}，
+     * 避免"改配置热重载时属性还没跟上"导致 {@code get()} 抛异常。
+     */
+    public static double attackReachOrDefault() {
+        return loaded() ? WARRIOR_ATTACK_REACH.get() : 2.5D;
     }
 
     private Config() {
