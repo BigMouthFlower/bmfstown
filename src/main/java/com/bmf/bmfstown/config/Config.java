@@ -242,6 +242,76 @@ public final class Config {
     // 经验口径（定稿）：经验只来自工作成功的过程（如击杀 +30 格斗），
     // 不做"在岗时间挂机涨经验"——该设定已移除。
 
+    // ==========================================================
+    //  perk（工作页成长分支）
+    // ==========================================================
+
+    /** 主动 perk（坚盾/追猎/嘲讽）共用冷却（秒）。 */
+    public static final ModConfigSpec.IntValue PERK_ACTIVE_COOLDOWN_SECONDS = BUILDER
+            .comment("主动 perk（坚盾/追猎/嘲讽）的施放冷却（秒）",
+                    "Shared cooldown of active perks in seconds")
+            .defineInRange("perk.activeCooldownSeconds", 30, 1, 600);
+
+    /** 坚盾友军半径（格）。 */
+    public static final ModConfigSpec.DoubleValue PERK_BULWARK_RADIUS = BUILDER
+            .comment("坚盾：友军抗性提升的作用半径（格）",
+                    "Bulwark: ally resistance radius in blocks")
+            .defineInRange("perk.bulwarkRadius", 5.0D, 1.0D, 64.0D);
+
+    /** 坚盾持续时间（秒）。 */
+    public static final ModConfigSpec.IntValue PERK_BULWARK_DURATION_SECONDS = BUILDER
+            .comment("坚盾：抗性提升的持续时间（秒）",
+                    "Bulwark: resistance duration in seconds")
+            .defineInRange("perk.bulwarkDurationSeconds", 15, 1, 600);
+
+    /** 追猎标记半径（格）。 */
+    public static final ModConfigSpec.DoubleValue PERK_HUNT_RADIUS = BUILDER
+            .comment("追猎：敌人发光标记的作用半径（格）",
+                    "Hunt: enemy glowing radius in blocks")
+            .defineInRange("perk.huntRadius", 20.0D, 1.0D, 128.0D);
+
+    /** 追猎标记持续时间（秒）。 */
+    public static final ModConfigSpec.IntValue PERK_HUNT_DURATION_SECONDS = BUILDER
+            .comment("追猎：发光标记的持续时间（秒）",
+                    "Hunt: glowing duration in seconds")
+            .defineInRange("perk.huntDurationSeconds", 20, 1, 600);
+
+    /** 嘲讽作用半径（格）。 */
+    public static final ModConfigSpec.DoubleValue PERK_TAUNT_RADIUS = BUILDER
+            .comment("嘲讽：强制索敌的作用半径（格）",
+                    "Taunt: forced-targeting radius in blocks")
+            .defineInRange("perk.tauntRadius", 10.0D, 1.0D, 64.0D);
+
+    /** 嘲讽持续时间（秒）。 */
+    public static final ModConfigSpec.IntValue PERK_TAUNT_DURATION_SECONDS = BUILDER
+            .comment("嘲讽：强制敌军攻击自己的持续时间（秒）",
+                    "Taunt: forced-targeting duration in seconds")
+            .defineInRange("perk.tauntDurationSeconds", 10, 1, 600);
+
+    /** 再生：自然回血量倍率（选了精通节点"再生"分支时）。 */
+    public static final ModConfigSpec.DoubleValue PERK_REGEN_MULTIPLIER = BUILDER
+            .comment("再生：自然回血量的倍率",
+                    "Regeneration: multiplier applied to natural healing amount")
+            .defineInRange("perk.regenMultiplier", 1.5D, 1.0D, 10.0D);
+
+    /** 强壮：效率加成（百分点，选了精通节点"强壮"分支时）。 */
+    public static final ModConfigSpec.IntValue PERK_STRONG_BONUS_PERCENT = BUILDER
+            .comment("强壮：职业效率的固定加成（百分点，10 = 效率 +10%）",
+                    "Strong: flat efficiency bonus in percentage points")
+            .defineInRange("perk.strongBonusPercent", 10, 0, 100);
+
+    /** 斩杀：可秒杀的目标生命阈值。 */
+    public static final ModConfigSpec.DoubleValue PERK_EXECUTE_HEALTH_THRESHOLD = BUILDER
+            .comment("斩杀：可触发秒杀的目标生命值上限",
+                    "Execute: max target health eligible for instant kill")
+            .defineInRange("perk.executeHealthThreshold", 50.0D, 1.0D, 1024.0D);
+
+    /** 斩杀：触发概率（百分点）。 */
+    public static final ModConfigSpec.IntValue PERK_EXECUTE_CHANCE_PERCENT = BUILDER
+            .comment("斩杀：秒杀触发概率（百分点）",
+                    "Execute: instant-kill chance in percentage points")
+            .defineInRange("perk.executeChancePercent", 10, 0, 100);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     // ==========================================================

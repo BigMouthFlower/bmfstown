@@ -557,9 +557,11 @@ public class ResidentMenu extends AbstractContainerMenu {
         }
 
         // ---- 玩家背包：3 行 × 9 列（中间隔着状态文字区，坐标见 PLAYER_INV_Y） ----
+        // PlayerInvSlot：只在资料页激活——归属/工作页整段收起背包腾出空间，
+        // 槽位必须真正 isActive()==false（而不是只不画），否则能对着看不见的格子点击
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                this.addSlot(new Slot(playerInventory,
+                this.addSlot(new PlayerInvSlot(playerInventory,
                         col + row * 9 + 9,
                         PANEL_X + col * SLOT_SIZE,
                         PLAYER_INV_Y + row * SLOT_SIZE));
@@ -568,7 +570,7 @@ public class ResidentMenu extends AbstractContainerMenu {
 
         // ---- 玩家快捷栏：1 行 × 9 列 ----
         for (int col = 0; col < 9; col++) {
-            this.addSlot(new Slot(playerInventory, col,
+            this.addSlot(new PlayerInvSlot(playerInventory, col,
                     PANEL_X + col * SLOT_SIZE, HOTBAR_Y));
         }
 
@@ -739,6 +741,24 @@ public class ResidentMenu extends AbstractContainerMenu {
                 || stack.is(Items.CROSSBOW)
                 || stack.is(Items.TRIDENT)
                 || stack.is(Items.SHIELD);
+    }
+
+    /**
+     * 只在资料页可用的玩家槽位。
+     *
+     * <p>归属/工作页把面板下半段收掉腾给 perk 等内容——槽位必须
+     * {@code isActive() == false}，vanilla 在渲染、悬停、tooltip、点击
+     * 分发四条路径上都会检查它，"只不画"防不住隐形点击（见切页注释）。
+     */
+    private static class PlayerInvSlot extends Slot {
+        PlayerInvSlot(Container container, int index, int x, int y) {
+            super(container, index, x, y);
+        }
+
+        @Override
+        public boolean isActive() {
+            return CLIENT_PAGE == PAGE_INFO;
+        }
     }
 
     /** 客户端占位背包，保证两边 {@code slots} 数量一致。 */

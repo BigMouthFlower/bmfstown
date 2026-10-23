@@ -2,6 +2,7 @@ package com.bmf.bmfstown;
 
 import com.bmf.bmfstown.client.ResidentScreen;
 import com.bmf.bmfstown.menu.ModMenus;
+import net.minecraft.world.entity.EntityType;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -43,5 +44,48 @@ public final class BmfTownClient {
     @SubscribeEvent
     public static void onRegisterScreens(final RegisterMenuScreensEvent event) {
         event.register(ModMenus.RESIDENT.get(), ResidentScreen::new);
+    }
+
+    /**
+     * 给原版怪物渲染器挂嘲讽红罩层。
+     *
+     * <p>逐个列出会进战的怪（渲染器按 EntityType 分开注册，没有
+     * "给所有 Monster 统一挂"的入口），拿到它的 LivingEntityRenderer
+     * addLayer 即可。列表外的怪只是没红罩（嘲讽逻辑不受影响）。
+     */
+    @SubscribeEvent
+    public static void onAddLayers(final net.neoforged.neoforge.client.event.EntityRenderersEvent.AddLayers event) {
+        EntityType<?>[] covered = {
+                EntityType.ZOMBIE, EntityType.HUSK, EntityType.DROWNED, EntityType.ZOMBIE_VILLAGER,
+                EntityType.SKELETON, EntityType.STRAY, EntityType.WITHER_SKELETON,
+                EntityType.SPIDER, EntityType.CAVE_SPIDER, EntityType.CREEPER,
+                EntityType.PILLAGER, EntityType.VINDICATOR, EntityType.EVOKER,
+                EntityType.RAVAGER, EntityType.PHANTOM, EntityType.BLAZE, EntityType.WITCH,
+                EntityType.ENDERMAN, EntityType.ZOMBIFIED_PIGLIN, EntityType.PIGLIN,
+                EntityType.PIGLIN_BRUTE, EntityType.ZOGLIN, EntityType.HOGLIN,
+                EntityType.SILVERFISH, EntityType.ENDERMITE, EntityType.VEX,
+                EntityType.WARDEN, EntityType.BREEZE
+        };
+        int added = 0;
+        for (EntityType<?> type : covered) {
+            var renderer = event.getRenderer(type);
+            if (renderer instanceof net.minecraft.client.renderer.entity.LivingEntityRenderer<?, ?> living) {
+                addLayerUnchecked(living);
+                added++;
+            }
+        }
+        BmfTown.LOGGER.info("[BmfTown] 嘲讽红罩层已挂到 {} 种怪物渲染器", added);
+    }
+
+    /** 原版渲染器类型参数在事件里被通配符抹掉了，这里安全地补上（层内部不依赖具体类型）。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void addLayerUnchecked(net.minecraft.client.renderer.entity.LivingEntityRenderer living) {
+        living.addLayer(new com.bmf.bmfstown.client.TauntOverlayLayer(living));
+    }
+
+    /** 断线/换世界清空客户端嘲讽缓存，防止串档残留。 */
+    @SubscribeEvent
+    public static void onLoggingOut(final net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+        com.bmf.bmfstown.client.ClientTauntState.clear();
     }
 }
