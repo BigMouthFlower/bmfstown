@@ -2140,24 +2140,66 @@ public class Resident extends PathfinderMob {
     }
 
     /**
+     * 当前职业效率（{@code SkillTiers} A 方案）：主技能等级越高伤害越高。
+     *
+     * <p>无职业 / 无主技能 → 1.0：效率是<b>职业</b>参数，无业不吃减益也不吃增益。
+     */
+    private double professionEfficiency() {
+        var profession = this.getProfile().profession();
+        var skill = profession == null ? null : profession.mainSkill();
+        if (skill == null) {
+            return 1.0;
+        }
+        return com.bmf.bmfstown.entity.profile.SkillTiers.efficiencyOf(this.getProfile().skillXp(skill));
+    }
+
+    /**
      * 挥出一击（原版 {@code MeleeAttackGoal} 命中判定通过后由它调用）。
      *
-     * <p>这里只做观测，不改伤害：把"谁打谁、打多少、对方剩多少血、
-     * 对方有没有还手能力"记下来。排查"战士似乎不打人"时，
-     * 有这条日志就能区分"根本没挥刀"和"挥了但没打中/伤害被吸收"。
+     * <h2>职业效率怎么乘进伤害（武器无关）</h2>
+     * 原版近战伤害 = {@code ATTACK_DAMAGE} 属性值，武器加成本来就是挂在
+     * 这个属性上的 modifier——所以"效率"不挑武器：出手前往属性上临时挂一个
+     * <b>补正 modifier</b>（补正量 = 当前攻击力 × (效率 − 1)，效率 &lt; 1 时为负），
+     * 原版结算读到的就是放大后的攻击力，打完立刻移除。
+     * 附魔、击退、护甲减免全部走原版逻辑，我们只动入口数值。
+     *
+     * <h2>为什么用临时 modifier 而不是自己 hurt()</h2>
+     * 自己调 {@code target.hurt()} 要复刻原版整条近战结算（附魔增伤、
+     * 火焰附加、击退属性……），复刻一份就和原版漂移了。临时 modifier
+     * 让原版代码自己算"放大后的伤害"，我们一行结算逻辑都不写。
      */
     @Override
     public boolean doHurtTarget(net.minecraft.world.entity.Entity target) {
         float before = target instanceof net.minecraft.world.entity.LivingEntity living
                 ? living.getHealth() : -1.0F;
-        boolean hit = super.doHurtTarget(target);
-        if (LOGGER.isDebugEnabled() && target instanceof net.minecraft.world.entity.LivingEntity living) {
-            LOGGER.info("[BmfTown][战斗] {} 攻击 {}：命中={}，血量 {} → {}，攻击力属性={}，主手={}",
-                    this.getName().getString(), target.getType().toShortString(), hit,
-                    String.format("%.1f", before), String.format("%.1f", living.getHealth()),
-                    String.format("%.1f", this.getAttributeValue(Attributes.ATTACK_DAMAGE)),
-                    this.getMainHandItem().isEmpty() ? "空手" : this.getMainHandItem().getItem().toString());
+        double efficiency = professionEfficiency();
+        var attackAttr = this.getAttribute(Attributes.ATTACK_DAMAGE);
+        var modId = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("bmfstown", "profession_efficiency");
+        boolean boosted = false;
+        if (attackAttr != null && Math.abs(efficiency - 1.0) > 1.0E-4) {
+            double bonus = attackAttr.getValue() * (efficiency - 1.0);
+            attackAttr.addTransientModifier(new net.minecraft.world.entity.ai.attributes.AttributeModifier(
+                    modId, bonus, net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE));
+            boosted = true;
         }
-        return hit;
+        try {
+            boolean hit = super.doHurtTarget(target);
+            if (target instanceof net.minecraft.world.entity.LivingEntity living) {
+                // 观察期用 INFO（用户要肉眼对比不同等级战士的伤害系数）
+                LOGGER.info("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
+                        this.getName().getString(), target.getType().toShortString(), hit,
+                        String.format("%.1f", attackAttr == null ? 0.0 : attackAttr.getValue() / efficiency),
+                        String.format("%.0f", efficiency * 100),
+                        String.format("%.1f", (attackAttr == null ? 0.0 : attackAttr.getValue() / efficiency) * efficiency),
+                        String.format("%.1f", before), String.format("%.1f", living.getHealth()),
+                        this.getMainHandItem().isEmpty() ? "空手" : this.getMainHandItem().getItem().toString());
+            }
+            return hit;
+        } finally {
+            // 无论命中、异常都必须摘掉，否则效率会永久叠在属性上（下次再乘一次）
+            if (boosted && attackAttr != null) {
+                attackAttr.removeModifier(modId);
+            }
+        }
     }
 }

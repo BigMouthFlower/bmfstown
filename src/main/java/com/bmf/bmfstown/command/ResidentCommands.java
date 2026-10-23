@@ -36,27 +36,42 @@ public final class ResidentCommands {
      * 注册入口。由 {@code RegisterCommandsEvent} 调用（见 {@code BmfTown}）。
      */
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
-        dispatcher.register(
-                Commands.literal("bmfstown")
-                        .requires(source -> source.hasPermission(2))
+        // 每条子命令独立 then() 再统一注册，避免一条超长链式调用里
+        // 数不清的右括号（之前连续两次"需要';'"就是这么来的）。
+        var root = Commands.literal("bmfstown")
+                .requires(source -> source.hasPermission(2));
 
-                        // ---- /bmfstown hunger <目标> <0-20> ----
-                        .then(Commands.literal("hunger")
-                                .then(Commands.argument("targets", EntityArgument.entities())
-                                        .then(Commands.argument("value", IntegerArgumentType.integer(0, ResidentProfile.MAX_HUNGER))
-                                                .executes(ctx -> setHunger(
-                                                        ctx,
-                                                        EntityArgument.getEntities(ctx, "targets"),
-                                                        IntegerArgumentType.getInteger(ctx, "value"))))))
+        // ---- /bmfstown hunger <目标> <0-20> ----
+        root.then(Commands.literal("hunger")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .then(Commands.argument("value", IntegerArgumentType.integer(0, ResidentProfile.MAX_HUNGER))
+                                .executes(ctx -> setHunger(
+                                        ctx,
+                                        EntityArgument.getEntities(ctx, "targets"),
+                                        IntegerArgumentType.getInteger(ctx, "value"))))));
 
-                        // ---- /bmfstown mood <目标> <0-100> ----
-                        .then(Commands.literal("mood")
-                                .then(Commands.argument("targets", EntityArgument.entities())
-                                        .then(Commands.argument("value", IntegerArgumentType.integer(0, ResidentProfile.MAX_MOOD))
-                                                .executes(ctx -> setMood(
-                                                        ctx,
-                                                        EntityArgument.getEntities(ctx, "targets"),
-                                                        IntegerArgumentType.getInteger(ctx, "value")))))));
+        // ---- /bmfstown mood <目标> <0-100> ----
+        root.then(Commands.literal("mood")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .then(Commands.argument("value", IntegerArgumentType.integer(0, ResidentProfile.MAX_MOOD))
+                                .executes(ctx -> setMood(
+                                        ctx,
+                                        EntityArgument.getEntities(ctx, "targets"),
+                                        IntegerArgumentType.getInteger(ctx, "value"))))));
+
+        // ---- /bmfstown skillxp <目标> <0-7500> ----
+        // 设置目标当前职业主技能的累计经验（调试用，只动主技能条）
+        root.then(Commands.literal("skillxp")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .then(Commands.argument("value", IntegerArgumentType.integer(
+                                        0, com.bmf.bmfstown.entity.profile.SkillTiers
+                                                .XP_THRESHOLDS[com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER]))
+                                .executes(ctx -> setSkillXp(
+                                        ctx,
+                                        EntityArgument.getEntities(ctx, "targets"),
+                                        IntegerArgumentType.getInteger(ctx, "value"))))));
+
+        dispatcher.register(root);
     }
 
     /** 设置饥饿值。 */
@@ -95,6 +110,41 @@ public final class ResidentCommands {
             ctx.getSource().sendSuccess(() -> Component.translatable(
                     "msg.bmfstown.command.mood_set",
                     resident.getName().getString(), value), false);
+        }
+        if (changed == 0) {
+            ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));
+        }
+        return changed;
+    }
+    /**
+     * 设置目标当前职业主技能的累计经验。
+     *
+     * <p>走 {@code withSkillXp}（数据层已有该方法，注释里就写着"命令用"）。
+     * 无职业的镇民直接跳过并提示——没有主技能条可写。
+     */
+    private static int setSkillXp(CommandContext<CommandSourceStack> ctx,
+                                  Collection<? extends Entity> targets,
+                                  int value) {
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (!(entity instanceof Resident resident)) {
+                continue;
+            }
+            var profession = resident.getProfile().profession();
+            if (profession == null || !profession.isReal() || profession.mainSkill() == null) {
+                ctx.getSource().sendFailure(Component.translatable(
+                        "msg.bmfstown.command.no_profession", resident.getName().getString()));
+                continue;
+            }
+            var skill = profession.mainSkill();
+            resident.setProfile(resident.getProfile().withSkillXp(skill, value));
+            changed++;
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    "msg.bmfstown.command.skillxp_set",
+                    resident.getName().getString(),
+                    Component.translatable(skill.displayName()),
+                    value,
+                    com.bmf.bmfstown.entity.profile.SkillTiers.levelOf(value)), false);
         }
         if (changed == 0) {
             ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));

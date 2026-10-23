@@ -345,7 +345,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         int y = this.topPos;
 
         // ---- 菜单底：整块深灰，和周围浅灰面板区分开（学原版语言列表） ----
-        gfx.fill(x + 4, listTop(), x + this.imageWidth - 4, listBottom(), 0xFF373737);
+        gfx.fill(x + 4, y + listTop(), x + this.imageWidth - 4, y + listBottom(), 0xFF373737);
 
         // ---- 顶部分节标签：城镇 / 住宅 ----
         drawSectionTabs(gfx, mouseX, mouseY);
@@ -530,9 +530,22 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         //    旧的全局 xp/level 已休眠，这里若还读 p.title()/p.level()，
         //    就会出现"工作页显示老练、资料页显示新手"的两套口径打架。
         ResidentProfile p = resident.getProfile();
-        // 职业行只写职业名——技能与段位在工作页的经验条上展示，这里不重复
+        // 职业行 = 职业名 + 段位（如"战士 Lv.5（专家）"）。
+        // 段位从该职业主技能的累计经验实时推导（SkillTiers.tierOf）。
         String profLine = I18n.get(p.profession().displayName());
-        drawStat(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.profession"), profLine, 0x555555);
+        var mainSkill = p.profession().mainSkill();
+        int profTier = -1;
+        if (mainSkill != null) {
+            int xp = p.skillXp(mainSkill);
+            profTier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
+            String lv = I18n.get("gui.bmfstown.resident.stat.level",
+                    com.bmf.bmfstown.entity.profile.SkillTiers.levelOf(xp));
+            String tierName = I18n.get("gui.bmfstown.resident.tier." + profTier);
+            profLine += " " + lv + I18n.get("gui.bmfstown.resident.stat.tier", tierName);
+        }
+        // 段位部分随等级变色（传奇为动态彩虹）；无职业保持灰色
+        drawStat(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.profession"),
+                profLine, profTier >= 0 ? tierColor(profTier) : 0x555555);
 
         // 6. 爱好一行（压缩显示，UI 空间有限）
         String hobby = I18n.get(p.hobbyFood().displayName()) + "/" + I18n.get(p.hobbyHomeItem().displayName())
@@ -629,6 +642,40 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         gfx.drawString(this.font, value, TEXT_PAD + 32, y, color, false);
     }
 
+    // ---- 段位配色（泰拉瑞亚稀有度风格） ----
+
+    /**
+     * 段位 0~8 的显示色（下标 = 段位）。
+     * 白 → 灰绿 → 绿 → 青 → 蓝 → 紫 → 橙 → 红 → 洋红，传奇(9)另行走彩虹。
+     */
+    private static final int[] TIER_COLORS = {
+            0xFFFFFF, 0xB8C8A0, 0x5FD35F, 0x4FC3E8, 0x7B7BFF,
+            0xB266E8, 0xFFA028, 0xFF5050, 0xFF60B8,
+    };
+
+    /**
+     * 段位对应的文字颜色。
+     *
+     * <p>传奇（最高段位）用<b>持续渐变彩虹</b>：HSL 色相 2 秒转一圈，
+     * 饱和度/亮度固定（0.85/1.0），只变色相——有流动感但不刺眼。
+     * 每帧重算所以面板开着就会一直流动。
+     */
+    private int tierColor(int tier) {
+        if (tier >= com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER) {
+            float hue = (System.currentTimeMillis() % 2000L) / 2000.0F;
+            return Mth.hsvToRgb(hue, 0.85F, 1.0F);
+        }
+        return TIER_COLORS[Math.max(0, Math.min(TIER_COLORS.length - 1, tier))];
+    }
+
+    /** 画一段文字并返回结束 x（一行内分段染色用）。 */
+    private int drawSegment(GuiGraphics gfx, int x, int y, String text, int color) {
+        if (!text.isEmpty()) {
+            gfx.drawString(this.font, text, x, y, color, false);
+        }
+        return x + this.font.width(text);
+    }
+
     // ==========================================================
     //  工作页（职业分配 + 战士工作模式）
     // ==========================================================
@@ -644,9 +691,22 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 工作页职业列表的滚动偏移。 */
     private int workScroll = 0;
 
-    /** 工作模式按钮区的起始 y（GUI 相对）。列表区高度固定（见 {@link #VISIBLE_PROF_ROWS}）。 */
+    // ---- 工作页布局（v0.5 修订）：职业选框只包住可见行，按钮/经验条在框下方 ----
+    // 旧布局沿用了归属页的 6 行框，按钮画进了选框内部且与经验条文字重叠。
+
+    /** 工作页职业行起始 y（GUI 相对）：选框顶 + 内边距。 */
+    private int workRowTop() {
+        return listTop() + 2;
+    }
+
+    /** 工作页职业选框的底（GUI 相对）：行区 + 内边距。 */
+    private int workListBottom() {
+        return workRowTop() + VISIBLE_PROF_ROWS * ROW_H + 2;
+    }
+
+    /** 工作模式按钮区的起始 y（GUI 相对）：选框下方留 4px 空隙。 */
     private int workButtonsTop() {
-        return rowsTop() + VISIBLE_PROF_ROWS * ROW_H + 3;
+        return workListBottom() + 4;
     }
 
     /** 当前镇民的职业（客户端档案已同步；镇民不在时返回 null）。 */
@@ -668,7 +728,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private void renderWorkPageBg(GuiGraphics gfx, int mouseX, int mouseY) {
         int x = this.leftPos;
         int y = this.topPos;
-        gfx.fill(x + 4, listTop(), x + this.imageWidth - 4, listBottom(), 0xFF373737);
+        gfx.fill(x + 4, y + listTop(), x + this.imageWidth - 4, y + workListBottom(), 0xFF373737);
 
         // ---- 职业列表（滚动窗口：可见 3 行，其余滚轮翻） ----
         var professions = com.bmf.bmfstown.entity.profile.ProfessionType.values();
@@ -678,7 +738,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             if (i >= professions.length) {
                 break;
             }
-            int rowY = y + rowsTop() + v * ROW_H;
+            int rowY = y + workRowTop() + v * ROW_H;
             boolean cur = current != null && current.ordinal() == i;
             boolean hovered = !cur && mouseX >= x + 5 && mouseX < x + this.imageWidth - 5
                     && mouseY >= rowY && mouseY < rowY + ROW_H;
@@ -762,7 +822,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             if (i >= professions.length) {
                 break;
             }
-            int rowY = rowsTop() + v * ROW_H + 3;
+            int rowY = workRowTop() + v * ROW_H + 3;
             boolean cur = current != null && current.ordinal() == i;
             String label = I18n.get(professions[i].displayName());
             int color = cur ? 0xFFFFFF : 0xE0E0E0;
@@ -794,14 +854,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             var skill = current.mainSkill();
             int xp = resident.getProfile().skillXp(skill);
             int tier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
-            String tierName = com.bmf.bmfstown.entity.profile.SkillTiers.tierZh(tier);
-            String text = tier >= com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER
-                    ? I18n.get("gui.bmfstown.resident.work.xp_max", tierName)
-                    : I18n.get("gui.bmfstown.resident.work.xp",
-                            tierName, xp,
+            String tierName = I18n.get("gui.bmfstown.resident.tier." + tier);
+            String lv = I18n.get("gui.bmfstown.resident.stat.level",
+                    com.bmf.bmfstown.entity.profile.SkillTiers.levelOf(xp));
+            String suffix = tier >= com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER
+                    ? I18n.get("gui.bmfstown.resident.work.xp_max_suffix")
+                    : I18n.get("gui.bmfstown.resident.work.xp_suffix", xp,
                             com.bmf.bmfstown.entity.profile.SkillTiers.xpToNext(xp) + xp);
+            // 分段染色：Lv 与段位名随稀有度变色（传奇为动态彩虹），后缀数字保持深灰
             int textY = ResidentMenu.STATS_Y + 1;
-            gfx.drawString(this.font, text, 8, textY, 0x303030, false);
+            int cx = 8;
+            cx = drawSegment(gfx, cx, textY, lv, tierColor(tier));
+            cx = drawSegment(gfx, cx, textY, " ", tierColor(tier));
+            cx = drawSegment(gfx, cx, textY, tierName, tierColor(tier));
+            drawSegment(gfx, cx, textY, " " + suffix, 0x303030);
 
             int barX = 8;
             int barY = textY + 11;
@@ -809,11 +875,29 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             int barH = 5;
             gfx.fill(barX - 1, barY - 1, barX + barW + 1, barY + barH + 1, 0xFF000000);
             gfx.fill(barX, barY, barX + barW, barY + barH, 0xFF3D3D3D);
-            double frac = com.bmf.bmfstown.entity.profile.SkillTiers.progress(xp);
-            int filled = (int) Math.round(barW * frac);
+            // 满级特例：整条填满绿色，避免"空条被误读成 0 经验"
+            // （progress() 对最高段位返回 0，因为已经没有"下一段"可比较）
+            int filled;
+            if (tier >= com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER) {
+                filled = barW;
+            } else {
+                filled = (int) Math.round(barW * com.bmf.bmfstown.entity.profile.SkillTiers.progress(xp));
+            }
             if (filled > 0) {
                 gfx.fill(barX, barY, barX + filled, barY + barH, 0xFF7EFC20);
             }
+
+            // ---- 效率行：职业效率随等级线性变化（SkillTiers A 方案）。
+            //      抽象参数的具体效果由各职业自行定义（战士=伤害倍率），
+            //      这里只做展示：让玩家直观看到"练级有用"。
+            double eff = com.bmf.bmfstown.entity.profile.SkillTiers.efficiencyOf(xp);
+            int effPct = (int) Math.round(eff * 100);
+            int effColor = eff >= 1.0 ? 0x2E7D2E : 0xB02020;   // 回本点 Lv.5=100%
+            int effY = textY + 20;
+            int ex = 8;
+            ex = drawSegment(gfx, ex, effY, I18n.get("gui.bmfstown.resident.work.efficiency_label"), 0x555555);
+            ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+            drawSegment(gfx, ex, effY, effPct + "%", effColor);
         }
     }
 
@@ -1034,7 +1118,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             int listW = this.imageWidth - 10;
 
             // 职业行（滚动窗口：可见行 v → 实际下标 workScroll + v）
-            int rowTop = this.topPos + rowsTop();
+            int rowTop = this.topPos + workRowTop();
             int rel = (int) (mouseY - rowTop);
             if (mouseX >= listX && mouseX < listX + listW
                     && rel >= 0 && rel < VISIBLE_PROF_ROWS * ROW_H) {

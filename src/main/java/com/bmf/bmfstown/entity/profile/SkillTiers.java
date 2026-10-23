@@ -8,7 +8,7 @@ package com.bmf.bmfstown.entity.profile;
  * 以后调曲线数值不用迁移存档（与原档案 level() 的设计同理）。
  *
  * <h2>perk 节点（占位）</h2>
- * 段位达到 精通(3) / 大师(6) / 神话(9，即第 10 级) 时各解锁一个 perk 选择位——
+ * 段位达到 精通(3) / 大师(6) / 传奇(9，即第 10 级) 时各解锁一个 perk 选择位——
  * perk 本体（分支选项）还没设计，这里先把"解锁到第几个"的判定做出来，
  * 将来 perk UI 按它显示"有待选择的分支"。
  *
@@ -45,22 +45,27 @@ public final class SkillTiers {
             1500,   // 5 专家
             2400,   // 6 大师  ← perk 节点 2
             3600,   // 7 宗师
-            5200,   // 8 传奇
-            7500,   // 9 神话  ← perk 节点 3
+            5200,   // 8 神话
+            7500,   // 9 传奇  ← perk 节点 3（最高段位）
     };
 
     private static final String[] TIER_ZH = {
             "生疏", "入门", "熟练", "精通", "老练",
-            "专家", "大师", "宗师", "传奇", "神话",
+            "专家", "大师", "宗师", "神话", "传奇",
     };
 
     /** 最高段位。 */
     public static final int MAX_TIER = TIER_ZH.length - 1;
 
-    /** 解锁 perk 选择位的段位（精通 / 大师 / 神话）。 */
+    /** 解锁 perk 选择位的段位（精通 / 大师 / 传奇）。 */
     public static final int[] PERK_TIERS = {3, 6, 9};
 
     private SkillTiers() {
+    }
+
+    /** 累计经验 → 玩家直观等级（Lv.1~Lv.10 = 段位下标 + 1）。 */
+    public static int levelOf(int xp) {
+        return tierOf(xp) + 1;
     }
 
     /** 累计经验 → 当前段位。 */
@@ -74,7 +79,12 @@ public final class SkillTiers {
         return tier;
     }
 
-    /** 段位的中文名（面板兜底显示用；正式显示走语言文件）。 */
+    /**
+     * 段位名的服务端/兜底显示（如日志、无语言环境）。
+     *
+     * <p><b>UI 一律走语言文件</b>（键 {@code gui.bmfstown.resident.tier.0~9}），
+     * 不要直接用这里——这组字符串只保证服务端侧有东西可打，不做本地化。
+     */
     public static String tierZh(int tier) {
         return TIER_ZH[clampTier(tier)];
     }
@@ -119,5 +129,43 @@ public final class SkillTiers {
 
     private static int clampTier(int tier) {
         return Math.max(0, Math.min(MAX_TIER, tier));
+    }
+
+    // ==========================================================
+    //  职业效率（v0.5 定稿：A 方案，纯代码常量）
+    // ==========================================================
+
+    /**
+     * 职业效率曲线（定稿 A 方案）：{@code 0.6 + 0.1 × (Lv - 1)}。
+     *
+     * <ul>
+     *   <li>Lv.1（生疏）= 0.6：生手只有六成功力；</li>
+     *   <li>Lv.5（专家）= 1.0：练到专家才算"合格"，回本点；</li>
+     *   <li>Lv.10（传奇）= 1.5：满级上限，满级是新手 2.5 倍。</li>
+     * </ul>
+     *
+     * <h2>这个参数是什么</h2>
+     * "效率"是<b>抽象的产出倍率</b>：它不绑定具体效果，每个职业自己决定
+     * 拿它乘什么——战士乘伤害，未来农夫乘产出、工匠乘质量。参数一处，
+     * 效果多处。数值与段位阈值同理<b>不配置化</b>：它是整个数值体系的
+     * 坐标系，改它等于全部玩法要重新配平。
+     *
+     * <h2>为什么由经验推导</h2>
+     * 与段位同理：只存经验、效率现算，等级和效率永远自洽，不存在
+     * "等级降了效率没降"的分裂。
+     */
+    public static final double EFFICIENCY_BASE = 0.6;
+    /** 每升一级（= 一个段位）增加的效率。 */
+    public static final double EFFICIENCY_STEP = 0.1;
+
+    /** 按累计经验取职业效率（1.0 = 100% 基准产出）。 */
+    public static double efficiencyOf(int xp) {
+        return efficiencyOfLevel(levelOf(xp));
+    }
+
+    /** 按等级（Lv.1~10）取职业效率，线性增长、两端截断。 */
+    public static double efficiencyOfLevel(int level) {
+        int lv = Math.max(1, Math.min(MAX_TIER + 1, level));
+        return EFFICIENCY_BASE + EFFICIENCY_STEP * (lv - 1);
     }
 }
