@@ -87,5 +87,6 @@ public final class BmfTownClient {
     @SubscribeEvent
     public static void onLoggingOut(final net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
         com.bmf.bmfstown.client.ClientTauntState.clear();
+        com.bmf.bmfstown.client.ClientMoodState.clear();
     }
 }

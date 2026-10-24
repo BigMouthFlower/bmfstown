@@ -71,6 +71,16 @@ public final class ResidentCommands {
                                         EntityArgument.getEntities(ctx, "targets"),
                                         IntegerArgumentType.getInteger(ctx, "value"))))));
 
+        // ---- /bmfstown reroll <目标> ----
+        // 重摇目标镇民的 v0.8 偏好与性格（测试专用：建材/动物/颜色/音乐各 1/2、
+        // 天气 1/3、生物 1/4、性格 7 选 1，手刷几十个镇民凑不齐组合）。
+        // 抽取结果落 NBT，客户端重开面板即可看到（想法/偏好的同步时机是打开面板）。
+        root.then(Commands.literal("reroll")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .executes(ctx -> rerollPrefs(
+                                ctx,
+                                EntityArgument.getEntities(ctx, "targets")))));
+
         dispatcher.register(root);
     }
 
@@ -145,6 +155,37 @@ public final class ResidentCommands {
                     Component.translatable(skill.displayName()),
                     value,
                     com.bmf.bmfstown.entity.profile.SkillTiers.levelOf(value)), false);
+        }
+        if (changed == 0) {
+            ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));
+        }
+        return changed;
+    }
+
+    /**
+     * 重摇目标镇民的 v0.8 偏好与性格（{@code /bmfstown reroll}）。
+     *
+     * <p>测试专用入口——v0.8 偏好是"建材×2 / 动物 / 颜色 / 音乐各 1/2 概率 +
+     * 天气 1/3 + 生物 1/4 + 性格 7 选 1"的乘法分布，想凑齐一个
+     * "贪吃 + 胆小 + 讨厌僵尸"的镇民靠刷怪蛋要刷很久，reroll 一秒搞定。
+     *
+     * <p>只走 MoodState 的懒生成路径，不动档案其他字段（饥饿/心情/职业不动）。
+     */
+    private static int rerollPrefs(CommandContext<CommandSourceStack> ctx,
+                                   Collection<? extends Entity> targets) {
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (!(entity instanceof Resident resident)) {
+                continue;
+            }
+            if (!(resident.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
+                continue; // 理论上命令只在服务端执行，防御姿态
+            }
+            resident.getMoodState().reroll(resident, serverLevel);
+            changed++;
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    "msg.bmfstown.command.reroll_done",
+                    resident.getName().getString()), false);
         }
         if (changed == 0) {
             ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));

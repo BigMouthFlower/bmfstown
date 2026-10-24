@@ -65,7 +65,8 @@ public final class FoodTraits {
      *
      * <p>注意"不算讨厌"和"算喜欢"是两回事：
      * 不是他喜欢的那类，只是<b>不加分</b>，不代表讨厌。
-     * 讨厌目前只在环境/物品维度存在（见 {@link Hobbies.DislikedItem}）。
+     * v0.7 偏好体系重写后食物维度暂无"讨厌的食物"，讨厌情绪
+     * 只来自挨饿、讨厌的职业等事件。
      */
     public static boolean matches(Hobbies.Food hobby, ItemStack stack) {
         if (hobby == null) {

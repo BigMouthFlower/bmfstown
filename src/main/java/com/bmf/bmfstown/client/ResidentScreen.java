@@ -78,6 +78,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final int PAGE_TOWN = ResidentMenu.PAGE_TOWN;
     /** 页编号：工作页（职业分配 + 战士工作模式）。 */
     private static final int PAGE_WORK = ResidentMenu.PAGE_WORK;
+    /** 页编号：喜好页（偏好一览 + 想法日志）。 */
+    private static final int PAGE_HOBBY = ResidentMenu.PAGE_HOBBY;
+    private static final int PAGE_THOUGHTS = ResidentMenu.PAGE_THOUGHTS;
 
     /** 当前页。切页是纯客户端状态，不进网络。 */
     private int page = PAGE_INFO;
@@ -219,6 +222,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         this.imageHeight = switch (this.page) {
             case PAGE_TOWN -> TOWN_GUI_HEIGHT;
             case PAGE_WORK -> WORK_GUI_HEIGHT;
+            case PAGE_HOBBY -> HOBBY_GUI_HEIGHT;
+            case PAGE_THOUGHTS -> THOUGHTS_GUI_HEIGHT;
             default -> ResidentMenu.GUI_HEIGHT;
         };
         super.init();
@@ -236,6 +241,23 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final int TOWN_GUI_HEIGHT = ResidentMenu.PANEL_Y + MAX_VISIBLE * ROW_H + 8;
 
     /**
+     * 喜好页面板高：v0.8 偏好一览 10 行（名字/口味/工作/建材/动物/颜色/
+     * 音乐/天气/生物/性格），行距 LINE，高度按 ROW_H 预留（与想法页同构）。
+     */
+    private static final int HOBBY_GUI_HEIGHT = ResidentMenu.PANEL_Y + 10 * ROW_H + 6;
+
+    /** 想法日志可见条数（滚轮/滚动条翻更早的）。 */
+    private static final int THOUGHTS_VISIBLE = 10;
+
+    /** 想法页面板高：整页想法列表（可见 THOUGHTS_VISIBLE 条 + 滚动条）。 */
+    // THOUGHTS_VISIBLE 必须声明在它前面——静态字段初始化器引用"后面才声明"的
+    // 字段是非法前向引用，编译直接失败（v0.8 交付后本地编译踩坑，同 MoodState.TONE_*）。
+    private static final int THOUGHTS_GUI_HEIGHT = ResidentMenu.PANEL_Y + THOUGHTS_VISIBLE * ROW_H + 6;
+
+    /** 想法页当前滚动位置（0 = 最新的在最上面）。 */
+    private int thoughtScroll = 0;
+
+    /**
      * 工作页面板高：工作控件 + 经验条 + 效率行 + perk 节点区。
      * perk 区按"3 节点 + 1 个展开的分支组"的最大高度预留，展开/收起时面板不跳动。
      */
@@ -245,6 +267,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         this.page = newPage;
         this.townScroll = 0; // 每次进归属页都回到列表头，别让玩家一进来就对着列表中段发呆
         this.workScroll = 0; // 工作页职业列表同理归零
+        this.thoughtScroll = 0; // 想法页回到最新一条
+        this.thoughtScrollbarDragging = false; // 切页时结束拖拽，别把状态带到别的页
         this.perkExpandedNode = -1; // perk 节点全部收起
 
         // 关键一步：把页码写回 menu 的静态状态，驱动 Slot.isActive()。
@@ -291,6 +315,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             renderTownPageBg(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_WORK) {
             renderWorkPageBg(gfx, mouseX, mouseY);
+        } else if (this.page == PAGE_HOBBY) {
+            renderHobbyPageBg(gfx);
+        } else if (this.page == PAGE_THOUGHTS) {
+            renderThoughtsPageBg(gfx);
         } else {
             renderInfoPageBg(gfx);
         }
@@ -509,6 +537,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             renderTownPageText(gfx);
         } else if (this.page == PAGE_WORK) {
             renderWorkPageText(gfx);
+        } else if (this.page == PAGE_HOBBY) {
+            renderHobbyPageText(gfx);
+        } else if (this.page == PAGE_THOUGHTS) {
+            renderThoughtsPageText(gfx);
         } else {
             renderInfoPageText(gfx);
         }
@@ -532,7 +564,6 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         int healthHalf = this.menu.getStat(ResidentMenu.DATA_HEALTH);
         int hunger = this.menu.getStat(ResidentMenu.DATA_HUNGER);
         int mood = this.menu.getStat(ResidentMenu.DATA_MOOD);
-        int affection = this.menu.getStat(ResidentMenu.DATA_AFFECTION);
 
         // 1. 血量（数据槽存的是半颗心数，÷2 还原）。浅灰底配色：原版聊天色的深变体
         drawStat(gfx, textY, I18n.get("gui.bmfstown.resident.stat.health"),
@@ -545,14 +576,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         drawStat(gfx, textY + LINE * 2, I18n.get("gui.bmfstown.resident.stat.mood"),
                 I18n.get("gui.bmfstown.resident.stat.mood_value",
                         I18n.get(moodTier.displayName()), moodTier.bubble(), mood), 0x2E7D2E);
-        // 4. 好感度
-        drawStat(gfx, textY + LINE * 3, I18n.get("gui.bmfstown.resident.stat.affection"),
-                I18n.get(ResidentProfile.affectionTierOf(affection).displayName())
-                        + " (" + affection + ")", 0x3B3BC4);
 
-        // 5. 专长 + 主技能段位（与工作页经验条同一数据源：技能经验体系）。
+        // 4. 专长 + 主技能段位（与工作页经验条同一数据源：技能经验体系）。
         //    旧的全局 xp/level 已休眠，这里若还读 p.title()/p.level()，
         //    就会出现"工作页显示老练、资料页显示新手"的两套口径打架。
+        //    （v0.7：原第 4 行好感度随好感度系统删除，后续行上移一位。）
         ResidentProfile p = resident.getProfile();
         // 职业行 = 职业名 + 段位（如"战士 Lv.5（专家）"）。
         // 段位从该职业主技能的累计经验实时推导（SkillTiers.tierOf）。
@@ -568,15 +596,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             profLine += " " + lv + I18n.get("gui.bmfstown.resident.stat.tier", tierName);
         }
         // 段位部分随等级变色（传奇为动态彩虹）；无职业保持灰色
-        drawStat(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.profession"),
+        drawStat(gfx, textY + LINE * 3, I18n.get("gui.bmfstown.resident.stat.profession"),
                 profLine, profTier >= 0 ? tierColor(profTier) : 0x555555);
 
-        // 6. 爱好一行（压缩显示，UI 空间有限）
-        String hobby = I18n.get(p.hobbyFood().displayName()) + "/" + I18n.get(p.hobbyHomeItem().displayName())
-                + " · " + I18n.get("gui.bmfstown.resident.stat.hobby_dislike", I18n.get(p.dislikeItem().displayName()));
-        drawStat(gfx, textY + LINE * 5, I18n.get("gui.bmfstown.resident.stat.hobby"), hobby, 0x555555);
-
-        // 7. 归属（摘要）。详细的绑定/解绑去"归属"页做。
+        // 5. 归属（摘要）。口味与好恶职业去"喜好"页看，资料页不再重复。
         UUID townId = p.townId();
         String townText;
         if (townId == null) {
@@ -593,7 +616,187 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     ? I18n.get("gui.bmfstown.resident.town.bound", found)
                     : I18n.get("gui.bmfstown.resident.town.syncing");
         }
-        drawStat(gfx, textY + LINE * 6, I18n.get("gui.bmfstown.resident.stat.town"), townText, townId == null ? 0x808080 : 0x8A5A00);
+        drawStat(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.town"), townText, townId == null ? 0x808080 : 0x8A5A00);
+    }
+
+    /**
+     * 喜好页背景：拆页后只剩偏好一览（浅色，无需背景元素）。
+     */
+    private void renderHobbyPageBg(GuiGraphics gfx) {
+        // 内容全在文字层，背景无需额外绘制
+    }
+
+    /** 想法列表区顶部（相对面板）——整页列表。 */
+    private int thoughtListTop() {
+        return ResidentMenu.PANEL_Y + 1;
+    }
+
+    /** 想法列表区底部（相对面板）。 */
+    private int thoughtListBottom() {
+        return ResidentMenu.PANEL_Y + THOUGHTS_VISIBLE * ROW_H;
+    }
+
+    /** 滚动条几何：贴想法区右缘的一条窄轨道。 */
+    private static final int SCROLLBAR_WIDTH = 4;
+
+    private int scrollbarX() {
+        return this.leftPos + this.imageWidth - 5 - SCROLLBAR_WIDTH;
+    }
+
+    private int thoughtMaxScroll() {
+        Resident r = this.menu.getResident();
+        int size = r == null ? 0 : ClientMoodState.thoughtsOf(r.getUUID()).size();
+        return Math.max(0, size - THOUGHTS_VISIBLE);
+    }
+
+    /** 画滚动条：轨道常驻，条目不够一屏时滑块铺满整个轨道（即无可滚）。 */
+    private void drawThoughtScrollbar(GuiGraphics gfx) {
+        int trackX = scrollbarX();
+        int trackY = this.topPos + thoughtListTop() + 1;
+        int trackH = thoughtListBottom() - thoughtListTop() - 2;
+        gfx.fill(trackX, trackY, trackX + SCROLLBAR_WIDTH, trackY + trackH, 0xFF1E1E1E);
+        int max = thoughtMaxScroll();
+        if (max <= 0) {
+            return; // 内容不足一屏，滑块不画（轨道留着提示这里是滚动区）
+        }
+        int thumbH = Math.max(8, trackH * THOUGHTS_VISIBLE
+                / (THOUGHTS_VISIBLE + max));
+        int thumbY = trackY + (trackH - thumbH) * this.thoughtScroll / max;
+        gfx.fill(trackX, thumbY, trackX + SCROLLBAR_WIDTH, thumbY + thumbH, 0xFFC6C6C6);
+    }
+
+    /**
+     * 滚动条拖拽状态：按下滑块/轨道时记录，拖动期间按鼠标 Y 换算滚动位置。
+     * 记录"按点相对滑块顶的偏移"，点轨道上任意处都能直接跳过去接着拖。
+     */
+    private boolean thoughtScrollbarDragging = false;
+    private int thoughtDragGrabOffset = 0;
+
+    /**
+     * 喜好页内容：v0.8 偏好 + 性格一览（想法去"想法"页看）。
+     *
+     * <p>数据来源是打开面板时服务端下发的 {@link ClientMoodState.MoodPrefs}
+     * （{@code MoodSyncPayload.prefs} 紧凑串解析而来）——客户端只存不算，
+     * 没同步过时显示"无"。
+     *
+     * <p>标签列比资料页宽（52px）："喜欢的建材"这类 5 字标签按 32px 会被
+     * 值压字，所以本页走 {@link #drawPrefRow} 而不是 {@link #drawStat}。
+     */
+    private void renderHobbyPageText(GuiGraphics gfx) {
+        Resident resident = this.menu.getResident();
+        if (resident == null) {
+            return;
+        }
+        ResidentProfile p = resident.getProfile();
+        ClientMoodState.MoodPrefs prefs = ClientMoodState.prefsOf(resident.getUUID());
+        int textY = ResidentMenu.PANEL_Y;
+        gfx.drawString(this.font, resident.getName(), TEXT_PAD, textY, 0x303030, false);
+
+        String none = I18n.get("gui.bmfstown.resident.stat.value_none");
+
+        drawPrefRow(gfx, textY + LINE, I18n.get("gui.bmfstown.resident.stat.hobby"),
+                I18n.get(p.hobbyFood().displayName()), 0x2E7D2E);
+
+        drawPrefRow(gfx, textY + LINE * 2, I18n.get("gui.bmfstown.resident.stat.job_liked"),
+                I18n.get(p.likedProfession().displayName()), 0x8A5A00);
+
+        String blocks = prefs.blocks().isEmpty() ? none
+                : String.join("、", prefs.blocks().stream()
+                        .map(m -> I18n.get(m.displayName())).toList());
+        drawPrefRow(gfx, textY + LINE * 3, I18n.get("gui.bmfstown.resident.stat.blocks"),
+                blocks, 0x8A5A00);
+
+        drawPrefRow(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.animal"),
+                prefs.animal() != null ? I18n.get(prefs.animal().displayName()) : none, 0x2E7D2E);
+
+        drawPrefRow(gfx, textY + LINE * 5, I18n.get("gui.bmfstown.resident.stat.color"),
+                prefs.color() != null ? I18n.get(prefs.color().displayName()) : none, 0x2E7D2E);
+
+        drawPrefRow(gfx, textY + LINE * 6, I18n.get("gui.bmfstown.resident.stat.music"),
+                prefs.music()
+                        ? I18n.get("gui.bmfstown.resident.stat.value_yes")
+                        : I18n.get("gui.bmfstown.resident.stat.value_no"),
+                prefs.music() ? 0x2E7D2E : 0x808080);
+
+        drawPrefRow(gfx, textY + LINE * 7, I18n.get("gui.bmfstown.resident.stat.weather"),
+                prefs.weather() != null ? I18n.get(prefs.weather().displayName()) : none,
+                prefs.weather() != null ? 0xA03030 : 0x808080);
+
+        drawPrefRow(gfx, textY + LINE * 8, I18n.get("gui.bmfstown.resident.stat.mob"),
+                prefs.mob() != null ? I18n.get(prefs.mob().displayName()) : none,
+                prefs.mob() != null ? 0xA03030 : 0x808080);
+
+        // 性格：名字 + 一句话侧写（同步失败时为 null → 显示"无"）。
+        // 不带括号——"攀比（很在意装备好不好）"按 CJK 字宽算会溢出面板右缘
+        if (prefs.personality() != null) {
+            drawPrefRow(gfx, textY + LINE * 9,
+                    I18n.get("gui.bmfstown.resident.stat.personality"),
+                    I18n.get(prefs.personality().displayName())
+                            + " " + I18n.get(prefs.personality().descKey()),
+                    0x7B3FA0);
+        } else {
+            drawPrefRow(gfx, textY + LINE * 9,
+                    I18n.get("gui.bmfstown.resident.stat.personality"), none, 0x808080);
+        }
+    }
+
+    /**
+     * 画一行"标签：值"（喜好页专用：标签列 52px 宽，容纳 5 字标签）。
+     */
+    private void drawPrefRow(GuiGraphics gfx, int y, String label, String value, int color) {
+        gfx.drawString(this.font, label, TEXT_PAD, y, 0x707070, false);
+        gfx.drawString(this.font, value, TEXT_PAD + 52, y, color, false);
+    }
+
+    /** 想法页背景：整页深灰列表底 + 右缘滚动条。 */
+    private void renderThoughtsPageBg(GuiGraphics gfx) {
+        gfx.fill(this.leftPos + 4, this.topPos + thoughtListTop(),
+                this.leftPos + this.imageWidth - 4, this.topPos + thoughtListBottom(),
+                0xFF373737);
+        drawThoughtScrollbar(gfx);
+    }
+
+    /**
+     * 想法页内容：整页想法日志（新在上，旧在下）。
+     *
+     * <p><b>沉浸感规则（用户定稿）</b>：想法条目只显示措辞不显示数值——
+     * 程度靠文案表达，色调用 {@code tone} 标记分绿系/红系/中性灰，
+     * 性格滤镜在文案尾部追加 + / − 标记（v0.8）。
+     */
+    private void renderThoughtsPageText(GuiGraphics gfx) {
+        Resident resident = this.menu.getResident();
+        if (resident == null) {
+            return;
+        }
+        List<ModNetworking.MoodThought> thoughts =
+                ClientMoodState.thoughtsOf(resident.getUUID());
+        // 底层数组按"老→新"存；显示时倒过来：新想法在最上。
+        // thoughtScroll=0 显示最末尾（最新）的 10 条，向下滚 start 前移看更早的。
+        // 滚动方向与滚动条滑块一致：scroll 越大看得越早，滑块也越往下。
+        int max = Math.max(0, thoughts.size() - THOUGHTS_VISIBLE);
+        int start = Mth.clamp(thoughts.size() - THOUGHTS_VISIBLE - Mth.clamp(this.thoughtScroll, 0, max),
+                0, Math.max(0, thoughts.size() - THOUGHTS_VISIBLE));
+        int end = Math.min(thoughts.size(), start + THOUGHTS_VISIBLE);
+        int rowY = ResidentMenu.PANEL_Y + 1;
+        for (int i = end - 1; i >= start; i--) {
+            ModNetworking.MoodThought t = thoughts.get(i);
+            String line = I18n.get(t.key());
+            // 性格滤镜标记：乐观的正面尾部 "+"，悲观的负面尾部 "−"（用户定稿）
+            if (t.marker() == 1) {
+                line = line + " +";
+            } else if (t.marker() == 2) {
+                line = line + " −";
+            }
+            // 深底上用原版聊天的亮绿/亮红/灰，暗色调在 0xFF373737 上看不清；
+            // 中性事件（如金护甲）用灰色，不误导玩家往好坏两边猜
+            int color = switch (t.tone()) {
+                case 1 -> 0x55FF55;
+                case 2 -> 0xFF5555;
+                default -> 0xB0B0B0;
+            };
+            gfx.drawString(this.font, line, TEXT_PAD, rowY, color, false);
+            rowY += ROW_H;
+        }
     }
 
     /**
@@ -1235,13 +1438,16 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final String[] TAB_KEYS = {
             "gui.bmfstown.resident.tab.info",
             "gui.bmfstown.resident.tab.town",
-            "gui.bmfstown.resident.tab.work"};
+            "gui.bmfstown.resident.tab.work",
+            "gui.bmfstown.resident.tab.hobby",
+            "gui.bmfstown.resident.tab.thoughts"};
     /** 页签文字（每次绘制时从 lang 取，语言切换即时生效）。 */
     private static String[] tabNames() {
-        return new String[]{I18n.get(TAB_KEYS[0]), I18n.get(TAB_KEYS[1]), I18n.get(TAB_KEYS[2])};
+        return new String[]{I18n.get(TAB_KEYS[0]), I18n.get(TAB_KEYS[1]),
+                I18n.get(TAB_KEYS[2]), I18n.get(TAB_KEYS[3]), I18n.get(TAB_KEYS[4])};
     }
-    /** 页签宽度（px），与 TAB_KEYS 一一对应。 */
-    private static final int[] TAB_WIDTHS = {38, 32, 32};
+    /** 页签宽度（px），与 TAB_KEYS 一一对应。五个页签总宽不得超面板 176px。 */
+    private static final int[] TAB_WIDTHS = {34, 30, 30, 30, 30};
 
     /**
      * 画左上角的页签。
@@ -1428,7 +1634,57 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
             // 上板之外（玩家背包、快捷栏）照常走原版逻辑
         }
+        // 喜好页滚动条：按下滑块或轨道即开始拖拽（点轨道任意处直接跳过去）
+        if (this.page == PAGE_THOUGHTS && button == 0 && thoughtMaxScroll() > 0) {
+            int trackX = scrollbarX();
+            int trackY = this.topPos + thoughtListTop() + 1;
+            int trackH = thoughtListBottom() - thoughtListTop() - 2;
+            if (mouseX >= trackX && mouseX < trackX + SCROLLBAR_WIDTH
+                    && mouseY >= trackY && mouseY < trackY + trackH) {
+                int max = thoughtMaxScroll();
+                int thumbH = Math.max(8, trackH * THOUGHTS_VISIBLE
+                        / (THOUGHTS_VISIBLE + max));
+                int thumbY = trackY + (trackH - thumbH) * this.thoughtScroll / max;
+                // 按在滑块上：记住抓取点偏移；按在轨道空白处：滑块顶直接吸到鼠标
+                this.thoughtDragGrabOffset = Mth.clamp((int) mouseY - thumbY, 0, thumbH);
+                this.thoughtScrollbarDragging = true;
+                updateHobbyScrollFromMouse((int) mouseY, trackY, trackH, thumbH, max);
+                return true;
+            }
+        }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    /** 按鼠标 Y 反推滚动位置（拖拽滚动条时用）。 */
+    private void updateHobbyScrollFromMouse(int mouseY, int trackY, int trackH, int thumbH, int max) {
+        int target = (mouseY - this.thoughtDragGrabOffset - trackY) * max / (trackH - thumbH);
+        this.thoughtScroll = Mth.clamp(target, 0, max);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (this.thoughtScrollbarDragging && this.page == PAGE_THOUGHTS) {
+            int max = thoughtMaxScroll();
+            if (max <= 0) {
+                this.thoughtScrollbarDragging = false;
+            } else {
+                int trackY = this.topPos + thoughtListTop() + 1;
+                int trackH = thoughtListBottom() - thoughtListTop() - 2;
+                int thumbH = Math.max(8, trackH * THOUGHTS_VISIBLE
+                        / (THOUGHTS_VISIBLE + max));
+                updateHobbyScrollFromMouse((int) mouseY, trackY, trackH, thumbH, max);
+            }
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0) {
+            this.thoughtScrollbarDragging = false;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     /**
@@ -1448,6 +1704,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 职业列表滚轮：可见 3 行，翻到列表尾为止
             int max = Math.max(0, PROFESSION_ROW_COUNT - VISIBLE_PROF_ROWS);
             this.workScroll = Mth.clamp(this.workScroll - (int) Math.signum(scrollY), 0, max);
+            return true;
+        }
+        if (this.page == PAGE_THOUGHTS) {
+            // 想法日志滚轮：新想法在上，向下滚 = 看更早的（滑块同步往下走）
+            int max = thoughtMaxScroll();
+            this.thoughtScroll = Mth.clamp(this.thoughtScroll - (int) Math.signum(scrollY), 0, max);
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);

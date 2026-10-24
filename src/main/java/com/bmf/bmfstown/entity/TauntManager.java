@@ -66,7 +66,7 @@ public final class TauntManager {
                     sent++;
                 }
             }
-            com.bmf.bmfstown.BmfTown.LOGGER.info(
+            com.bmf.bmfstown.BmfTown.LOGGER.debug(
                     "[BmfTown][perk] 嘲讽红罩同步：已发给 {} 名玩家（{} 直至 {}）",
                     sent, target.getType().toShortString(), until);
             return true;

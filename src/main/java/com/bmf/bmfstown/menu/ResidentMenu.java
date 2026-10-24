@@ -143,12 +143,10 @@ public class ResidentMenu extends AbstractContainerMenu {
     public static final int DATA_HUNGER = 1;
     /** 数据槽索引：心情（0~100）。 */
     public static final int DATA_MOOD = 2;
-    /** 数据槽索引：好感度（0~100）。 */
-    public static final int DATA_AFFECTION = 3;
     /** 数据槽索引：工作模式（{@code WorkMode.ordinal()}：0 无 / 1 跟随 / 2 站岗）。 */
-    public static final int DATA_WORKMODE = 4;
+    public static final int DATA_WORKMODE = 3;
     /** 数据槽总数。客户端和服务端必须一致，否则索引会错位。 */
-    public static final int DATA_COUNT = 5;
+    public static final int DATA_COUNT = 4;
 
     // ==========================================================
     //  菜单按钮（归属城镇，v0.5）
@@ -167,6 +165,10 @@ public class ResidentMenu extends AbstractContainerMenu {
     public static final int PAGE_TOWN = 1;
     /** 页编号：工作页（职业分配 + 战士工作模式）。 */
     public static final int PAGE_WORK = 2;
+    /** 页编号：喜好页（口味 + 好恶职业一览，v0.7.1 拆页后不再带想法）。 */
+    public static final int PAGE_HOBBY = 3;
+    /** 页编号：想法页（心情想法日志，整页深色列表，v0.7.1 从喜好页拆出）。 */
+    public static final int PAGE_THOUGHTS = 4;
 
     /**
      * 客户端当前页（0=资料页）。
@@ -498,7 +500,6 @@ public class ResidentMenu extends AbstractContainerMenu {
                     case DATA_HEALTH -> Mth.floor(resident.getHealth() * 2.0F);
                     case DATA_HUNGER -> resident.getProfile().hunger();
                     case DATA_MOOD -> resident.getProfile().mood();
-                    case DATA_AFFECTION -> resident.getProfile().affection();
                     case DATA_WORKMODE -> resident.getWorkMode().ordinal();
                     default -> 0;
                 };
@@ -619,6 +620,20 @@ public class ResidentMenu extends AbstractContainerMenu {
     @Override
     public void broadcastChanges() {
         super.broadcastChanges();
+    }
+
+    /**
+     * 面板关闭（玩家手动关、走远 8 格 {@code stillValid} 判 false、死亡、
+     * 服务端强制关闭）时由原版调用——释放镇民的交互互斥锁。
+     *
+     * <p>客户端侧的菜单实例 {@code resident} 为 null，天然跳过。
+     */
+    @Override
+    public void removed(Player player) {
+        super.removed(player);
+        if (this.resident != null && !player.level().isClientSide) {
+            this.resident.releaseInteraction(player);
+        }
     }
 
     // ==========================================================

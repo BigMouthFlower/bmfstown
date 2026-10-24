@@ -35,6 +35,7 @@ import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import com.bmf.bmfstown.entity.profile.SkillType;
 import net.minecraft.world.entity.ai.goal.FloatGoal;
+import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
 import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
@@ -131,6 +132,14 @@ public class Resident extends PathfinderMob {
     /** 进食冷却剩余 tick 数。 */
     private int eatCooldown = 0;
 
+    /**
+     * 心情状态机（v0.7）：事件限流、每日结算、想法日志全在这。
+     * 心情值本体在档案里（走 DATA_PROFILE 同步），这里存的是周边状态。
+     * 每个 NPC 实例一份，随实体 NBT 落档——所有字段必须成对读写，
+     * 缺一个就会出现"读档重复结算/限流重置"的刷心情漏洞。
+     */
+    private final MoodState moodState = new MoodState();
+
     // ---- 觅食状态（就餐区箱子补给，v0.6） ----
     // 状态机：NONE（空闲）→ GO_ZONE（去就餐区）→ GO_CHEST（去箱子）
     //        → TAKE（开箱停留半秒再拿）→ NONE
@@ -146,6 +155,8 @@ public class Resident extends PathfinderMob {
     private int forageRetryCooldown = 0;
     /** 本轮觅食已进行的 tick 数（超时兜底）。 */
     private int forageTicks = 0;
+    /** 重推导航的间隔倒计时——寻路失败时 isDone 每 tick 为 true，不挡的话 8 次重试 8 tick 烧光。 */
+    private int forageRepathDelay = 0;
     /** 导航被打断后"再推一把"的次数（防无限重推）。 */
     private int forageRepicks = 0;
     /** TAKE 状态的停留倒计时（开箱动画时间）。 */
@@ -350,6 +361,10 @@ public class Resident extends PathfinderMob {
         // 优先级 0：掉水里先浮上来。几乎所有陆地生物都有这条
         this.goalSelector.addGoal(0, new FloatGoal(this));
 
+        // 优先级 1：面板被玩家查看时面向玩家站定（原版村民同款）。
+        // 占 MOVE+LOOK 旗标，压过漫步(5)与战斗移动(3/4)——有人开着面板时他不干活
+        this.goalSelector.addGoal(1, new FaceInteractingPlayerGoal());
+
         // 优先级 5：随便溜达（避开水面，免得走进去淹死）。
         // 有城镇归属时，漫步目标会被限制在城镇长方体内（见 TownBoundedStrollGoal）
         this.goalSelector.addGoal(5, new TownBoundedStrollGoal(this, Config.STROLL_SPEED.get()));
@@ -403,8 +418,8 @@ public class Resident extends PathfinderMob {
         this.entityData.set(DATA_PROFILE, profile);
     }
 
-    /** 便捷方法：返回修改后的新档案并写回。 */
-    private void updateProfile(java.util.function.UnaryOperator<ResidentProfile> mutation) {
+    /** 便捷方法：返回修改后的新档案并写回。public：MoodState 也要走这个入口改心情。 */
+    public void updateProfile(java.util.function.UnaryOperator<ResidentProfile> mutation) {
         this.setProfile(mutation.apply(this.getProfile()));
     }
 
@@ -418,8 +433,21 @@ public class Resident extends PathfinderMob {
         return this.getProfile().mood();
     }
 
-    public int getAffection() {
-        return this.getProfile().affection();
+    /** 心情状态机（事件入口、每日结算、想法日志都在这）。 */
+    public MoodState getMoodState() {
+        return this.moodState;
+    }
+
+    /**
+     * 是否在罢工：心情低于罢工阈值（可配置，0 = 关闭）。
+     *
+     * <p>罢工只停<b>工作</b>（跟随/站岗/主动索敌，见 WarriorGoals 三个 Goal 的 canUse），
+     * <b>不影响还手</b>——{@code HurtByTargetGoal}（优先级 3）不查这个标记，
+     * 被打了照样自卫（用户定稿：否则城镇防御会出怪事）。
+     */
+    public boolean onStrike() {
+        int threshold = com.bmf.bmfstown.config.Config.MOOD_STRIKE_THRESHOLD.get();
+        return threshold > 0 && this.getProfile().mood() < threshold;
     }
 
     public ProfessionType getProfession() {
@@ -544,6 +572,60 @@ public class Resident extends PathfinderMob {
     // ==========================================================
 
     /**
+     * 当前正开着面板的玩家（原版村民同款的交互互斥）。
+     *
+     * <p><b>为什么必须锁</b>：装备页挂的是镇民身上<b>真实的盔甲槽</b>，
+     * 两个玩家同时开面板就是"两个容器绑同一组物理槽位"——物品出现/丢失
+     * 的经典温床。原版箱子用 openCount 解决，我们状态更简单：
+     * 同一时间只放一个人进来。
+     *
+     * <p>瞬态字段不落档：占用随面板关闭（{@code ResidentMenu#closed}）、
+     * 玩家下线/死亡、走远 8 格（{@code stillValid} 关面板）自动解除。
+     */
+    @Nullable
+    private ServerPlayer interactingPlayer;
+
+    /** 占用是否仍然有效：玩家活着、还在世界、且面板还开着没换人。 */
+    private boolean isInteractionValid() {
+        if (this.interactingPlayer == null) {
+            return false;
+        }
+        if (!this.interactingPlayer.isAlive() || this.interactingPlayer.isRemoved()) {
+            return false;
+        }
+        return this.interactingPlayer.containerMenu instanceof com.bmf.bmfstown.menu.ResidentMenu menu
+                && menu.getResident() == this;
+    }
+
+    /**
+     * 尝试占用交互权（开面板前调用）。
+     *
+     * @return false = 已被别的玩家占用，本次拒绝开面板
+     */
+    public boolean tryAcquireInteraction(ServerPlayer player) {
+        if (this.interactingPlayer != null && this.interactingPlayer != player
+                && this.isInteractionValid()) {
+            return false;
+        }
+        this.interactingPlayer = player;
+        return true;
+    }
+
+    /** 释放交互权（面板关闭回调调用；只认占用者本人，防误清）。 */
+    public void releaseInteraction(Player player) {
+        if (this.interactingPlayer == player) {
+            this.interactingPlayer = null;
+        }
+    }
+
+    /** 每 tick 兜底：占用失效（下线/死亡/换了容器）就清掉。 */
+    private void tickInteractionMutex() {
+        if (this.interactingPlayer != null && !this.isInteractionValid()) {
+            this.interactingPlayer = null;
+        }
+    }
+
+    /**
      * 玩家右键点他时调用。
      *
      * <p>只在服务端打开界面——客户端调用 {@code openMenu} 是无效的，
@@ -568,10 +650,22 @@ public class Resident extends PathfinderMob {
         }
 
         if (!this.level().isClientSide && player instanceof ServerPlayer serverPlayer) {
+            // 交互互斥：别人正看着就拒绝（原版村民同款）
+            if (!this.tryAcquireInteraction(serverPlayer)) {
+                serverPlayer.displayClientMessage(
+                        net.minecraft.network.chat.Component.translatable(
+                                "msg.bmfstown.resident.busy",
+                                this.interactingPlayer.getName(), this.getName()),
+                        true);
+                return InteractionResult.CONSUME;
+            }
             serverPlayer.openMenu(
                     new ResidentMenuProvider(this),
                     buf -> buf.writeVarInt(this.getId())
             );
+            // 想法日志（v0.7）：面板打开时机一次性下发（服务端权威），
+            // 开着不实时推送——想法是低频事件，下次打开自然会看到新的
+            com.bmf.bmfstown.network.ModNetworking.playMoodSync(serverPlayer, this);
         }
         return InteractionResult.sidedSuccess(this.level().isClientSide);
     }
@@ -599,15 +693,16 @@ public class Resident extends PathfinderMob {
      */
     public String debugSummary() {
         ResidentProfile p = this.getProfile();
-        // String.format 的 %s 一律走 toString()，这里显式取中文名，避免输出 SWEET / NOISE 这种英文枚举名
+        MoodState mood = this.getMoodState();
+        // String.format 的 %s 一律走 toString()，这里显式取中文名，避免输出 SWEET 这种英文枚举名
         return String.format(
-                "%s | 饥饿=%d 心情=%d 好感=%d | 专长:%s 称号:%s Lv%d xp=%d | 喜欢:%s/%s/%s/%s | 讨厌:%s/%s",
+                "%s | 饥饿=%d 心情=%d | 专长:%s 称号:%s Lv%d xp=%d | 口味:%s | 喜欢的工作:%s | 性格:%s",
                 this.getName().getString(),
-                p.hunger(), p.mood(), p.affection(),
+                p.hunger(), p.mood(),
                 p.profession().zhName(), p.title(), p.level(), p.xp(),
-                p.hobbyFood().zhName(), p.hobbyHomeItem().zhName(),
-                p.hobbyEnvironment().zhName(), p.hobbyAmbience().zhName(),
-                p.dislikeItem().zhName(), p.dislikeEnvironment().zhName());
+                p.hobbyFood().zhName(),
+                p.likedProfession().zhName(),
+                mood.personality().zhName());
     }
 
     /**
@@ -651,10 +746,10 @@ public class Resident extends PathfinderMob {
         // 生成一份随机的镇民档案（饥饿满、心情满、爱好随机、无专长）
         this.setProfile(ResidentProfile.createRandom(level.getRandom()));
 
-        LOGGER.debug("[BmfTown] 生成镇民：{}，喜欢 {} / 讨厌 {}",
+        LOGGER.debug("[BmfTown] 生成镇民：{}，口味 {}，喜欢的工作 {}（偏好与性格在首次 tick 懒生成，见 MoodState）",
                 this.getName().getString(),
                 this.getProfile().hobbyFood().zhName(),
-                this.getProfile().dislikeItem().zhName());
+                this.getProfile().likedProfession().zhName());
         return data;
     }
 
@@ -678,6 +773,8 @@ public class Resident extends PathfinderMob {
         }
         // 档案整体存成一个子 Compound，字段增加时这里不用改
         tag.put("ResidentProfile", this.getProfile().save());
+        // 心情状态机（v0.7）：结算日/相位/限流计数/想法日志，必须与档案成对存取
+        tag.put("MoodState", this.moodState.save());
         // 背包（需要注册表来保存物品的数据组件）
         tag.put("ResidentInventory", this.inventory.save(this.registryAccess()));
         // 战士工作状态（跨存档保留；NONE 时不用写）
@@ -701,6 +798,10 @@ public class Resident extends PathfinderMob {
         } else {
             // 老存档（S1 时代）没有档案，给一份随机的
             this.setProfile(ResidentProfile.createRandom(this.getRandom()));
+        }
+        // 心情状态机：没有 MoodState key 的是老存档/新镇民，MoodState.load 自己兜底
+        if (tag.contains("MoodState", Tag.TAG_COMPOUND)) {
+            this.moodState.load(tag.getCompound("MoodState"));
         }
 
         if (tag.contains("ResidentInventory", Tag.TAG_COMPOUND)) {
@@ -759,6 +860,18 @@ public class Resident extends PathfinderMob {
 
         // ---- 2. 进食 ----
         this.tickEating();
+
+        // ---- 2.5 交互互斥兜底（占用者下线/死亡/换容器就释放） ----
+        this.tickInteractionMutex();
+
+        // ---- 2.6 心情：每日结算 + 感知扫描（v0.7/v0.8）----
+        // 每 tick 一次"换天了吗"的整数比较（绝大多数 tick 直接返回）；
+        // 真正的结算一天一次，且相位随机摊开，见 MoodState.tickDaily。
+        // tickSenses 内部 100 tick 一轮（动物/唱片机/怪物/天气），同样自挡。
+        if (this.level() instanceof net.minecraft.server.level.ServerLevel moodLevel) {
+            this.moodState.tickDaily(this, moodLevel);
+            this.moodState.tickSenses(this, moodLevel);
+        }
 
         // ---- 3. 回血 ----
         this.tickRegeneration();
@@ -953,7 +1066,7 @@ public class Resident extends PathfinderMob {
         this.beginForaging();
         if (zone.contains(this.blockPosition())) {
             // 人已经在就餐区里：直接扫箱
-            this.scanForChest(zone);
+            this.scanForChest(List.of(zone));
         } else {
             this.navigateToZone(zone);
             LOGGER.debug("[BmfTown][觅食] {} 出发去就餐区 ({})~({})",
@@ -967,6 +1080,7 @@ public class Resident extends PathfinderMob {
         this.forageState = ForageState.GO_ZONE;
         this.forageTicks = 0;
         this.forageRepicks = 0;
+        this.forageRepathDelay = 0;
         this.forageChest = null;
     }
 
@@ -981,12 +1095,33 @@ public class Resident extends PathfinderMob {
             return;
         }
         if (zone.contains(this.blockPosition())) {
-            this.scanForChest(zone);
+            this.scanForChest(List.of(zone));
             return;
         }
-        // 没到：走丢了就再推一把，推满次数才认输
+        // 没到：走丢了就再推一把，推满次数才认输。
+        // 重推之间隔 10 tick——寻路失败时 isDone 每 tick 都是 true，
+        // 不隔开的话 8 次重试一秒内烧光，玩家看到的就是"站着不动然后空手走人"
         if (this.getNavigation().isDone()) {
-            this.repickOrGiveUp(() -> this.navigateToZone(zone), "走不到就餐区");
+            if (this.forageRepathDelay > 0) {
+                this.forageRepathDelay--;
+                return;
+            }
+            this.forageRepathDelay = 10;
+            this.forageRepicks++;
+            if (this.forageRepicks >= 4) {
+                // 走不进就餐区：绕过"进区"这一步，直接全城扫"带食物的容器"。
+                // 区中心/随机点不可达时，人往往其实就站在某口箱子旁边——
+                // 死磕区中心只会永远"寻路失败"。
+                LOGGER.debug("[BmfTown][觅食] {} 进不了就餐区，降级为直接扫全城箱",
+                        this.getName().getString());
+                this.scanForChest(this.allDiningZones());
+                return;
+            }
+            if (this.forageRepicks > FORAGE_MAX_REPICK) {
+                this.giveUpForaging("走不到就餐区");
+                return;
+            }
+            this.navigateToZone(zone);
         }
     }
 
@@ -1001,17 +1136,68 @@ public class Resident extends PathfinderMob {
             return;
         }
         if (chest.closerThan(this.blockPosition(), CHEST_REACH)) {
-            // 到了：进入"开箱"表演阶段
-            this.forageState = ForageState.TAKE;
-            this.takeDelay = TAKE_DELAY_TICKS;
-            this.getNavigation().stop();
-            this.containerFx((net.minecraft.server.level.ServerLevel) this.level(), chest, true);
+            this.startTake(chest);
             return;
         }
         if (this.getNavigation().isDone()) {
-            this.repickOrGiveUp(() -> this.getNavigation().moveTo(
-                    chest.getX() + 0.5D, chest.getY(), chest.getZ() + 0.5D,
-                    Config.STROLL_SPEED.get()), "走不到箱子");
+            if (this.forageRepathDelay > 0) {
+                this.forageRepathDelay--;
+                return;
+            }
+            this.forageRepathDelay = 10;
+            // 就在箱子 6 格内却寻不进最后几格（贴墙/围栏围箱子）：
+            // 视觉上他已经站在箱边了，直接当到达处理，别再空转重推
+            if (chest.closerThan(this.blockPosition(), CHEST_REACH * 2)) {
+                this.startTake(chest);
+                return;
+            }
+            this.forageRepicks++;
+            if (this.forageRepicks > FORAGE_MAX_REPICK) {
+                this.giveUpForaging("走不到箱子（距离 "
+                        + String.format("%.1f", Math.sqrt(chest.distSqr(this.blockPosition()))) + " 格）");
+                return;
+            }
+            this.repathToChest();
+        }
+    }
+
+    /** 进入"开箱"表演阶段（到达判定通过后的公共入口）。 */
+    private void startTake(BlockPos chest) {
+        this.forageState = ForageState.TAKE;
+        this.takeDelay = TAKE_DELAY_TICKS;
+        this.getNavigation().stop();
+        this.containerFx((net.minecraft.server.level.ServerLevel) this.level(), chest, true);
+    }
+
+    /**
+     * 重推去箱子的导航。
+     *
+     * <p>箱子正上方那格常是站不进去的（贴墙摆、围栅栏、上锁漏斗邻接等），
+     * 只会朝着箱子坐标寻路时原版直接返回 false。改成在箱子周围
+     * 撒一圈邻近站立点：只要 3 格到达判定内有任何一格能走过去就算成。
+     */
+    private void repathToChest() {
+        BlockPos chest = this.forageChest;
+        if (chest == null) {
+            return;
+        }
+        double speed = Config.STROLL_SPEED.get();
+        if (this.tryMoveToStandable(chest, speed)) {
+            return;
+        }
+        for (int i = 0; i < 8; i++) {
+            int dx = this.getRandom().nextInt(5) - 2;  // -2..2
+            int dz = this.getRandom().nextInt(5) - 2;
+            if (dx == 0 && dz == 0) {
+                continue;
+            }
+            BlockPos p = chest.offset(dx, 0, dz);
+            // 箱子边上常有半砖/台阶差，上下各试一格
+            if (this.tryMoveToStandable(p, speed)
+                    || this.tryMoveToStandable(p.above(), speed)
+                    || this.tryMoveToStandable(p.below(), speed)) {
+                return;
+            }
         }
     }
 
@@ -1049,28 +1235,68 @@ public class Resident extends PathfinderMob {
     }
 
     private void navigateToZone(TownZone zone) {
-        BlockPos c = zoneCenter(zone);
-        this.getNavigation().moveTo(
-                c.getX() + 0.5D, c.getY(), c.getZ() + 0.5D, Config.STROLL_SPEED.get());
+        double speed = Config.STROLL_SPEED.get();
+        // 先试中心点；不可站立/寻不到路时在区内随机撒点兜底——
+        // 中心点常悬在作物、栅栏或半空上，原版寻路对这种终点直接返回 false
+        if (this.tryMoveToStandable(zoneCenter(zone), speed)) {
+            return;
+        }
+        for (int i = 0; i < 8; i++) {
+            int x = net.minecraft.util.Mth.randomBetweenInclusive(this.getRandom(),
+                    zone.min().getX(), zone.max().getX());
+            int z = net.minecraft.util.Mth.randomBetweenInclusive(this.getRandom(),
+                    zone.min().getZ(), zone.max().getZ());
+            BlockPos p = new BlockPos(x, zone.min().getY(), z);
+            if (this.tryMoveToStandable(p, speed)) {
+                return;
+            }
+        }
+        // 全部撒点失败：让 repickOrGiveUp 的计数继续走，最终放弃本轮
     }
 
-    /** 就餐区里找"带食物的最近容器"（就近原则第二级），锁定后走过去。 */
-    private void scanForChest(TownZone zone) {
+    /**
+     * 尝试走到某个可站立的格子。
+     *
+     * <p>站立检查：目标格和头顶必须有碰撞体积（墙/作物都算占位）→ 不走；
+     * 脚下必须踩得住 → 不走。都过再调原版寻路，{@code moveTo} 返回 false
+     * （找不到路径）同样视为失败——调用方决定换点还是放弃。
+     */
+    private boolean tryMoveToStandable(BlockPos pos, double speed) {
+        var level = this.level();
+        var at = level.getBlockState(pos);
+        var above = level.getBlockState(pos.above());
+        var below = level.getBlockState(pos.below());
+        if (!at.getCollisionShape(level, pos).isEmpty()
+                || !above.getCollisionShape(level, pos.above()).isEmpty()) {
+            return false; // 目标格被占，站不进去
+        }
+        if (below.getCollisionShape(level, pos.below()).isEmpty()) {
+            return false; // 悬空，跳不上去
+        }
+        return this.getNavigation().moveTo(
+                pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D, speed);
+    }
+
+    /**
+     * 在给定的一批就餐区里找"带食物的最近容器"（就近原则第二级），锁定后走过去。
+     * 传单个区就是"进区扫箱"，传全部区就是"进不了区的降级扫法"。
+     */
+    private void scanForChest(List<TownZone> zones) {
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
             this.cancelForaging();
             return;
         }
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
-        int scanned = 0;
         int containers = 0;
-        for (BlockPos pos : BlockPos.betweenClosed(zone.min(), zone.max())) {
-            if (++scanned > MAX_ZONE_SCAN) {
-                LOGGER.warn("[BmfTown] {} 的就餐区太大（>{} 方块），跳过扫箱",
-                        this.getName().getString(), MAX_ZONE_SCAN);
-                this.giveUpForaging("选区过大");
-                return;
-            }
+        for (TownZone zone : zones) {
+            int scanned = 0;
+            for (BlockPos pos : BlockPos.betweenClosed(zone.min(), zone.max())) {
+                if (++scanned > MAX_ZONE_SCAN) {
+                    LOGGER.warn("[BmfTown] {} 的就餐区太大（>{} 方块），跳过该区扫箱",
+                            this.getName().getString(), MAX_ZONE_SCAN);
+                    break;
+                }
             // 注意：大箱子（DoubleChest）是两个方块实体，直接 getBlockEntity
             // 只能看到所在那一半的 27 格——牛排放在另一半就会误判"空箱"。
             // getContainerAt 是原版漏斗用的取容器入口，会把大箱子两半
@@ -1108,24 +1334,36 @@ public class Resident extends PathfinderMob {
                 best = pos.immutable(); // betweenClosed 复用可变对象，必须 immutable() 收藏
                 bestDist = d;
             }
+            }
         }
         if (best == null) {
-            LOGGER.debug("[BmfTown][觅食] {} 扫描就餐区 ({})~({}) 完成：容器 {} 个，均无食物或无容器",
-                    this.getName().getString(), zone.min().toShortString(),
-                    zone.max().toShortString(), containers);
+            LOGGER.debug("[BmfTown][觅食] {} 扫描 {} 个就餐区完成：容器 {} 个，均无食物或无容器",
+                    this.getName().getString(), zones.size(), containers);
             this.giveUpForaging("就餐区里没有带食物的容器");
             return;
         }
         this.forageChest = best;
         this.forageState = ForageState.GO_CHEST;
         this.forageRepicks = 0;
-        this.getNavigation().moveTo(
-                best.getX() + 0.5D, best.getY(), best.getZ() + 0.5D, Config.STROLL_SPEED.get());
+        this.forageRepathDelay = 0;
+        if (!this.tryMoveToStandable(best, Config.STROLL_SPEED.get())) {
+            // 箱子正格站不进去（贴墙/围栏），先在周围撒一圈邻近点
+            this.repathToChest();
+        }
         LOGGER.debug("[BmfTown][觅食] {} 锁定食物容器 {}",
                 this.getName().getString(), best.toShortString());
     }
 
-    /** 真正的拿取：最多 FORAGE_TAKE_COUNT 个，不足拿全部；塞不下的放回箱子。 */
+    /**
+     * 真正的拿取：最多 FORAGE_TAKE_COUNT 个，不足拿全部；塞不下的放回箱子。
+     *
+     * <p><b>偏好拿取（v0.7 定稿）</b>：两遍扫描——第一遍只拿对胃口的
+     * （{@code FoodTraits.matches}），没凑够再第二遍不挑食地补。
+     * 偏好是<b>优先级</b>不是过滤条件，箱里没有爱吃的照样能吃饱。
+     * 这样"玩家囤对库存"就能在囤货端管理全城心情：
+     * 粮箱里同时有曲奇和面包时，喜甜的会自动优先拿曲奇，
+     * 吃下去的瞬间心情事件自然发生，不需要任何额外喂食操作。
+     */
     private void doTakeFood(net.minecraft.server.level.ServerLevel level, BlockPos chest) {
         // 与扫描同款：必须用 getContainerAt 合并大箱子两半，
         // 否则 getBlockEntity 只拿到所在半边的 27 格——
@@ -1136,11 +1374,33 @@ public class Resident extends PathfinderMob {
             return; // 容器在这几秒里被拆了——空手而归
         }
         int want = Config.FORAGE_TAKE_COUNT.get();
+        int taken = takeFromContainer(container, want, true);   // 第一遍：只拿爱吃的
+        if (taken < want) {
+            taken += takeFromContainer(container, want - taken, false); // 第二遍：不挑了
+        }
+        if (taken > 0) {
+            LOGGER.debug("[BmfTown] {} 从 {} 处的箱子拿了 {} 个食物",
+                    this.getName().getString(), chest.toShortString(), taken);
+        }
+    }
+
+    /**
+     * 从容器拿食物的一遍扫描。
+     *
+     * @param favoriteOnly true = 只拿对胃口的（跳过普通食物）；false = 只拿普通食物
+     *                     （两遍互补，任何食物都恰好属于其中一遍，不会重复拿）
+     */
+    private int takeFromContainer(net.minecraft.world.Container container, int want,
+            boolean favoriteOnly) {
         int taken = 0;
+        var hobbyFood = this.getProfile().hobbyFood();
         for (int i = 0; i < container.getContainerSize() && taken < want; i++) {
             ItemStack stack = container.getItem(i);
             if (stack.isEmpty() || stack.get(DataComponents.FOOD) == null) {
                 continue;
+            }
+            if (favoriteOnly != com.bmf.bmfstown.entity.profile.FoodTraits.matches(hobbyFood, stack)) {
+                continue; // 第一遍跳过不合胃口的 / 第二遍跳过爱吃的
             }
             int n = Math.min(want - taken, stack.getCount());
             ItemStack grabbed = stack.split(n);
@@ -1153,10 +1413,7 @@ public class Resident extends PathfinderMob {
             }
             taken += n;
         }
-        if (taken > 0) {
-            LOGGER.info("[BmfTown] {} 从 {} 处的箱子拿了 {} 个食物",
-                    this.getName().getString(), chest.toShortString(), taken);
-        }
+        return taken;
     }
 
     /** 超时兜底。返回 false 表示本轮已被超时终结。 */
@@ -1178,6 +1435,14 @@ public class Resident extends PathfinderMob {
         LOGGER.debug("[BmfTown][觅食] {} 导航未达（{}），第 {} 次重推",
                 this.getName().getString(), reason, this.forageRepicks);
         repath.run();
+    }
+
+    /** 本城镇的全部就餐区（没有绑城镇时为空列表）。 */
+    private List<TownZone> allDiningZones() {
+        Town town = this.boundTown();
+        return town == null
+                ? List.of()
+                : town.zones(com.bmf.bmfstown.town.TownWandMode.DINING);
     }
 
     /**
@@ -1222,8 +1487,17 @@ public class Resident extends PathfinderMob {
     private void giveUpForaging(String reason) {
         this.cancelForaging();
         this.forageRetryCooldown = Config.FORAGE_RETRY_TICKS.get();
-        LOGGER.info("[BmfTown][觅食] {} 本轮失败（{}），{} tick 后重试",
-                this.getName().getString(), reason, this.forageRetryCooldown);
+        // WARN 而不是 DEBUG：觅食失败是要玩家看见的排障信息（DEBUG 在常规配置下不可见）。
+        // 带上自身坐标，对照箱/区坐标一眼能看出是"走不到"还是"没得拿"。
+        LOGGER.warn("[BmfTown][觅食] {} 本轮失败（{}，位置 {}），{} tick 后重试",
+                this.getName().getString(), reason, this.blockPosition().toShortString(),
+                this.forageRetryCooldown);
+        // 挨饿心情事件（v0.7）：本轮觅食失败 = 没拿到吃的。
+        // 挨饿限流（每半天 1 次 + 按连续天数递增幅度）在 MoodState 内部做，
+        // 这里只管上报——觅食失败会反复发生，不挡的话想法列表会被刷屏。
+        if (this.level() instanceof net.minecraft.server.level.ServerLevel starveLevel) {
+            this.moodState.starving(this, starveLevel);
+        }
     }
 
     /** 结束本轮觅食（成功或中性收场），不设冷却。 */
@@ -1485,7 +1759,7 @@ public class Resident extends PathfinderMob {
         if (this.getPose() == net.minecraft.world.entity.Pose.SLEEPING) {
             this.sleepState = SleepState.SLEEPING;
             this.getNavigation().stop();
-            LOGGER.info("[BmfTown][睡眠] {} 上床睡觉 {}",
+            LOGGER.debug("[BmfTown][睡眠] {} 上床睡觉 {}",
                     this.getName().getString(), bed.toShortString());
         } else {
             LOGGER.debug("[BmfTown][睡眠] {} 躺下失败（床被占？），放弃本轮",
@@ -1581,6 +1855,42 @@ public class Resident extends PathfinderMob {
      * 所以客户端永远走 super 的原版逻辑。位置同步由服务端权威，
      * 客户端少算一遍目标点没有任何可见差异。
      */
+    /**
+     * 面板被查看时面向玩家站定（原版村民同款）。
+     *
+     * <p><b>为什么占 MOVE+LOOK 旗标</b>：Goal 选择器的规则是"高优先级
+     * （数字小）先挑旗标"——本 Goal 优先级 1，它活着期间漫步(5)、
+     * 近战(3)、跟随/站岗(4)全拿不到移动控制权，镇民就会站住不动、
+     * 转头看着查看他的人。面板一关（或 8 格超距自动关）本 Goal 立即
+     * 失效，AI 原样恢复。
+     */
+    class FaceInteractingPlayerGoal extends Goal {
+
+        FaceInteractingPlayerGoal() {
+            this.setFlags(java.util.EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK));
+        }
+
+        @Override
+        public boolean canUse() {
+            return isInteractionValid();
+        }
+
+        @Override
+        public boolean canContinueToUse() {
+            return isInteractionValid();
+        }
+
+        @Override
+        public void tick() {
+            var player = interactingPlayer;
+            if (player == null) {
+                return;
+            }
+            Resident.this.getNavigation().stop();
+            Resident.this.getLookControl().setLookAt(player, 30.0F, 30.0F);
+        }
+    }
+
     static class TownBoundedStrollGoal extends WaterAvoidingRandomStrollGoal {
 
         TownBoundedStrollGoal(Resident mob, double speedModifier) {
@@ -1764,7 +2074,7 @@ public class Resident extends PathfinderMob {
             }
             if (count > 0) {
                 this.playSound(com.bmf.bmfstown.ModSounds.BULWARK_HIT.get(), 1.0F, 1.0F);
-                LOGGER.info("[BmfTown][perk] {} 施放坚盾：{} 名友军（镇民+玩家）获得抗性提升 I（{} 秒）",
+                LOGGER.debug("[BmfTown][perk] {} 施放坚盾：{} 名友军（镇民+玩家）获得抗性提升 I（{} 秒）",
                         this.getName().getString(), count, Config.PERK_BULWARK_DURATION_SECONDS.get());
             }
         }
@@ -1784,7 +2094,7 @@ public class Resident extends PathfinderMob {
             }
             if (count > 0) {
                 this.playSound(com.bmf.bmfstown.ModSounds.HUNT_CLANG.get(), 1.0F, 1.2F);
-                LOGGER.info("[BmfTown][perk] {} 施放追猎：{} 个敌人被标记发光（{} 秒）",
+                LOGGER.debug("[BmfTown][perk] {} 施放追猎：{} 个敌人被标记发光（{} 秒）",
                         this.getName().getString(), count, Config.PERK_HUNT_DURATION_SECONDS.get());
             }
         }
@@ -1803,7 +2113,7 @@ public class Resident extends PathfinderMob {
             }
             if (count > 0) {
                 this.playSound(com.bmf.bmfstown.ModSounds.TAUNT_IMPACT.get(), 1.2F, 0.9F);
-                LOGGER.info("[BmfTown][perk] {} 施放嘲讽：{} 个敌人被强制攻击自己（{} 秒）",
+                LOGGER.debug("[BmfTown][perk] {} 施放嘲讽：{} 个敌人被强制攻击自己（{} 秒）",
                         this.getName().getString(), count, Config.PERK_TAUNT_DURATION_SECONDS.get());
             }
         }
@@ -2176,6 +2486,20 @@ public class Resident extends PathfinderMob {
             this.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY);
         }
 
+        // ---- 心情事件：吃到了爱吃的（v0.7）----
+        // 必须在 eatingFood 清空前判定（开始吃前就存好了整堆食物）。
+        // FoodTraits.matches 走 c:foods/* 标签，其他模组遵守标签约定的食物自动兼容。
+        // noteFed 与吃喜无关：吃任何食物都刷新挨饿递增的基准日。
+        ItemStack eaten = this.eatingFood;
+        if (!eaten.isEmpty() && this.level() instanceof net.minecraft.server.level.ServerLevel moodLevel) {
+            // noteFed 顺带处理贪吃性格（任何进食 +3，每天 1 次），见 MoodState.noteFed
+            this.moodState.noteFed(this, moodLevel);
+            if (com.bmf.bmfstown.entity.profile.FoodTraits.matches(
+                    this.getProfile().hobbyFood(), eaten)) {
+                this.moodState.ateFavored(this, moodLevel);
+            }
+        }
+
         this.eatingFood = ItemStack.EMPTY;
         this.eatingNutrition = -1;
         this.eatCooldown = Config.EAT_COOLDOWN.get();
@@ -2283,6 +2607,14 @@ public class Resident extends PathfinderMob {
         if (hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong")) {
             eff *= 1.0 + Config.PERK_STRONG_BONUS_PERCENT.get() / 100.0;
         }
+        // ---- 心情打折档（v0.7）：mood 低于阈值（默认 40）→ 效率 ×0.7 ----
+        // 注意：当前"效率"只作用于战士攻击伤害（还没有生产职业），
+        // 心情差的战士打人没劲是符合直觉的；生产职业实装后同一乘数自动作用于产出。
+        // 更低的心情档（罢工）不在这处理——走 WarriorGoals 的 onStrike 检查。
+        int slowThreshold = Config.MOOD_SLOW_THRESHOLD.get();
+        if (slowThreshold > 0 && this.getProfile().mood() < slowThreshold) {
+            eff *= Config.MOOD_SLOW_MULTIPLIER_PERCENT.get() / 100.0;
+        }
         return eff;
     }
 
@@ -2334,6 +2666,10 @@ public class Resident extends PathfinderMob {
             LOGGER.info("[BmfTown][perk] ⚡{} 斩杀触发：目标 {} 血量 {}，击杀={}",
                     this.getName().getString(), target.getType().toShortString(),
                     String.format("%.1f", before), killed);
+            // 好战性格：击杀记心情（每天 2 次上限，见 MoodState.noteKill）
+            if (killed && this.level() instanceof net.minecraft.server.level.ServerLevel killLevel) {
+                this.moodState.noteKill(this, killLevel);
+            }
             return killed;
         }
 
@@ -2349,9 +2685,15 @@ public class Resident extends PathfinderMob {
         }
         try {
             boolean hit = super.doHurtTarget(target);
+            // 好战性格：这一下把目标打死才算"击杀"（掉血不算）
+            if (hit && target instanceof net.minecraft.world.entity.LivingEntity living
+                    && living.getHealth() <= 0
+                    && this.level() instanceof net.minecraft.server.level.ServerLevel killLevel) {
+                this.moodState.noteKill(this, killLevel);
+            }
             if (target instanceof net.minecraft.world.entity.LivingEntity living) {
                 // 观察期用 INFO（用户要肉眼对比不同等级战士的伤害系数）
-                LOGGER.info("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
+                LOGGER.debug("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
                         this.getName().getString(), target.getType().toShortString(), hit,
                         String.format("%.1f", attackAttr == null ? 0.0 : attackAttr.getValue() / efficiency),
                         String.format("%.0f", efficiency * 100),

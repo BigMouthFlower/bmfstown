@@ -87,7 +87,10 @@ public final class WarriorGoals {
 
         @Override
         public boolean canUse() {
-            return this.resident.getWorkMode() == WorkMode.FOLLOW
+            // 罢工检查（v0.7）：心情低于罢工阈值时拒绝启动工作 Goal。
+            // 还手（HurtByTargetGoal，targetSelector 3）不查这个——罢工不影响自卫。
+            return !this.resident.onStrike()
+                    && this.resident.getWorkMode() == WorkMode.FOLLOW
                     && followedPlayer(this.resident) != null;
         }
 
@@ -133,7 +136,7 @@ public final class WarriorGoals {
                 // 不能为了打架把人丢在原地。
                 double chaseLimit = Config.attackReachOrDefault() * 1.5D;
                 if (this.resident.getTarget() != null && dist <= chaseLimit) {
-                    LOGGER.info("[BmfTown][跟随] {} 交战中（目标 {}），原地作战，距离玩家 {} 格",
+                    LOGGER.debug("[BmfTown][跟随] {} 交战中（目标 {}），原地作战，距离玩家 {} 格",
                             this.resident.getName().getString(),
                             this.resident.getTarget().getType().toShortString(),
                             String.format("%.1f", dist));
@@ -141,7 +144,7 @@ public final class WarriorGoals {
                 }
                 this.resident.getNavigation().moveTo(player,
                         Config.WARRIOR_FOLLOW_SPEED.get());
-                LOGGER.info("[BmfTown][跟随] {} 追向玩家（距离 {}，速度 {}）{}",
+                LOGGER.debug("[BmfTown][跟随] {} 追向玩家（距离 {}，速度 {}）{}",
                         this.resident.getName().getString(),
                         String.format("%.1f", dist), Config.WARRIOR_FOLLOW_SPEED.get(),
                         this.resident.getTarget() != null ? "，同时带着目标" : "");
@@ -172,7 +175,9 @@ public final class WarriorGoals {
 
         @Override
         public boolean canUse() {
-            return this.resident.getWorkMode() == WorkMode.GUARD_POST
+            // 罢工检查（v0.7）：见 FollowPlayerGoal.canUse 的注释
+            return !this.resident.onStrike()
+                    && this.resident.getWorkMode() == WorkMode.GUARD_POST
                     && this.resident.getGuardPost() != null;
         }
 
@@ -207,7 +212,7 @@ public final class WarriorGoals {
             // 离岗哨太远（被人推走/传送）： straight back
             if (this.resident.distanceToSqr(
                     post.getX() + 0.5D, post.getY(), post.getZ() + 0.5D) > radius * radius * 2.25D) {
-                LOGGER.info("[BmfTown][站岗] {} 距岗哨超过 {} 格，回岗",
+                LOGGER.debug("[BmfTown][站岗] {} 距岗哨超过 {} 格，回岗",
                         this.resident.getName().getString(), radius * 1.5D);
                 this.resident.getNavigation().moveTo(
                         post.getX() + 0.5D, post.getY(), post.getZ() + 0.5D,
@@ -225,7 +230,7 @@ public final class WarriorGoals {
                     double z = post.getZ() + 0.5D + Math.sin(angle) * r;
                     this.resident.getNavigation().moveTo(x, post.getY(), z,
                             Config.WARRIOR_GUARD_SPEED.get());
-                    LOGGER.info("[BmfTown][站岗] {} 巡逻选点 ({}, {}, {})",
+                    LOGGER.debug("[BmfTown][站岗] {} 巡逻选点 ({}, {}, {})",
                             this.resident.getName().getString(),
                             String.format("%.1f", x), post.getY(), String.format("%.1f", z));
                 }
@@ -249,14 +254,9 @@ public final class WarriorGoals {
      * </ul>
      *
      * <h2>为什么不打：判定顺序</h2>
-     * 索敌失败的每一种原因都在这里有一条 DEBUG 日志，按顺序排查即可：
-     * <ol>
-     *   <li>工作模式是 NONE → {@code 未分配工作}</li>
-     *   <li>锚点为空 → {@code 锚点丢失}（跟随玩家下线 / 岗哨数据为空）</li>
-     *   <li>范围内没有敌对生物 → {@code 范围内敌对生物 0 个}</li>
-     *   <li>有生物但全被过滤（苦力怕 / 同为队友）→ {@code 全部被过滤}</li>
-     *   <li>已锁定 → {@code 锁定 xxx}</li>
-     * </ol>
+     * canUse 每 10 tick 扫一次，判定失败的分支（未分配工作/锚点丢失/
+     * 范围内没怪）都是常态，不刷日志——真异常（有候选却没选中）走
+     * {@code logAnomaly}。要排查索敌问题时临时加回 DEBUG 即可。
      */
     static class MonsterTargetGoal extends TargetGoal {
 
@@ -284,24 +284,24 @@ public final class WarriorGoals {
                 return false;
             }
             this.scanCooldown = 10;
+            // 罢工检查（v0.7）：主动索敌属于"工作"，罢工时停；
+            // 但 canContinueToUse 不查——已经打起来的架要打完，半路撂挑子太怪
+            if (((Resident) this.mob).onStrike()) {
+                return false;
+            }
             WorkMode mode = resident.getWorkMode();
             if (mode == WorkMode.NONE) {
-                LOGGER.info("[BmfTown][索敌] {} 跳过：未分配工作", name());
                 return false;
             }
             BlockPos post = anchor(resident);
             if (post == null) {
-                // 有工作模式却没锚点 = 真异常（跟随玩家下线时会短暂出现，属正常）
-                LOGGER.info("[BmfTown][索敌] {} 跳过：模式={} 但锚点为空（玩家不在本维度/已下线？）",
-                        name(), mode);
-                return false;
+                return false; // 跟随玩家下线时会短暂出现，属正常
             }
             double r = aggroRadius(resident);
             AABB box = new AABB(post).inflate(r, r * 0.5D, r);
             LivingEntity best = null;
             double bestDist = Double.MAX_VALUE;
             int seen = 0;
-            int filtered = 0;
             // 用 Monster.class 而不是 Enemy.class：getEntitiesOfClass 只收
             // Entity 的子类型，而 Enemy 是纯接口；Monster 是实体类且实现了
             // Enemy，覆盖所有敌对生物（苦力怕过滤见谓词）。
@@ -311,42 +311,24 @@ public final class WarriorGoals {
                 }
                 seen++;
                 if (!Config.WARRIOR_ATTACK_CREEPERS.get() && mob instanceof Creeper) {
-                    filtered++;
-                    LOGGER.info("[BmfTown][索敌] {} 过滤 {}：苦力怕（配置 warrior.attackCreepers=false）",
-                            name(), mob.getType().toShortString());
                     continue;
                 }
                 double d = mob.distanceToSqr(this.mob);
-                LOGGER.info("[BmfTown][索敌] {} 候选 {}：距自己 {} 格，距锚点 {} 格",
-                        name(), mob.getType().toShortString(),
-                        String.format("%.1f", Math.sqrt(d)),
-                        String.format("%.1f", Math.sqrt(mob.distanceToSqr(
-                                post.getX() + 0.5D, post.getY(), post.getZ() + 0.5D))));
                 if (d < bestDist) {
                     bestDist = d;
                     best = mob;
                 }
             }
             if (best == null) {
-                if (seen == 0) {
-                    LOGGER.info("[BmfTown][索敌] {} 模式={} 锚点={} 半径={}：范围内敌对生物 0 个",
-                            name(), mode, post.toShortString(), r);
-                } else {
+                if (seen > 0) {
                     // 有敌对生物却一个都没进候选 = 全被过滤，这是"该打没打"的异常
-                    LOGGER.info("[BmfTown][索敌] {} 模式={} 锚点={} 半径={}：{} 个敌对生物全部被过滤",
-                            name(), mode, post.toShortString(), r, seen);
-                    if (filtered == 0) {
-                        // seen>0 但 filtered==0 却没选中，逻辑上不该发生
-                        logAnomaly("{} 有 {} 个未过滤候选却未选中任何目标，请检查过滤逻辑",
-                                name(), seen);
-                    }
+                    // （正常的"范围内 0 个"是常态，不刷日志）
+                    logAnomaly("{} 有 {} 个敌对生物却未选中任何目标，请检查过滤逻辑",
+                            name(), seen);
                 }
                 return false;
             }
             this.mob.setTarget(best);
-            LOGGER.info("[BmfTown][索敌] {} 锁定 {}（模式={}，锚点={}，半径={}，距自己 {} 格）",
-                    name(), best.getType().toShortString(), mode, post.toShortString(), r,
-                    String.format("%.1f", Math.sqrt(bestDist)));
             return true;
         }
 
@@ -365,19 +347,19 @@ public final class WarriorGoals {
                 return false; // 正常，被 stop 清过
             }
             if (!target.isAlive()) {
-                LOGGER.info("[BmfTown][索敌] {} 目标 {} 已死亡，结束追击",
+                LOGGER.debug("[BmfTown][索敌] {} 目标 {} 已死亡，结束追击",
                         name(), target.getType().toShortString());
                 return false;
             }
             WorkMode mode = resident.getWorkMode();
             if (mode == WorkMode.NONE) {
-                LOGGER.info("[BmfTown][索敌] {} 工作被取消，放弃目标 {}", name(),
+                LOGGER.debug("[BmfTown][索敌] {} 工作被取消，放弃目标 {}", name(),
                         target.getType().toShortString());
                 return false;
             }
             BlockPos post = anchor(resident);
             if (post == null) {
-                LOGGER.info("[BmfTown][索敌] {} 锚点丢失（模式={}），放弃目标 {}",
+                LOGGER.debug("[BmfTown][索敌] {} 锚点丢失（模式={}），放弃目标 {}",
                         name(), mode, target.getType().toShortString());
                 return false;
             }
@@ -385,7 +367,7 @@ public final class WarriorGoals {
             double targetDistSqr = target.distanceToSqr(
                     post.getX() + 0.5D, post.getY(), post.getZ() + 0.5D);
             if (targetDistSqr > r * r * 4.0D) {
-                LOGGER.info("[BmfTown][索敌] {} 目标 {} 距锚点 {} 格，超出追击上限 {} 格，放弃",
+                LOGGER.debug("[BmfTown][索敌] {} 目标 {} 距锚点 {} 格，超出追击上限 {} 格，放弃",
                         name(), target.getType().toShortString(),
                         String.format("%.1f", Math.sqrt(targetDistSqr)), r * 2.0D);
                 return false;
@@ -405,6 +387,6 @@ public final class WarriorGoals {
      * （战士站着不动），默认日志级别下也应该留下痕迹。
      */
     private static void logAnomaly(String fmt, Object... args) {
-        LOGGER.info("[BmfTown][索敌][异常] " + fmt, args);
+        LOGGER.debug("[BmfTown][索敌][异常] " + fmt, args);
     }
 }

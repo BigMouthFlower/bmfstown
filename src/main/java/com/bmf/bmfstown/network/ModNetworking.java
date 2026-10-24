@@ -415,7 +415,7 @@ public final class ModNetworking {
             if (payload.index() == 0) {
                 held.set(ModDataComponents.WAND_POINT_A.get(), payload.pos().immutable());
                 held.remove(ModDataComponents.WAND_POINT_B.get());
-                com.bmf.bmfstown.BmfTown.LOGGER.info(
+                com.bmf.bmfstown.BmfTown.LOGGER.debug(
                         "[BmfTown][选点] 第1点 = {}", payload.pos().toShortString());
             } else {
                 BlockPos a = held.get(ModDataComponents.WAND_POINT_A.get());
@@ -425,7 +425,7 @@ public final class ModNetworking {
                     return;
                 }
                 held.set(ModDataComponents.WAND_POINT_B.get(), payload.pos().immutable());
-                com.bmf.bmfstown.BmfTown.LOGGER.info(
+                com.bmf.bmfstown.BmfTown.LOGGER.debug(
                         "[BmfTown][选点] 第2点 = {}（第1点 = {}）",
                         payload.pos().toShortString(), a.toShortString());
             }
@@ -511,6 +511,121 @@ public final class ModNetworking {
     }
 
     // ==========================================================
+    //  S → C：镇民想法日志同步（"喜好"页下方列表用）
+    // ==========================================================
+
+    /**
+     * 一条想法：发生日 + 色调 + 语言文件 key + 标记。
+     *
+     * <p>不传数值（用户定稿：为沉浸感面板不显示心情增减的具体数字）、
+     * 不传现成文案（客户端 I18n 现译，切语言即时生效）。
+     * 序列化到网络时四个字段一起编，所以打包成独立 record 带自己的 codec。
+     *
+     * <p>tone：0 = 中性（灰）、1 = 正面（绿）、2 = 负面（红）；
+     * marker：0 = 无、1 = 乐观 "+"、2 = 悲观 "−"（v0.8 性格滤镜，
+     * 客户端渲染在文案尾部）。
+     */
+    public record MoodThought(int day, int tone, String key, int marker)
+            implements CustomPacketPayload {
+
+        public static final StreamCodec<ByteBuf, MoodThought> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, MoodThought::day,
+                        ByteBufCodecs.VAR_INT, MoodThought::tone,
+                        ByteBufCodecs.STRING_UTF8, MoodThought::key,
+                        ByteBufCodecs.VAR_INT, MoodThought::marker,
+                        MoodThought::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+
+        /** 心情想法包共用一个 Type 占位（本 record 只作为嵌套数据，不单独注册）。 */
+        public static final Type<MoodThought> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "mood_thought"));
+    }
+
+    /**
+     * 服务端 → 客户端：某镇民的完整想法日志（最多 30 条）+ 偏好摘要。
+     *
+     * <p>什么时候发：玩家右键镇民打开面板时发一次（服务端权威），
+     * 面板开着期间不实时推送——想法本来就是低频事件，
+     * 下次打开面板自然会看到新的。镇民用 UUID 定位（实体 id 进服重排）。
+     *
+     * <p>{@code prefs} 是 v0.8 偏好体系的紧凑编码
+     * （{@code blocks|animal|color|music|weather|mob|personality}，
+     * 空段 = 没有这项偏好）——1.21.1 的 {@code ByteBufCodecs.list}
+     * 没有"codec + 容量"重载，整条串比逐字段编省事也省字节。
+     */
+    public record MoodSyncPayload(String residentId, java.util.List<MoodThought> thoughts,
+            String prefs)
+            implements CustomPacketPayload {
+
+        public static final Type<MoodSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "mood_sync"));
+
+        /**
+         * 手写编解码，不用 composite+list 组合——1.21.1 的
+         * {@code ByteBufCodecs.list} 没有"codec+容量"重载（那是 1.21.2+ 的），
+         * {@code collection} 又会把类型推断成具体的 Collection 实现类。
+         * 就三个逻辑字段（uuid 字符串 + 思考列表 + 偏好串），手写十行最直白。
+         */
+        public static final StreamCodec<ByteBuf, MoodSyncPayload> STREAM_CODEC = StreamCodec.of(
+                (buf, payload) -> {
+                    ByteBufCodecs.STRING_UTF8.encode(buf, payload.residentId());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.thoughts().size());
+                    for (MoodThought t : payload.thoughts()) {
+                        MoodThought.STREAM_CODEC.encode(buf, t);
+                    }
+                    ByteBufCodecs.STRING_UTF8.encode(buf, payload.prefs());
+                },
+                buf -> {
+                    String residentId = ByteBufCodecs.STRING_UTF8.decode(buf);
+                    int size = ByteBufCodecs.VAR_INT.decode(buf);
+                    java.util.List<MoodThought> list = new java.util.ArrayList<>(size);
+                    for (int i = 0; i < size; i++) {
+                        list.add(MoodThought.STREAM_CODEC.decode(buf));
+                    }
+                    String prefs = ByteBufCodecs.STRING_UTF8.decode(buf);
+                    return new MoodSyncPayload(residentId, java.util.List.copyOf(list), prefs);
+                });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    private static void handleMoodSync(MoodSyncPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof net.minecraft.client.player.LocalPlayer) {
+                com.bmf.bmfstown.client.ClientMoodState.handleSync(payload);
+            }
+        });
+    }
+
+    /**
+     * 服务端把镇民的想法日志与偏好摘要发给玩家（打开面板时调用）。
+     */
+    public static void playMoodSync(ServerPlayer player,
+            com.bmf.bmfstown.entity.Resident resident) {
+        java.util.List<MoodThought> list = new java.util.ArrayList<>();
+        for (var t : resident.getMoodState().thoughts()) {
+            list.add(new MoodThought(t.day(), t.tone(), t.key(), t.marker()));
+        }
+        // 偏好懒生成：面板打开这一下正好是最合适的触发点——
+        // 保证发出去的 prefs 串一定不是"未生成"的空壳。
+        // （服务端 level() 必然是 ServerLevel，instanceof 只是防御姿态）
+        if (resident.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            resident.getMoodState().ensureGenerated(resident, serverLevel);
+        }
+        player.connection.send(new MoodSyncPayload(
+                resident.getStringUUID(), java.util.List.copyOf(list),
+                resident.getMoodState().prefsString()));
+    }
+
+    // ==========================================================
     //  注册
     // ==========================================================
 
@@ -539,6 +654,8 @@ public final class ModNetworking {
                 ModNetworking::handleHandbookSync);
         registrar.playToClient(TauntSyncPayload.TYPE, TauntSyncPayload.STREAM_CODEC,
                 ModNetworking::handleTauntSync);
+        registrar.playToClient(MoodSyncPayload.TYPE, MoodSyncPayload.STREAM_CODEC,
+                ModNetworking::handleMoodSync);
     }
 
     private ModNetworking() {

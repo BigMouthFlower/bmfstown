@@ -44,11 +44,17 @@ public final class Config {
             .comment("镇民感知范围（方块）", "Resident follow range in blocks")
             .defineInRange("residentAttributes.followRange", 32.0D, 4.0D, 256.0D);
 
-    /** 领地内漫步速度。 */
+    /**
+     * 领地内漫步速度。与睡觉同速（0.6 = 村民步速的 60%）。
+     *
+     * <p>用户定稿：闲逛压到和回家睡觉一样慢——漫步是常态行为，
+     * 太快会显得满地图瞎窜很吵；赶路类的回家（1.15）和跟随（1.3）
+     * 保持比这快，速度差本身就是信息（"他在赶路" vs "他在瞎溜达"）。
+     */
     public static final ModConfigSpec.DoubleValue STROLL_SPEED = BUILDER
-            .comment("镇民在领地内漫步的速度（1.0 = 村民快步走）",
-                    "Resident stroll speed inside territory (1.0 = villager walking pace)")
-            .defineInRange("residentAttributes.strollSpeed", 1.0D, 0.05D, 4.0D);
+            .comment("镇民在领地内漫步的速度（0.6 = 村民步速的六成，与睡觉同速）",
+                    "Resident stroll speed inside territory (0.6 = 60% of villager pace, same as walking to bed)")
+            .defineInRange("residentAttributes.strollSpeed", 0.6D, 0.05D, 4.0D);
 
     // ==========================================================
     //  饥饿与进食
@@ -107,10 +113,156 @@ public final class Config {
             .comment("镇民出生时的心情", "Initial mood of a new resident")
             .defineInRange("growth.initialMood", 100, 0, 100);
 
-    /** 出生时的好感度。 */
-    public static final ModConfigSpec.IntValue INITIAL_AFFECTION = BUILDER
-            .comment("镇民出生时的好感度", "Initial affection of a new resident")
-            .defineInRange("growth.initialAffection", 30, 0, 100);
+    // ==========================================================
+    //  心情系统（v0.7）
+    // ==========================================================
+
+    /** 心情每日结算的变动上限（一天内所有慢变量加起来最多 ±5）。 */
+    public static final ModConfigSpec.IntValue MOOD_DAILY_CLAMP = BUILDER
+            .comment("每日结算时心情最多变动多少（正负皆计）",
+                    "Max mood change per day from daily settlement")
+            .defineInRange("mood.dailyClamp", 5, 0, 100);
+
+    /** 吃到爱吃的食物的心情增量。 */
+    public static final ModConfigSpec.IntValue MOOD_EAT_FAVORED = BUILDER
+            .comment("吃到爱吃的食物的心情增量", "Mood gain from eating a favored food")
+            .defineInRange("mood.eatFavored", 3, 0, 100);
+
+    /** 「吃到爱吃的」每天最多有效几次（之后吃了不记心情也不记想法）。 */
+    public static final ModConfigSpec.IntValue MOOD_EAT_FAVORED_DAILY_LIMIT = BUILDER
+            .comment("每天最多记几次「吃到爱吃的」（限流，防刷屏）",
+                    "Daily cap for favored-food mood events")
+            .defineInRange("mood.eatFavoredDailyLimit", 2, 1, 100);
+
+    /** 挨饿（找不到食物）的心情减量基准。 */
+    public static final ModConfigSpec.IntValue MOOD_STARVING = BUILDER
+            .comment("挨饿的心情减量基准（按挨饿天数递增：1天=基准，2天=基准+2，3天起=基准+5）",
+                    "Base mood loss from starving (scales with consecutive hungry days)")
+            .defineInRange("mood.starving", 3, 0, 100);
+
+    /** 挨饿事件每次有效间隔（半天 = 12000 dayTime）。 */
+    public static final ModConfigSpec.IntValue MOOD_STARVING_INTERVAL = BUILDER
+            .comment("挨饿心情事件的触发间隔（dayTime，12000 = 半天）",
+                    "Interval between starving mood events (dayTime ticks; 12000 = half day)")
+            .defineInRange("mood.starvingInterval", 12000, 100, 24000);
+
+    /** 当前工作 = 喜欢的职业时，每日结算的心情增量。 */
+    public static final ModConfigSpec.IntValue MOOD_JOB_LIKED = BUILDER
+            .comment("每天结算时，正在做喜欢的工作的心情增量",
+                    "Daily mood gain when working the liked profession")
+            .defineInRange("mood.jobLiked", 3, 0, 100);
+
+    // ---- v0.8 偏好扩展（建筑方块/动物/颜色/音乐/天气/生物） ----
+
+    /** 住宅里有喜欢的建筑材质时的心情增量（每天 1 次）。 */
+    public static final ModConfigSpec.IntValue MOOD_BLOCK_LIKED = BUILDER
+            .comment("住宅里有喜欢的建筑材质时的心情增量（每天 1 次）",
+                    "Daily mood gain when liked building material is present in the home")
+            .defineInRange("mood.blockLiked", 3, 0, 100);
+
+    /** 身边出现喜欢的动物时的心情增量（每天 1 次）。 */
+    public static final ModConfigSpec.IntValue MOOD_ANIMAL_LIKED = BUILDER
+            .comment("身边出现喜欢的动物时的心情增量（每天 1 次）",
+                    "Daily mood gain when a liked animal is nearby")
+            .defineInRange("mood.animalLiked", 3, 0, 100);
+
+    /** 住宅里有喜欢的颜色方块时的心情增量（每天 1 次）。 */
+    public static final ModConfigSpec.IntValue MOOD_COLOR_LIKED = BUILDER
+            .comment("住宅里有喜欢的颜色方块时的心情增量（每天 1 次）",
+                    "Daily mood gain when liked color blocks are present in the home")
+            .defineInRange("mood.colorLiked", 3, 0, 100);
+
+    /** 附近唱片机在放时的心情增量（每天 1 次）。 */
+    public static final ModConfigSpec.IntValue MOOD_MUSIC_LIKED = BUILDER
+            .comment("附近有唱片机在放时的心情增量（每天 1 次）",
+                    "Daily mood gain when a jukebox is playing nearby")
+            .defineInRange("mood.musicLiked", 3, 0, 100);
+
+    /** 遇到讨厌的天气时的心情减量。 */
+    public static final ModConfigSpec.IntValue MOOD_WEATHER_DISLIKED = BUILDER
+            .comment("遇到讨厌的天气时的心情减量",
+                    "Daily mood loss when exposed to disliked weather")
+            .defineInRange("mood.weatherDisliked", 3, 0, 100);
+
+    /** 天气事件的触发间隔（半天 = 12000 dayTime；天气与上次不同才触发）。 */
+    public static final ModConfigSpec.IntValue MOOD_WEATHER_INTERVAL = BUILDER
+            .comment("天气心情事件的触发间隔（dayTime，12000 = 半天）",
+                    "Interval between weather mood events (dayTime ticks; 12000 = half day)")
+            .defineInRange("mood.weatherInterval", 12000, 100, 24000);
+
+    /** 讨厌的生物在附近时的心情减量。 */
+    public static final ModConfigSpec.IntValue MOOD_MOB_DISLIKED = BUILDER
+            .comment("讨厌的生物在附近出没时的心情减量",
+                    "Mood loss when a disliked mob is nearby")
+            .defineInRange("mood.mobDisliked", 3, 0, 100);
+
+    /** 讨厌生物事件的触发间隔（5 分钟 = 6000 dayTime；无日上限，用户定稿）。 */
+    public static final ModConfigSpec.IntValue MOOD_MOB_DISLIKED_INTERVAL = BUILDER
+            .comment("讨厌生物心情事件的触发间隔（dayTime，6000 = 5 分钟；无日上限）",
+                    "Interval between disliked-mob mood events (dayTime ticks; 6000 = 5 min; no daily cap)")
+            .defineInRange("mood.mobDislikedInterval", 6000, 200, 24000);
+
+    // ---- v0.8 性格标签 ----
+
+    /** 性格类事件的基础数值（攀比/好战/胆小/爱热闹/贪吃统一用这个值）。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_VALUE = BUILDER
+            .comment("性格类事件的基础心情数值（统一 ±3）",
+                    "Base mood value for personality-trait events (unified ±3)")
+            .defineInRange("mood.traitValue", 3, 0, 100);
+
+    /** 乐观性格每日固定增量；正面想法文案带 "+"。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_OPTIMIST = BUILDER
+            .comment("乐观性格每日固定的心情增量（正面想法带 + 标记）",
+                    "Daily fixed mood gain for the Optimist trait (positive thoughts get a + marker)")
+            .defineInRange("mood.traitOptimist", 2, 0, 100);
+
+    /** 悲观性格每日固定减量；负面想法文案带 "−"。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_PESSIMIST = BUILDER
+            .comment("悲观性格每日固定的心情减量（负面想法带 − 标记）",
+                    "Daily fixed mood loss for the Pessimist trait (negative thoughts get a − marker)")
+            .defineInRange("mood.traitPessimist", 2, 0, 100);
+
+    /** 好战性格：连续多少天没击杀就出负面想法。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_WARLIKE_NO_KILL_DAYS = BUILDER
+            .comment("好战性格连续多少天没击杀生物会心情下降",
+                    "Days without a kill before the Warlike trait starts losing mood")
+            .defineInRange("mood.traitWarlikeNoKillDays", 5, 1, 100);
+
+    /** 好战性格：击杀带来的正面想法每天最多几次。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_KILL_DAILY_LIMIT = BUILDER
+            .comment("好战性格的击杀正面想法每天最多几次",
+                    "Daily cap on kill-related positive thoughts for the Warlike trait")
+            .defineInRange("mood.traitKillDailyLimit", 2, 1, 100);
+
+    /** 胆小性格： hostile 生物在附近的负面想法触发间隔（dayTime）。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_TIMID_INTERVAL = BUILDER
+            .comment("胆小性格的负面想法触发间隔（dayTime，12000 = 半天）",
+                    "Interval between Timid trait negative thoughts (dayTime ticks)")
+            .defineInRange("mood.traitTimidInterval", 12000, 100, 24000);
+
+    /** 贪吃性格：挨饿时的心情减量乘数（百分比，150 = ×1.5）。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_GLUTTON_STARVE_PERCENT = BUILDER
+            .comment("贪吃性格挨饿时的心情减量乘数（百分比，150 = ×1.5）",
+                    "Starvation mood-loss multiplier (percent) for the Glutton trait")
+            .defineInRange("mood.traitGluttonStarvePercent", 150, 100, 300);
+
+    /** 心情低于此值时干活效率打折。 */
+    public static final ModConfigSpec.IntValue MOOD_SLOW_THRESHOLD = BUILDER
+            .comment("心情低于此值时干活效率打折（0 = 关闭）",
+                    "Work efficiency reduced when mood below this (0 = disabled)")
+            .defineInRange("mood.slowThreshold", 40, 0, 100);
+
+    /** 心情打折档的效率乘数（百分比）。 */
+    public static final ModConfigSpec.IntValue MOOD_SLOW_MULTIPLIER_PERCENT = BUILDER
+            .comment("心情打折档的效率乘数（百分比，70 = 70%）",
+                    "Work efficiency multiplier (percent) in the slowed mood band")
+            .defineInRange("mood.slowMultiplierPercent", 70, 1, 100);
+
+    /** 心情低于此值时罢工（不干活，战斗不受影响）。 */
+    public static final ModConfigSpec.IntValue MOOD_STRIKE_THRESHOLD = BUILDER
+            .comment("心情低于此值时罢工（0 = 关闭；战士的战斗行为不受影响）",
+                    "Strike (stop working) when mood below this (0 = disabled; combat unaffected)")
+            .defineInRange("mood.strikeThreshold", 20, 0, 100);
 
     // ==========================================================
     //  镇民 AI
@@ -310,7 +462,7 @@ public final class Config {
     public static final ModConfigSpec.IntValue PERK_EXECUTE_CHANCE_PERCENT = BUILDER
             .comment("斩杀：秒杀触发概率（百分点）",
                     "Execute: instant-kill chance in percentage points")
-            .defineInRange("perk.executeChancePercent", 10, 0, 100);
+            .defineInRange("perk.executeChancePercent", 25, 0, 100);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 

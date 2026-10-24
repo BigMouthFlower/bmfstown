@@ -31,19 +31,25 @@ import java.util.UUID;
  * <p><b>为什么不用可变类：</b>同步时需要判断"值变了没有"。
  * 不可变对象可以直接 {@code equals()} 比较，可变对象要逐字段比，容易漏。
  *
- * <h2>字段分组（对应需求文档 §4.1.2）</h2>
+ * <h2>字段分组（v0.7 心情系统改版后的偏好区划）</h2>
  * <ul>
  *   <li>A 组 状态：{@code hunger} / {@code mood}</li>
- *   <li>B 组 身份：{@code profession} / {@code xp} / 六个爱好枚举</li>
+ *   <li>B 组 身份：{@code profession} / {@code xp} / 偏好（食物 + 职业好恶）</li>
  *   <li>C 组 归属：{@code townId} / {@code homePos} / {@code housingZoneId}（都可为 null）</li>
- *   <li>E 组 关系：{@code affection}</li>
+ *   <li>F 组 技能与成长：{@code skills} / {@code perks}</li>
  * </ul>
+ *
+ * <h2>v0.7 破坏性变更：偏好体系重写</h2>
+ * 旧的六维爱好（家中物品/居所环境/氛围/厌恶物品/厌恶环境）与好感度
+ * （affection）已整体移除——旧维度从未有任何逻辑读取（纯死数据），
+ * 好感度经讨论砍掉（无触发源、与心情重叠）。新偏好按
+ * 「食物 / 方块 / 物品 / 天气 / 职业」五大类逐步重建，本版实装
+ * 食物（沿用）与职业好恶（新增）。旧 NBT key 直接不再读取，无迁移价值。
  *
  * <h2>数值约定</h2>
  * <ul>
  *   <li>{@code hunger}：0~{@link #MAX_HUNGER}，与玩家一致（20 = 满）</li>
- *   <li>{@code mood}：0~100，初始 100（满）</li>
- *   <li>{@code affection}：0~100，初始 30（中性偏正）</li>
+ *   <li>{@code mood}：0~100；真正的心情结算逻辑在 {@link com.bmf.bmfstown.entity.MoodState}</li>
  * </ul>
  */
 public record ResidentProfile(
@@ -55,12 +61,15 @@ public record ResidentProfile(
         // ---- B 组：身份 ----
         ProfessionType profession,
         int xp,
+        /** 口味偏好：吃到对胃口的食物会改善心情（判定见 {@link FoodTraits}）。 */
         Hobbies.Food hobbyFood,
-        Hobbies.HomeItem hobbyHomeItem,
-        Hobbies.Environment hobbyEnvironment,
-        Hobbies.Ambience hobbyAmbience,
-        Hobbies.DislikedItem dislikeItem,
-        Hobbies.DislikedEnvironment dislikeEnvironment,
+        /** 喜欢的工作：被指派这类工作时每日结算心情 +3。 */
+        ProfessionType likedProfession,
+        /**
+         * 讨厌的工作：v0.8 起已退出心情体系（用户定稿：讨厌只留天气与生物两种）。
+         * 字段保留是为了不动 record 构造点与老存档格式，不再有任何逻辑读取。
+         */
+        ProfessionType dislikedProfession,
 
         // ---- C 组：归属（可为 null） ----
         UUID townId,
@@ -69,9 +78,6 @@ public record ResidentProfile(
         UUID housingZoneId,
         /** 分配住宅的时间戳（毫秒）——床数变少时据此踢出"最新加入的"村民。 */
         long housingAssignedAt,
-
-        // ---- E 组：关系 ----
-        int affection,
 
         // ---- F 组：技能与成长（v0.8 矮人要塞式"干中学"） ----
         /** 每个技能一条独立经验条，只增不减。读写走 {@link #skillXp} / {@link #withSkillXp}。 */
@@ -90,15 +96,6 @@ public record ResidentProfile(
     /** 心情上限。 */
     public static final int MAX_MOOD = 100;
 
-    /** 好感度上限。 */
-    public static final int MAX_AFFECTION = 100;
-
-    /** 初始心情：满。 */
-    /** 出生心情的默认值与配置项：{@link com.bmf.bmfstown.config.Config#INITIAL_MOOD}。 */
-
-    /** 初始好感度：中性偏正（"认得"档的起点）。 */
-    /** 出生好感的默认值与配置项：{@link com.bmf.bmfstown.config.Config#INITIAL_AFFECTION}。 */
-
     /**
      * 每升一级需要的经验值。
      *
@@ -112,31 +109,89 @@ public record ResidentProfile(
     // ==========================================================
 
     /**
-     * 生成一个全新的镇民档案：状态满、爱好随机、无专长、无归属。
+     * 生成一个全新的镇民档案：状态满、偏好随机、无专长、无归属。
+     *
+     * <p>职业好恶的生成规则（v0.7 定稿）：
+     * <ul>
+     *   <li>从「真实职业」（非 {@link ProfessionType#NONE}）里均匀抽 1 个喜欢、
+     *       1 个讨厌，二者互斥；</li>
+     *   <li>当前职业列表只有战士，所以表现为"喜欢/讨厌当战士"二选一；</li>
+     *   <li>以后新职业加入 {@link ProfessionType} 后自动参与抽取，此处不用改。</li>
+     * </ul>
      *
      * @param random 随机源，由实体提供（{@code this.getRandom()}）
      */
     public static ResidentProfile createRandom(RandomSource random) {
+        ProfessionType liked = randomRealProfession(random);
+        ProfessionType disliked = randomRealProfession(random, liked); // 排除已抽中的
         return new ResidentProfile(
                 MAX_HUNGER,                                  // 饥饿满
-                Config.INITIAL_MOOD.get(),                   // 心情满
+                Config.INITIAL_MOOD.get(),                   // 心情初值
                 ProfessionType.NONE,                         // 无专长
                 0,                                           // 经验 0
                 Hobbies.Food.random(random),
-                Hobbies.HomeItem.random(random),
-                Hobbies.Environment.random(random),
-                Hobbies.Ambience.random(random),
-                Hobbies.DislikedItem.random(random),         // 厌恶必须有值
-                Hobbies.DislikedEnvironment.random(random),
+                liked,
+                disliked,
                 null,                                        // 无城镇
                 null,                                        // 无住所
                 null,                                        // 未分配住宅区
                 0L,                                          // 无分配时间
-                Config.INITIAL_AFFECTION.get(),              // 好感（可配置）
                 Map.of(),                                    // 技能：全新镇民全 0
                 List.of()                                    // 尚未选择任何 perk
         );
     }
+
+    /** 从真实职业里均匀抽一个。当前只有战士；NONE 永远不参与。 */
+    private static ProfessionType randomRealProfession(RandomSource random) {
+        return randomRealProfession(random, null);
+    }
+
+    /** 从真实职业里均匀抽一个，排除 {@code exclude}（用于保证好恶互斥）。 */
+    private static ProfessionType randomRealProfession(RandomSource random,
+            ProfessionType exclude) {
+        ProfessionType[] real = java.util.Arrays.stream(ProfessionType.values())
+                .filter(ProfessionType::isReal)
+                .toArray(ProfessionType[]::new);
+        // 真实职业只有一个时，排除后就没有合法候选了——直接返回它。
+        // （当前职业列表只有战士，好恶会同职业；settleProfession 先判喜欢再判讨厌，
+        //   同职业时表现为"喜欢"，不会双重加减。等第二职业实装后此分支自然不再触发。）
+        if (real.length <= 1 || real.length == 1 && real[0] == exclude) {
+            return real.length == 0 ? ProfessionType.NONE : real[0];
+        }
+        while (true) {
+            ProfessionType pick = real[random.nextInt(real.length)];
+            if (pick != exclude) {
+                return pick;
+            }
+        }
+    }
+
+    /** 读档兜底：没有有效的 LikedProfession key 时随机补一个真实职业。 */
+    private static ProfessionType randomLikedProfession(CompoundTag tag) {
+        if (tag.contains("LikedProfession")) {
+            ProfessionType p = ProfessionType.byName(tag.getString("LikedProfession"));
+            if (p.isReal()) {
+                return p;
+            }
+        }
+        return randomRealProfession(net.minecraft.util.RandomSource.create());
+    }
+
+    /** 读档兜底：没有有效的 DislikedProfession key 时随机补一个（与喜欢互斥）。 */
+    private static ProfessionType randomDislikedProfession(CompoundTag tag) {
+        if (tag.contains("DislikedProfession")) {
+            ProfessionType p = ProfessionType.byName(tag.getString("DislikedProfession"));
+            if (p.isReal()) {
+                return p;
+            }
+        }
+        ProfessionType liked = tag.contains("LikedProfession")
+                ? ProfessionType.byName(tag.getString("LikedProfession")) : null;
+        return randomRealProfession(net.minecraft.util.RandomSource.create(),
+                liked != null && liked.isReal() ? liked : null);
+    }
+
+    /** 读档兜底所在区域之后的辅助：见上方。 */
 
     // ==========================================================
     //  等级换算（由 xp 推导，不单独存）
@@ -286,81 +341,45 @@ public record ResidentProfile(
         return MoodTier.ANGRY;
     }
 
-    /** 好感度分档。 */
-    public AffectionTier affectionTier() {
-        return affectionTierOf(this.affection);
-    }
-
-    /** 凭数值判好感档，理由同 {@link #moodTierOf(int)}。 */
-    public static AffectionTier affectionTierOf(int affection) {
-        if (affection >= 80) {
-            return AffectionTier.TRUSTED;
-        }
-        if (affection >= 60) {
-            return AffectionTier.CLOSE;
-        }
-        if (affection >= 40) {
-            return AffectionTier.FAMILIAR;
-        }
-        if (affection >= 20) {
-            return AffectionTier.KNOWN;
-        }
-        return AffectionTier.STRANGER;
-    }
-
     // ==========================================================
     //  with-方法：生成修改后的副本
     // ==========================================================
 
     public ResidentProfile withHunger(int value) {
         return new ResidentProfile(clamp(value, 0, MAX_HUNGER), mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
     }
 
     public ResidentProfile withMood(int value) {
         return new ResidentProfile(hunger, clamp(value, 0, MAX_MOOD), profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
-    }
-
-    public ResidentProfile withAffection(int value) {
-        return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, clamp(value, 0, MAX_AFFECTION),
-                this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
     }
 
     public ResidentProfile withProfession(ProfessionType type) {
         // 换专长时经验清零：不同专长的经验不可迁移（见需求文档 Q12）
         return new ResidentProfile(hunger, mood, type, 0,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
     }
 
     public ResidentProfile withXp(int value) {
         return new ResidentProfile(hunger, mood, profession, Math.max(0, value),
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
     }
 
     public ResidentProfile withTownId(UUID value) {
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, value, homePos,
-                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, value, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
     }
 
     public ResidentProfile withHomePos(BlockPos value) {
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, value,
-                housingZoneId, housingAssignedAt, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, value,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
     }
 
     /**
@@ -371,25 +390,22 @@ public record ResidentProfile(
      */
     public ResidentProfile withHousingZoneId(UUID value) {
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                value, value == null ? 0L : this.housingAssignedAt, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                value, value == null ? 0L : this.housingAssignedAt, this.skills, this.perks);
     }
 
     /** 只改分配时间戳（一般由 {@link #withHousingZoneId} 配合使用）。 */
     public ResidentProfile withHousingAssignedAt(long value) {
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, value, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, value, this.skills, this.perks);
     }
 
     /** 一次设置住宅绑定 + 分配时间（服务端分配入口用）。 */
     public ResidentProfile withHousing(UUID zoneId, long assignedAt) {
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                zoneId, zoneId == null ? 0L : assignedAt, affection, this.skills, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                zoneId, zoneId == null ? 0L : assignedAt, this.skills, this.perks);
     }
 
     private static int clamp(int v, int min, int max) {
@@ -423,9 +439,8 @@ public record ResidentProfile(
         Map<SkillType, Integer> copy = new HashMap<>(this.skills);
         copy.put(type, Math.max(0, value));
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection, copy, this.perks);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, copy, this.perks);
     }
 
     /** 选择一个 perk（去重）。perk 系统占位——当前没有调用方，数据层先行。 */
@@ -436,9 +451,8 @@ public record ResidentProfile(
         List<String> copy = new ArrayList<>(this.perks);
         copy.add(perkId);
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection, this.skills, copy);
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, copy);
     }
 
     // ---- perk 分支选择（v0.5：每节点 2 选 1，存 "节点:分支" 字符串） ----
@@ -460,9 +474,8 @@ public record ResidentProfile(
         }
         copy.add(prefix + branch);
         return new ResidentProfile(hunger, mood, profession, xp,
-                hobbyFood, hobbyHomeItem, hobbyEnvironment, hobbyAmbience,
-                dislikeItem, dislikeEnvironment, townId, homePos,
-                housingZoneId, housingAssignedAt, affection, this.skills, List.copyOf(copy));
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, List.copyOf(copy));
     }
 
     /** 某节点当前选中的分支 id；未选返回 null。 */
@@ -521,12 +534,9 @@ public record ResidentProfile(
         tag.putString("Profession", this.profession != null ? this.profession.getSerializedName() : "none");
         tag.putInt("Xp", this.xp);
         tag.putString("HobbyFood", this.hobbyFood.getSerializedName());
-        tag.putString("HobbyHomeItem", this.hobbyHomeItem.getSerializedName());
-        tag.putString("HobbyEnvironment", this.hobbyEnvironment.getSerializedName());
-        tag.putString("HobbyAmbience", this.hobbyAmbience.getSerializedName());
-        tag.putString("DislikeItem", this.dislikeItem.getSerializedName());
-        tag.putString("DislikeEnvironment", this.dislikeEnvironment.getSerializedName());
-        tag.putInt("Affection", this.affection);
+        // v0.7：职业好恶。老存档没有这两个 key 时走 byName 兜底（见 load）
+        tag.putString("LikedProfession", this.likedProfession.getSerializedName());
+        tag.putString("DislikedProfession", this.dislikedProfession.getSerializedName());
 
         // 可空字段：null 就不写 key，读的时候用 contains 判断
         if (this.townId != null) {
@@ -567,6 +577,10 @@ public record ResidentProfile(
      *
      * <p>所有字段都用「缺省 + 兜底」策略：老存档没有这个 key 时，
      * 不会崩，而是给一个合理的默认值。这是存档兼容的基本功。
+     *
+     * <p>v0.7 起旧的 HobbyHomeItem / HobbyEnvironment / HobbyAmbience /
+     * DislikeItem / DislikeEnvironment / Affection key 不再读取——
+     * 那些字段已随偏好体系重写移除，旧值没有迁移价值。
      */
     public static ResidentProfile load(CompoundTag tag) {
         return new ResidentProfile(
@@ -575,17 +589,14 @@ public record ResidentProfile(
                 ProfessionType.byName(tag.getString("Profession")),
                 tag.getInt("Xp"),
                 Hobbies.Food.byName(tag.getString("HobbyFood")),
-                Hobbies.HomeItem.byName(tag.getString("HobbyHomeItem")),
-                Hobbies.Environment.byName(tag.getString("HobbyEnvironment")),
-                Hobbies.Ambience.byName(tag.getString("HobbyAmbience")),
-                Hobbies.DislikedItem.byName(tag.getString("DislikeItem")),
-                Hobbies.DislikedEnvironment.byName(tag.getString("DislikeEnvironment")),
+                // 老存档没有职业好恶：随机补一对（好恶互斥由生成逻辑保证）
+                randomLikedProfession(tag),
+                randomDislikedProfession(tag),
                 // hasUUID 在 key 不存在时也返回 false，所以不用先 contains
                 tag.hasUUID("TownId") ? tag.getUUID("TownId") : null,
                 tag.contains("HomePos") ? BlockPos.of(tag.getLong("HomePos")) : null,
                 tag.hasUUID("HousingZoneId") ? tag.getUUID("HousingZoneId") : null,
                 tag.getLong("HousingAssignedAt"),
-                tag.contains("Affection") ? tag.getInt("Affection") : Config.INITIAL_AFFECTION.get(),
                 loadSkills(tag),
                 loadPerks(tag)
         );
@@ -625,32 +636,6 @@ public record ResidentProfile(
         /** 头顶气泡用的字符，空字符串表示不显示。 */
         public String bubble() {
             return this.bubble;
-        }
-    }
-
-    /** 好感度档位。 */
-    public enum AffectionTier {
-        STRANGER("stranger", "陌生"),
-        KNOWN("known", "认得"),
-        FAMILIAR("familiar", "熟悉"),
-        CLOSE("close", "亲近"),
-        TRUSTED("trusted", "信任");
-
-        private final String name;
-        private final String zhName;
-
-        AffectionTier(String name, String zhName) {
-            this.name = name;
-            this.zhName = zhName;
-        }
-
-        public String zhName() {
-            return this.zhName;
-        }
-
-        /** 语言文件 key。 */
-        public String displayName() {
-            return "affection.bmfstown." + this.name;
         }
     }
 }

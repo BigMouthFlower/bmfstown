@@ -33,3 +33,9 @@ desktop.ini
 # ===== 其他 =====
 *.zip
 *.jar.tmp
+
+# 本地手动备份目录，不进仓库
+src - 副本/
+
+# WorkBuddy 工作区备忘，不进仓库
+.workbuddy/
