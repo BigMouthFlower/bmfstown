@@ -44,11 +44,17 @@ public final class Config {
             .comment("镇民感知范围（方块）", "Resident follow range in blocks")
             .defineInRange("residentAttributes.followRange", 32.0D, 4.0D, 256.0D);
 
-    /** 领地内漫步速度。 */
+    /**
+     * 领地内漫步速度。与睡觉同速（0.6 = 村民步速的 60%）。
+     *
+     * <p>用户定稿：闲逛压到和回家睡觉一样慢——漫步是常态行为，
+     * 太快会显得满地图瞎窜很吵；赶路类的回家（1.15）和跟随（1.3）
+     * 保持比这快，速度差本身就是信息（"他在赶路" vs "他在瞎溜达"）。
+     */
     public static final ModConfigSpec.DoubleValue STROLL_SPEED = BUILDER
-            .comment("镇民在领地内漫步的速度（1.0 = 村民快步走）",
-                    "Resident stroll speed inside territory (1.0 = villager walking pace)")
-            .defineInRange("residentAttributes.strollSpeed", 1.0D, 0.05D, 4.0D);
+            .comment("镇民在领地内漫步的速度（0.6 = 村民步速的六成，与睡觉同速）",
+                    "Resident stroll speed inside territory (0.6 = 60% of villager pace, same as walking to bed)")
+            .defineInRange("residentAttributes.strollSpeed", 0.6D, 0.05D, 4.0D);
 
     // ==========================================================
     //  饥饿与进食
