@@ -9,6 +9,7 @@ import com.bmf.bmfstown.entity.profile.PrefColor;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
 import com.bmf.bmfstown.entity.profile.ResidentProfile;
 import com.bmf.bmfstown.entity.profile.WeatherPref;
+import com.bmf.bmfstown.town.TownZone;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -19,7 +20,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.JukeboxBlock;
@@ -80,10 +82,6 @@ public final class MoodState {
 
     /** 感知扫描节拍（tick）：动物/唱片机/怪物/天气 5 秒一轮。 */
     private static final int SENSE_INTERVAL = 100;
-
-    /** 住宅材质扫描半径（水平 4 格、垂直 2 格，共 9×5×9 = 405 格，每日一次）。 */
-    private static final int HOME_SCAN_XZ = 4;
-    private static final int HOME_SCAN_Y = 2;
 
     /** 动物触发距离（格）。 */
     private static final double ANIMAL_RANGE = 8.0D;
@@ -614,36 +612,47 @@ public final class MoodState {
     }
 
     /**
-     * 结算 7：住宅里的材质与颜色（用户定稿：触发条件 = 住宅内有对应建材/颜色）。
+     * 结算 7：住宅区里的材质与颜色（用户定稿：住宅区<b>整体</b>扫描，v0.8.1）。
      *
-     * <p>以 {@code profile.homePos()} 为中心扫 9×5×9；命中任一方块即算。
-     * 没有住宅（homePos = null）就不结算——不能拿镇广场当自家装修。
+     * <p>扫描交给 {@link HomeMaterialScanManager} 摊派执行（每 tick 全服限量
+     * 4096 格、命中即停、跨天弃扫），完成后回调
+     * {@link #applyHomeMaterialResult} 统一结算心情。
+     * 没分配住宅区就不结算——不能拿镇广场当自家装修。
      */
     private void settleHomeMaterials(Resident resident, ServerLevel level) {
-        BlockPos home = resident.getProfile().homePos();
-        if (home == null) {
+        TownZone zone = resident.housingZone();
+        if (zone == null) {
             return;
         }
-        boolean blockHit = false;
-        boolean colorHit = false;
-        for (BlockPos pos : BlockPos.betweenClosed(home.offset(-HOME_SCAN_XZ, -HOME_SCAN_Y, -HOME_SCAN_XZ),
-                home.offset(HOME_SCAN_XZ, HOME_SCAN_Y, HOME_SCAN_XZ))) {
-            String name = BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock()).getPath();
-            if (!blockHit) {
-                for (BlockMaterial m : this.likedBlocks) {
-                    if (m.matches(name)) {
-                        blockHit = true;
-                        break;
-                    }
-                }
-            }
-            if (!colorHit && this.likedColor != null && this.likedColor.matches(name)) {
-                colorHit = true;
-            }
-            if (blockHit && colorHit) {
-                break; // 两个都命中，剩下的格子不用看了
+        HomeMaterialScanManager.request(level, zone, resident, this);
+    }
+
+    /**
+     * 这个注册名是否命中他喜欢的建材（住宅区扫描器逐格询问用）。
+     */
+    public boolean likesBlock(String registryName) {
+        for (BlockMaterial m : this.likedBlocks) {
+            if (m.matches(registryName)) {
+                return true;
             }
         }
+        return false;
+    }
+
+    /**
+     * 这个注册名是否命中他喜欢的颜色（住宅区扫描器逐格询问用）。
+     */
+    public boolean likesColor(String registryName) {
+        return this.likedColor != null && this.likedColor.matches(registryName);
+    }
+
+    /**
+     * 住宅区扫描结果统一结算入口（{@link HomeMaterialScanManager} 完成时回调）。
+     *
+     * <p>不在此刻检查"是否已结算过"——委托方保证每镇民每天只有一次请求。
+     */
+    public void applyHomeMaterialResult(Resident resident, ServerLevel level,
+                                        boolean blockHit, boolean colorHit) {
         if (blockHit) {
             this.applyClamped(resident, Config.MOOD_BLOCK_LIKED.get());
             addThought(level, EventType.BLOCK_LIKED);
@@ -732,17 +741,21 @@ public final class MoodState {
      * 16 格内的敌对生物：生物厌恶（5 分钟一次无日上限）+
      * 胆小受惊（半天一次，并刷新"上次受惊日"）。
      *
-     * <p>类过滤器用 {@link Monster} 而不是 {@link Enemy}——
-     * {@code getEntitiesOfClass} 只收实体类，Enemy 是纯接口
-     * （WarriorGoals 里同款结论）；原版敌对生物全是 Monster 子类，
-     * 而生物厌恶判定本来就走"类型直等"，只覆盖原版 14 种，够用。
+     * <p>类过滤器用 {@link Mob} + {@link Enemy} 接口过滤——
+     * {@code getEntitiesOfClass} 只收实体类不收接口，而 {@code Monster}
+     * 漏掉了"Mob 直接实现 Enemy"的敌对生物：史莱姆/岩浆怪（v0.8.1 实测
+     * 史莱姆不触发讨厌想法）。Enemy 覆盖全部原版敌对生物；
+     * 原版敌对生物的厌恶判定走"类型直等"，只覆盖 MobPref 表内 14 种，够用。
      */
     private void senseHostiles(Resident resident, ServerLevel level) {
         AABB box = resident.getBoundingBox().inflate(HOSTILE_RANGE);
-        List<Monster> hostiles = level.getEntitiesOfClass(Monster.class, box);
+        List<Mob> hostiles = level.getEntitiesOfClass(Mob.class, box);
         boolean anyAlive = false;
         boolean match = false;
-        for (Monster m : hostiles) {
+        for (Mob m : hostiles) {
+            if (!(m instanceof Enemy)) {
+                continue; // 只看敌对生物；Mob.class 会捞到村民/动物，全靠这刀筛掉
+            }
             if (!m.isAlive()) {
                 continue;
             }

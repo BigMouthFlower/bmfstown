@@ -781,12 +781,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         for (int i = end - 1; i >= start; i--) {
             ModNetworking.MoodThought t = thoughts.get(i);
             String line = I18n.get(t.key());
-            // 性格滤镜标记：乐观的正面尾部 "+"，悲观的负面尾部 "−"（用户定稿）
-            if (t.marker() == 1) {
-                line = line + " +";
-            } else if (t.marker() == 2) {
-                line = line + " −";
-            }
+            // 性格滤镜标记（乐观"+" / 悲观"−"）已按用户 2026-10-25 决定不再显示；
+            // Thought.marker 字段保留（同步协议与存档兼容），将来要恢复只改这里。
             // 深底上用原版聊天的亮绿/亮红/灰，暗色调在 0xFF373737 上看不清；
             // 中性事件（如金护甲）用灰色，不误导玩家往好坏两边猜
             int color = switch (t.tone()) {

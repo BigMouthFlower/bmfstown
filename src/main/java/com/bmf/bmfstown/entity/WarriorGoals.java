@@ -5,10 +5,11 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.goal.target.TargetGoal;
 import net.minecraft.world.entity.monster.Creeper;
-import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 
@@ -302,10 +303,15 @@ public final class WarriorGoals {
             LivingEntity best = null;
             double bestDist = Double.MAX_VALUE;
             int seen = 0;
-            // 用 Monster.class 而不是 Enemy.class：getEntitiesOfClass 只收
-            // Entity 的子类型，而 Enemy 是纯接口；Monster 是实体类且实现了
-            // Enemy，覆盖所有敌对生物（苦力怕过滤见谓词）。
-            for (Monster mob : this.mob.level().getEntitiesOfClass(Monster.class, box)) {
+            // 用 Mob.class + Enemy 接口过滤而不是 Monster.class：getEntitiesOfClass
+            // 只收实体类不收接口（Enemy 是纯接口），但 Monster 又漏掉了
+            // "Mob 直接实现 Enemy"的敌对生物——史莱姆/岩浆怪（v0.8.1 实测：
+            // 战士对史莱姆无仇恨）。Mob.class 收全部生物，再按 Enemy 筛敌对。
+            // （苦力怕过滤见下方谓词。）
+            for (Mob mob : this.mob.level().getEntitiesOfClass(Mob.class, box)) {
+                if (!(mob instanceof Enemy)) {
+                    continue; // 村民/动物等非敌对生物在这里筛掉
+                }
                 if (!mob.isAlive() || mob.isAlliedTo(this.mob)) {
                     continue;
                 }

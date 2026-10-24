@@ -871,6 +871,8 @@ public class Resident extends PathfinderMob {
         if (this.level() instanceof net.minecraft.server.level.ServerLevel moodLevel) {
             this.moodState.tickDaily(this, moodLevel);
             this.moodState.tickSenses(this, moodLevel);
+            // 住宅区建材/颜色扫描的推进（内部按 gameTime 去重，一 tick 只跑一次）
+            HomeMaterialScanManager.tick(moodLevel);
         }
 
         // ---- 3. 回血 ----
@@ -1452,7 +1454,7 @@ public class Resident extends PathfinderMob {
      * <ul>
      *   <li><b>动画</b>：箱子与木桶的原版盖子动画都由"方块事件 1（打开
      *       人数 +/-）"驱动，谁支持就给谁发，不支持的事件会被静默忽略；</li>
-     *   <li><b>音效</b>：直接取该方块自己的 {@link net.minecraft.sounds.SoundType}
+     *   <li><b>音效</b>：直接取该方块自己的 {@link net.minecraft.world.level.block.SoundType}
      *       的开/关音——箱子出箱子声、木桶出木桶声，加新容器类型零改动。</li>
      * </ul>
      * 原版玩家开容器的声音走的正是同一条路（ContainerOpenersCounter
@@ -1596,7 +1598,7 @@ public class Resident extends PathfinderMob {
 
     /** 档案里绑定的住宅区（仅当前维度有效时返回，否则 null）。 */
     @Nullable
-    private TownZone housingZone() {
+    public TownZone housingZone() {
         UUID housingId = this.getProfile().housingZoneId();
         if (housingId == null) {
             return null;
@@ -1759,6 +1761,13 @@ public class Resident extends PathfinderMob {
         if (this.getPose() == net.minecraft.world.entity.Pose.SLEEPING) {
             this.sleepState = SleepState.SLEEPING;
             this.getNavigation().stop();
+            // 住址登记（v0.8.1）：建材/颜色的每日结算是"以 homePos 为中心
+            // 扫 9×5×9"，而 homePos 此前没有任何赋值点（永远是 null，
+            // 结算直接跳过）——建材/颜色喜好因此从未生效过。现在躺下
+            // 即登记住址；换床也会在下次躺下时自动更新。
+            if (!bed.equals(this.getProfile().homePos())) {
+                this.setProfile(this.getProfile().withHomePos(bed));
+            }
             LOGGER.debug("[BmfTown][睡眠] {} 上床睡觉 {}",
                     this.getName().getString(), bed.toShortString());
         } else {

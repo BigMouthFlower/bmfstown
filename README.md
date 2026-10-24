@@ -1,13 +1,43 @@
 # BMF's Town —— BMF的城镇
 
-以《镇民》需求分析说明书为蓝本的 NeoForge 1.21.1 mod：
-让 NPC 镇民吃掉你的过剩食物，并替你完成那些重复劳动。
+让 NPC 镇民住进你的世界：他们吃掉你过剩的食物、替你站岗打怪，还有一整套会开心会闹脾气的喜好与性格。
 
-- **mod id**: `bmfstown`
-- **包名**: `com.bmf.bmfstown`
-- **MC**: 1.21.1 / **NeoForge**: 21.1.x
+- **mod id**：`bmfstown`　**包名**：`com.bmf.bmfstown`
+- **MC**：1.21.1　**NeoForge**：21.1.x
+- **当前版本**：v0.8.1
 
-## 构建与运行
+## 📖 文档
+
+| 文档 | 内容 |
+|---|---|
+| **[镇民 Wiki](docs/bmfstown-wiki.md)** | **所有机制与参数的百科**：玩法、机制、config 全表、调试命令——想查任何东西先看这里 |
+| [需求分析说明书](docs/需求分析说明书_v0.8.md) | 设计沿革、决策记录、进度快照（给开发者） |
+| [v0.8 测试方案](docs/v0.8测试方案.md) | 33 项实测 checklist |
+
+## ✅ 已实现
+
+- **城镇**：魔杖两点框领地 → 手册建镇/改名/删除/预览图，线框常驻
+- **功能区**：食堂（扫箱觅食）、住所（共享床位、天黑回睡、越界回家）
+- **镇民**：随机中文姓名、饥饿进食（挑食：爱吃组优先）、自然回血、睡觉作息
+- **心情系统**：三管线（即时事件/每日结算/感知扫描）+ 想法日志三色可见；<40 减速、<20 罢工
+- **喜好（真生效）**：食物口味 / 工作喜好 / 建材×2（住宅区整区扫描）/ 动物 / 颜色 / 音乐 / 讨厌天气 / 讨厌敌对生物
+- **性格 7 选 1**：攀比 / 好战 / 胆小 / 爱热闹 / 贪吃 / 乐观 / 悲观
+- **熟练度**：10 段位（生疏→传奇），效率 60%→150%
+- **战士职业**：跟随/站岗、索敌打怪、职业效率、六天赋 perk（再生/强壮/坚盾/追猎/嘲讽/斩杀，含音效与视觉反馈）
+- **调试命令**：`/bmfstown hunger|mood|skillxp|reroll`
+- **全量配置**：`bmfstown-common.toml`，8 个命名空间 60+ 参数，中英注释
+
+## 🚧 计划中（按优先级）
+
+1. **v0.8 全量实测**（33 项 checklist 已就绪）
+2. **手册成员列表 UI**——城镇→镇民数据已通，缺界面
+3. **领地权限控制**——非成员交互限制
+4. **第二/三职业**——矿工/厨师等，效率体系直接复用
+5. 气泡自语、专用服配置同步、记忆系统……
+
+完整路线图见 Wiki 尾卷A / 需求分析说明书 §12。
+
+## 🔨 构建与运行
 
 ```powershell
 # Windows（JAVA_HOME 若指向 JDK8，需要先改）
@@ -16,36 +46,33 @@ $env:JAVA_HOME = "D:\Java\java21"
 .\gradlew build         # 打包，产物在 build/libs/bmfstown-0.1.0.jar
 ```
 
-## 当前状态（M0 骨架）
-
-- [x] 项目骨架（注册器、创造标签页、双语语言文件）
-- [x] 占位物品 `bmfstown:town_charter`（城镇凭证）
-- [ ] 第一个 NPC 实体（EntityType + 占位模型）
-- [ ] 饥饿值 + 动态食物识别
-- [ ] 行为原语层
-
-## 目录约定
+## 📁 目录约定
 
 ```
+docs/                           ← wiki、需求分析说明书、测试方案
 src/main/java/com/bmf/bmfstown/
-├── BmfTown.java          ← 主入口：只负责挂注册器，不放具体内容
-├── BmfTownClient.java    ← 客户端专用（渲染、屏幕）
-├── ModItems.java         ← 物品
-├── ModCreativeTabs.java  ← 创造标签页
-├── (将来) ModEntities.java      ← 实体
-├── (将来) ModDataComponents.java ← 数据组件（饥饿值等存这里）
-└── (将来) entity/               ← NPC 逻辑
-src/main/resources/assets/bmfstown/
-├── lang/                 ← en_us.json + zh_cn.json（加内容必须同步三处）
-├── models/               ← 模型 JSON
-└── textures/             ← 16x16 贴图
+├── BmfTown.java                ← 主入口：只负责挂注册器
+├── ModItems / ModEntities / ModSounds / …
+├── client/                     ← 渲染、屏幕（面板）
+├── command/                    ← /bmfstown 调试命令
+├── config/Config.java          ← 全部玩法数值
+├── entity/
+│   ├── Resident.java           ← 镇民本体（AI/进食/睡眠状态机）
+│   ├── MoodState.java          ← 心情/偏好/性格（胖状态对象，落 NBT）
+│   ├── HomeMaterialScanManager ← 住宅区建材/颜色摊派扫描
+│   └── profile/                ← 偏好表（口味/建材/动物/颜色/天气/生物/性格）、饥饿系统、段位
+├── menu/                       ← 面板菜单
+├── network/                    ← 网络包（同步载荷）
+└── town/                       ← 领地、功能区、手册、魔杖
 ```
 
-## 加新内容的固定套路
+## ➕ 加新内容的固定套路
 
-以物品为例，四处同步，缺一处就是紫黑方块或原始 key：
+以物品为例，四处同步缺一不可（否则紫黑方块或原始 key）：
 
 1. `ModItems.java` 注册
 2. `assets/bmfstown/models/item/xxx.json` 模型
 3. `assets/bmfstown/textures/item/xxx.png` 贴图
 4. `lang/en_us.json` + `lang/zh_cn.json` 名称
+
+机制类改动的 know-how（踩坑记录、禁手）见 **Wiki 卷七 · 机制备忘**。
