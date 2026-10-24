@@ -27,7 +27,7 @@ public final class ClientTauntState {
     /** 收到服务端同步：登记（或刷新）一条嘲讽。 */
     public static void handleSync(UUID monsterId, long untilGameTime) {
         UNTIL.put(monsterId, untilGameTime);
-        com.bmf.bmfstown.BmfTown.LOGGER.info(
+        com.bmf.bmfstown.BmfTown.LOGGER.debug(
                 "[BmfTown][perk][客户端] 收到嘲讽同步：{} 直至 {}（当前游戏时间 {}）",
                 monsterId, untilGameTime,
                 Minecraft.getInstance().level == null ? "?" : Minecraft.getInstance().level.getGameTime());

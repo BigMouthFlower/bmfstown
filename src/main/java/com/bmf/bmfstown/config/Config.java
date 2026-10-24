@@ -316,7 +316,7 @@ public final class Config {
     public static final ModConfigSpec.IntValue PERK_EXECUTE_CHANCE_PERCENT = BUILDER
             .comment("斩杀：秒杀触发概率（百分点）",
                     "Execute: instant-kill chance in percentage points")
-            .defineInRange("perk.executeChancePercent", 10, 0, 100);
+            .defineInRange("perk.executeChancePercent", 25, 0, 100);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 

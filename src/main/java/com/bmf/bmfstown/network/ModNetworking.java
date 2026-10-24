@@ -415,7 +415,7 @@ public final class ModNetworking {
             if (payload.index() == 0) {
                 held.set(ModDataComponents.WAND_POINT_A.get(), payload.pos().immutable());
                 held.remove(ModDataComponents.WAND_POINT_B.get());
-                com.bmf.bmfstown.BmfTown.LOGGER.info(
+                com.bmf.bmfstown.BmfTown.LOGGER.debug(
                         "[BmfTown][选点] 第1点 = {}", payload.pos().toShortString());
             } else {
                 BlockPos a = held.get(ModDataComponents.WAND_POINT_A.get());
@@ -425,7 +425,7 @@ public final class ModNetworking {
                     return;
                 }
                 held.set(ModDataComponents.WAND_POINT_B.get(), payload.pos().immutable());
-                com.bmf.bmfstown.BmfTown.LOGGER.info(
+                com.bmf.bmfstown.BmfTown.LOGGER.debug(
                         "[BmfTown][选点] 第2点 = {}（第1点 = {}）",
                         payload.pos().toShortString(), a.toShortString());
             }

@@ -1154,7 +1154,7 @@ public class Resident extends PathfinderMob {
             taken += n;
         }
         if (taken > 0) {
-            LOGGER.info("[BmfTown] {} 从 {} 处的箱子拿了 {} 个食物",
+            LOGGER.debug("[BmfTown] {} 从 {} 处的箱子拿了 {} 个食物",
                     this.getName().getString(), chest.toShortString(), taken);
         }
     }
@@ -1222,7 +1222,7 @@ public class Resident extends PathfinderMob {
     private void giveUpForaging(String reason) {
         this.cancelForaging();
         this.forageRetryCooldown = Config.FORAGE_RETRY_TICKS.get();
-        LOGGER.info("[BmfTown][觅食] {} 本轮失败（{}），{} tick 后重试",
+        LOGGER.debug("[BmfTown][觅食] {} 本轮失败（{}），{} tick 后重试",
                 this.getName().getString(), reason, this.forageRetryCooldown);
     }
 
@@ -1485,7 +1485,7 @@ public class Resident extends PathfinderMob {
         if (this.getPose() == net.minecraft.world.entity.Pose.SLEEPING) {
             this.sleepState = SleepState.SLEEPING;
             this.getNavigation().stop();
-            LOGGER.info("[BmfTown][睡眠] {} 上床睡觉 {}",
+            LOGGER.debug("[BmfTown][睡眠] {} 上床睡觉 {}",
                     this.getName().getString(), bed.toShortString());
         } else {
             LOGGER.debug("[BmfTown][睡眠] {} 躺下失败（床被占？），放弃本轮",
@@ -1764,7 +1764,7 @@ public class Resident extends PathfinderMob {
             }
             if (count > 0) {
                 this.playSound(com.bmf.bmfstown.ModSounds.BULWARK_HIT.get(), 1.0F, 1.0F);
-                LOGGER.info("[BmfTown][perk] {} 施放坚盾：{} 名友军（镇民+玩家）获得抗性提升 I（{} 秒）",
+                LOGGER.debug("[BmfTown][perk] {} 施放坚盾：{} 名友军（镇民+玩家）获得抗性提升 I（{} 秒）",
                         this.getName().getString(), count, Config.PERK_BULWARK_DURATION_SECONDS.get());
             }
         }
@@ -1784,7 +1784,7 @@ public class Resident extends PathfinderMob {
             }
             if (count > 0) {
                 this.playSound(com.bmf.bmfstown.ModSounds.HUNT_CLANG.get(), 1.0F, 1.2F);
-                LOGGER.info("[BmfTown][perk] {} 施放追猎：{} 个敌人被标记发光（{} 秒）",
+                LOGGER.debug("[BmfTown][perk] {} 施放追猎：{} 个敌人被标记发光（{} 秒）",
                         this.getName().getString(), count, Config.PERK_HUNT_DURATION_SECONDS.get());
             }
         }
@@ -1803,7 +1803,7 @@ public class Resident extends PathfinderMob {
             }
             if (count > 0) {
                 this.playSound(com.bmf.bmfstown.ModSounds.TAUNT_IMPACT.get(), 1.2F, 0.9F);
-                LOGGER.info("[BmfTown][perk] {} 施放嘲讽：{} 个敌人被强制攻击自己（{} 秒）",
+                LOGGER.debug("[BmfTown][perk] {} 施放嘲讽：{} 个敌人被强制攻击自己（{} 秒）",
                         this.getName().getString(), count, Config.PERK_TAUNT_DURATION_SECONDS.get());
             }
         }
@@ -2351,7 +2351,7 @@ public class Resident extends PathfinderMob {
             boolean hit = super.doHurtTarget(target);
             if (target instanceof net.minecraft.world.entity.LivingEntity living) {
                 // 观察期用 INFO（用户要肉眼对比不同等级战士的伤害系数）
-                LOGGER.info("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
+                LOGGER.debug("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
                         this.getName().getString(), target.getType().toShortString(), hit,
                         String.format("%.1f", attackAttr == null ? 0.0 : attackAttr.getValue() / efficiency),
                         String.format("%.0f", efficiency * 100),
