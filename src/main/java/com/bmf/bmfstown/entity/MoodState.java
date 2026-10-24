@@ -874,6 +874,11 @@ public final class MoodState {
     /** 带每日 clamp 的施加：所有常规事件与慢变量共用每天 ±MOOD_DAILY_CLAMP 的配额。 */
     private void applyClamped(Resident resident, int delta) {
         int clamp = Config.MOOD_DAILY_CLAMP.get();
+        if (clamp <= 0) {
+            // 0 = 不限幅（v0.8.1 用户拍板取消每日 clamp），数值原样生效
+            applyRaw(resident, delta);
+            return;
+        }
         int room = delta >= 0 ? clamp - this.dailyDelta : -clamp - this.dailyDelta;
         int actual = delta >= 0 ? Math.min(delta, Math.max(0, room))
                 : Math.max(delta, Math.min(0, room));

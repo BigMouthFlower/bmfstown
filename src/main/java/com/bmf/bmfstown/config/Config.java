@@ -117,11 +117,14 @@ public final class Config {
     //  心情系统（v0.7）
     // ==========================================================
 
-    /** 心情每日结算的变动上限（一天内所有慢变量加起来最多 ±5）。 */
+    /**
+     * 每日结算的变动上限；<b>0 = 不限幅</b>（v0.8.1 默认关闭）。
+     * 设为 5 即恢复"一天内所有慢变量加起来最多 ±5"的旧行为。
+     */
     public static final ModConfigSpec.IntValue MOOD_DAILY_CLAMP = BUILDER
-            .comment("每日结算时心情最多变动多少（正负皆计）",
-                    "Max mood change per day from daily settlement")
-            .defineInRange("mood.dailyClamp", 5, 0, 100);
+            .comment("每日结算时心情最多变动多少（正负皆计）；0 = 不限幅",
+                    "Max mood change per day from daily settlement; 0 = uncapped")
+            .defineInRange("mood.dailyClamp", 0, 0, 100);
 
     /** 吃到爱吃的食物的心情增量。 */
     public static final ModConfigSpec.IntValue MOOD_EAT_FAVORED = BUILDER
