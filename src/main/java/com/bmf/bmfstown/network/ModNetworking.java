@@ -465,7 +465,8 @@ public final class ModNetworking {
             }
             var profile = resident.getProfile();
             if (!com.bmf.bmfstown.entity.profile.Perks.canChoose(
-                    profile, payload.node(), payload.branch())) {
+                    profile, resident.getMoodState().trait(),
+                    payload.node(), payload.branch())) {
                 // 段位不够/节点或分支不认识：拒绝并提示（改包客户端会走到这）
                 serverPlayer.displayClientMessage(Component.translatable(
                         "msg.bmfstown.perk.rejected"), true);
@@ -990,7 +991,7 @@ public final class ModNetworking {
      * 没有"codec + 容量"重载，整条串比逐字段编省事也省字节。
      */
     public record MoodSyncPayload(String residentId, java.util.List<MoodThought> thoughts,
-            String prefs, String workerOrder)
+            String prefs, String workerOrder, String trait)
             implements CustomPacketPayload {
 
         public static final Type<MoodSyncPayload> TYPE = new Type<>(
@@ -1011,6 +1012,7 @@ public final class ModNetworking {
                     }
                     ByteBufCodecs.STRING_UTF8.encode(buf, payload.prefs());
                     ByteBufCodecs.STRING_UTF8.encode(buf, payload.workerOrder());
+                    ByteBufCodecs.STRING_UTF8.encode(buf, payload.trait());
                 },
                 buf -> {
                     String residentId = ByteBufCodecs.STRING_UTF8.decode(buf);
@@ -1021,8 +1023,9 @@ public final class ModNetworking {
                     }
                     String prefs = ByteBufCodecs.STRING_UTF8.decode(buf);
                     String workerOrder = ByteBufCodecs.STRING_UTF8.decode(buf);
+                    String trait = ByteBufCodecs.STRING_UTF8.decode(buf);
                     return new MoodSyncPayload(residentId, java.util.List.copyOf(list), prefs,
-                            workerOrder);
+                            workerOrder, trait);
                 });
 
         @Override
@@ -1054,10 +1057,12 @@ public final class ModNetworking {
         if (resident.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
             resident.getMoodState().ensureGenerated(resident, serverLevel);
         }
+        var trait = resident.getMoodState().trait();
         player.connection.send(new MoodSyncPayload(
                 resident.getStringUUID(), java.util.List.copyOf(list),
                 resident.getMoodState().prefsString(),
-                resident.getMoodState().orderItem()));
+                resident.getMoodState().orderItem(),
+                trait == null ? "" : trait.id()));
     }
 
     // ==========================================================

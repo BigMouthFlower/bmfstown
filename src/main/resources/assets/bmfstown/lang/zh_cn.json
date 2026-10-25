@@ -382,5 +382,20 @@
   "gui.bmfstown.resident.rename_title": "重命名镇民",
   "gui.bmfstown.resident.rename_hint": "输入新名字后回车确认 · ESC 取消",
   "msg.bmfstown.rename.invalid": "§c名字长度需在 1~32 个字符之间",
-  "msg.bmfstown.rename.done": "§a已重命名为 %s"
+  "msg.bmfstown.rename.done": "§a已重命名为 %s",
+  "gui.bmfstown.resident.stat.trait": "特性",
+  "trait.bmfstown.wanderlust": "漫游癖",
+  "trait.bmfstown.flighty": "轻浮",
+  "trait.bmfstown.drummer": "鼓手主唱",
+  "trait.bmfstown.walrus": "海象",
+  "trait.bmfstown.gattaca": "GATTACA",
+  "trait.bmfstown.enderstep": "末影步",
+  "trait.bmfstown.self_destruct": "自毁倾向",
+  "trait.bmfstown.eggman": "蛋蛋人",
+  "trait.bmfstown.dog_rider": "狗骑兵",
+  "trait.bmfstown.dylar": "Dylar实验对象",
+  "trait.bmfstown.ghostwriter": "第二作者",
+  "trait.bmfstown.selfless": "舍己为人",
+  "trait.bmfstown.duplicity": "口是心非",
+  "trait.bmfstown.fool_sage": "大智若愚"
 }

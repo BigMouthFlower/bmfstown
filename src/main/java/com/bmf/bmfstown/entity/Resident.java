@@ -980,6 +980,9 @@ public class Resident extends PathfinderMob {
         super.customServerAiStep();
         // ---- 0. 工人状态打包同步（面板状态行用；set 同值不发包） ----
         this.refreshWorkerStatus();
+        // ---- 0.4 特性逐 tick 行为（轻浮漂浮等；内部含 null 补抽，老档兼容） ----
+        this.getMoodState().ensureTrait(this.getRandom());
+        this.getMoodState().tickTraits(this);
         // ---- 0.5 簿记员在职成长（用户定稿：在职每 5 秒 +1 簿记经验） ----
         if (this.getProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER
                 && this.isAlive()) {
@@ -2726,6 +2729,12 @@ public class Resident extends PathfinderMob {
      */
     @Override
     public boolean hurt(DamageSource source, float amount) {
+        // 鼓手主唱：免疫溺水与窒息伤害（原版伤害类型直判）
+        if (this.getMoodState().trait() == com.bmf.bmfstown.entity.profile.TraitType.DRUMMER
+                && (source.is(net.minecraft.world.damagesource.DamageTypes.DROWN)
+                || source.is(net.minecraft.world.damagesource.DamageTypes.IN_WALL))) {
+            return false;
+        }
         boolean result = super.hurt(source, amount);
         if (!this.level().isClientSide && this.isAlive()
                 && this.sleepState == SleepState.SLEEPING) {

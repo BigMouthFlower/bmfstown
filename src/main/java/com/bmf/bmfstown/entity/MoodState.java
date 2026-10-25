@@ -214,6 +214,9 @@ public final class MoodState {
     /** 偏好是否已生成。false = 下次 ensureGenerated 时抽取并落档。 */
     private boolean prefsGenerated = false;
 
+    /** 轻浮：漂浮检定计时器。 */
+    private int flightyTimer;
+
     /** 喜欢的建筑材质（0~2 种，各 1/2 概率刷出，去重）。 */
     private List<BlockMaterial> likedBlocks = List.of();
 
@@ -234,6 +237,9 @@ public final class MoodState {
 
     /** 性格标签（必出 1 条，9 选 1）。 */
     private PersonalityType personality = PersonalityType.OPTIMIST;
+
+    /** 特性（v0.8.1 第三类人格词条；null = 老档未抽，首 tick 补抽）。 */
+    private com.bmf.bmfstown.entity.profile.TraitType trait;
 
     // ---- v0.8 性格附加状态 ----
 
@@ -989,6 +995,45 @@ public final class MoodState {
     //  偏好懒生成
     // ==========================================================
 
+    /** 特性（null = 老档未抽）。 */
+    @org.jetbrains.annotations.Nullable
+    public com.bmf.bmfstown.entity.profile.TraitType trait() {
+        return this.trait;
+    }
+
+    /** 调试命令直设特性（{@code /bmfstown trait}；置 null 再补抽等价于重抽）。 */
+    public void setTraitForCommand(com.bmf.bmfstown.entity.profile.TraitType trait) {
+        this.trait = trait;
+    }
+
+    /**
+     * 特性补抽：特性随 v0.8.1 新增，老档 {@link #prefsGenerated} 已为 true、
+     * 不会重走 {@link #ensureGenerated}，靠每 tick 的 null 判断补抽（幂等、廉价）。
+     */
+    public void ensureTrait(RandomSource random) {
+        if (this.trait == null) {
+            this.trait = com.bmf.bmfstown.entity.profile.TraitType.random(random);
+        }
+    }
+
+    /**
+     * 特性逐 tick 行为（每 tick 从 {@code customServerAiStep} 调入，内部自持计时器）。
+     * 当前只挂轻浮的漂浮检定；后续特性（末影步/自毁倾向…）实装时在这里加分支。
+     */
+    public void tickTraits(Resident resident) {
+        if (this.trait == com.bmf.bmfstown.entity.profile.TraitType.FLIGHTY) {
+            // 每 30 秒检定一次 1/8 概率 → 平均约 4 分钟浮一次，3 秒（60 tick）
+            if (++this.flightyTimer >= 600) {
+                this.flightyTimer = 0;
+                if (resident.getRandom().nextInt(8) == 0) {
+                    resident.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                            net.minecraft.world.effect.MobEffects.LEVITATION, 60, 0,
+                            false, true));
+                }
+            }
+        }
+    }
+
     /**
      * 重摇偏好与性格（调试命令 {@code /bmfstown reroll} 用，正式玩法没有入口）。
      *
@@ -1042,6 +1087,7 @@ public final class MoodState {
         this.dislikedWeather = random.nextInt(3) == 0 ? WeatherPref.randomDisliked(random) : null;
         this.dislikedMob = random.nextInt(4) == 0 ? MobPref.random(random) : null;
         this.personality = PersonalityType.random(random);
+        this.ensureTrait(random);
 
         int today = currentDay(level);
         this.lastKillDay = today;
@@ -1196,6 +1242,7 @@ public final class MoodState {
             putEnum(tag, "DislikedWeather", this.dislikedWeather);
             putEnum(tag, "DislikedMob", this.dislikedMob);
             putEnum(tag, "Personality", this.personality);
+            tag.putString("TraitId", this.trait == null ? "" : this.trait.id());
             tag.putInt("LastKillDay", this.lastKillDay);
             tag.putInt("LastTimidScareDay", this.lastTimidScareDay);
             tag.putLong("LastWeatherAt", this.lastWeatherAt);
@@ -1289,6 +1336,9 @@ public final class MoodState {
             this.dislikedMob = getEnum(tag, "DislikedMob", MobPref.class, null);
             this.personality = getEnum(tag, "Personality", PersonalityType.class,
                     PersonalityType.OPTIMIST);
+            String traitId = tag.contains("TraitId") ? tag.getString("TraitId") : "";
+            this.trait = traitId.isEmpty() ? null
+                    : com.bmf.bmfstown.entity.profile.TraitType.byId(traitId);
             this.lastKillDay = tag.contains("LastKillDay") ? tag.getInt("LastKillDay") : -1;
             this.lastTimidScareDay = tag.contains("LastTimidScareDay") ? tag.getInt("LastTimidScareDay") : -1;
             this.lastWeatherAt = tag.contains("LastWeatherAt") ? tag.getLong("LastWeatherAt") : Long.MIN_VALUE;

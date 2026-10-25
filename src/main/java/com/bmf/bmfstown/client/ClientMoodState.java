@@ -40,11 +40,29 @@ public final class ClientMoodState {
     /** 居民 UUID → 工人当前订单（产物注册名，空 = 未设置）。 */
     private static final Map<UUID, String> WORKER_ORDER = new ConcurrentHashMap<>();
 
+    /** 居民 UUID → 特性 id（空 = 无）。 */
+    private static final Map<UUID, String> TRAITS = new ConcurrentHashMap<>();
+
+    /** 居民 UUID → 海象展示版想法（每条已换成随机咕咕；与 THOUGHTS 按下标平行）。 */
+    private static final Map<UUID, java.util.List<String>> WALRUS_LINES = new ConcurrentHashMap<>();
+
     /** 收到服务端同步包：整包覆盖该居民的想法与偏好。 */
     public static void handleSync(MoodSyncPayload payload) {
         try {
             UUID id = UUID.fromString(payload.residentId());
             THOUGHTS.put(id, List.copyOf(payload.thoughts()));
+            TRAITS.put(id, payload.trait() == null ? "" : payload.trait());
+            if ("walrus".equals(payload.trait())) {
+                // 海象：同步瞬间逐条随机生成咕咕（每次打开面板都不同，无法反推原文）；
+                // 后台真实信息在服务端 NBT，客户端只留展示版
+                java.util.List<String> goo = new java.util.ArrayList<>();
+                for (int i = 0; i < payload.thoughts().size(); i++) {
+                    goo.add(randomGoo());
+                }
+                WALRUS_LINES.put(id, List.copyOf(goo));
+            } else {
+                WALRUS_LINES.remove(id);
+            }
             PREFS.put(id, MoodPrefs.parse(payload.prefs()));
             WORKER_ORDER.put(id, payload.workerOrder() == null ? "" : payload.workerOrder());
         } catch (IllegalArgumentException ignored) {
@@ -62,6 +80,31 @@ public final class ClientMoodState {
         return PREFS.getOrDefault(residentId, MoodPrefs.EMPTY);
     }
 
+    /** 特性 id（空 = 无/未同步）。 */
+    public static String traitOf(UUID residentId) {
+        return TRAITS.getOrDefault(residentId, "");
+    }
+
+    /** 海象展示版想法（与 thoughtsOf 下标平行；null = 该镇民不是海象）。 */
+    public static java.util.List<String> walrusLinesOf(UUID residentId) {
+        return WALRUS_LINES.get(residentId);
+    }
+
+    /**
+     * 随机生成一句"咕咕咕"：1~14 个"咕"，每条后面随机挂标点或空格。
+     * 用 ThreadLocalRandom（不可复现），杜绝从长度/标点分布反推原文。
+     */
+    private static String randomGoo() {
+        java.util.Random rng = java.util.concurrent.ThreadLocalRandom.current();
+        String[] puncts = {"，", "。", "！", "？", "…", " ", ""};
+        int len = 1 + rng.nextInt(14);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < len; i++) {
+            sb.append('咕').append(puncts[rng.nextInt(puncts.length)]);
+        }
+        return sb.toString();
+    }
+
     /** 工人当前订单（产物注册名；没有缓存返回空 = 未设置）。 */
     public static String workerOrderOf(UUID residentId) {
         return WORKER_ORDER.getOrDefault(residentId, "");
@@ -77,6 +120,8 @@ public final class ClientMoodState {
         THOUGHTS.clear();
         PREFS.clear();
         WORKER_ORDER.clear();
+        TRAITS.clear();
+        WALRUS_LINES.clear();
     }
 
     private ClientMoodState() {

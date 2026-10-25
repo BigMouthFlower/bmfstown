@@ -4,6 +4,7 @@ import com.bmf.bmfstown.entity.Resident;
 import com.bmf.bmfstown.entity.profile.ResidentProfile;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -81,8 +82,53 @@ public final class ResidentCommands {
                                 ctx,
                                 EntityArgument.getEntities(ctx, "targets")))));
 
+        // ---- /bmfstown trait <目标> <特性|random> ----
+        // 直接指定目标镇民的特性（调试用；特性 14 选 1，靠 reroll 抽太慢）。
+        // "random" = 等概率重抽；id 见 lang 里 trait.bmfstown.*（如 walrus、flighty）。
+        root.then(Commands.literal("trait")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .then(Commands.argument("trait", StringArgumentType.word())
+                                .executes(ctx -> setTrait(
+                                        ctx,
+                                        EntityArgument.getEntities(ctx, "targets"),
+                                        StringArgumentType.getString(ctx, "trait"))))));
+
         dispatcher.register(root);
     }
+
+    /** 直接指定特性（"random" = 等概率重抽）。生效即落 NBT，重开面板可见。 */
+    private static int setTrait(CommandContext<CommandSourceStack> ctx,
+                                Collection<? extends Entity> targets,
+                                String traitArg) {
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (!(entity instanceof Resident resident)) {
+                continue;
+            }
+            com.bmf.bmfstown.entity.profile.TraitType trait = "random".equalsIgnoreCase(traitArg)
+                    ? com.bmf.bmfstown.entity.profile.TraitType.random(resident.getRandom())
+                    : com.bmf.bmfstown.entity.profile.TraitType.byId(traitArg.toLowerCase());
+            if (trait == null) {
+                ctx.getSource().sendFailure(Component.literal(
+                        "未知特性: " + traitArg + "（可用: random 或 "
+                                + String.join("/",
+                                java.util.Arrays.stream(com.bmf.bmfstown.entity.profile.TraitType.values())
+                                        .map(com.bmf.bmfstown.entity.profile.TraitType::id)
+                                        .toArray(String[]::new)) + "）"));
+                return 0;
+            }
+            resident.getMoodState().setTraitForCommand(trait);
+            changed++;
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    resident.getName().getString() + " 的特性 → "
+                            + trait.displayName() + "（重开面板查看）"), false);
+        }
+        if (changed == 0) {
+            ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));
+        }
+        return changed;
+    }
+
 
     /** 设置饥饿值。 */
     private static int setHunger(CommandContext<CommandSourceStack> ctx,

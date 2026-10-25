@@ -382,5 +382,20 @@
   "gui.bmfstown.resident.rename_title": "Rename Resident",
   "gui.bmfstown.resident.rename_hint": "Type a new name, Enter to confirm · Esc to cancel",
   "msg.bmfstown.rename.invalid": "§cName must be 1-32 characters",
-  "msg.bmfstown.rename.done": "§aRenamed to %s"
+  "msg.bmfstown.rename.done": "§aRenamed to %s",
+  "gui.bmfstown.resident.stat.trait": "Trait",
+  "trait.bmfstown.wanderlust": "Wanderlust",
+  "trait.bmfstown.flighty": "Flighty",
+  "trait.bmfstown.drummer": "Drummer",
+  "trait.bmfstown.walrus": "Walrus",
+  "trait.bmfstown.gattaca": "GATTACA",
+  "trait.bmfstown.enderstep": "Ender Step",
+  "trait.bmfstown.self_destruct": "Self-Destructive",
+  "trait.bmfstown.eggman": "Eggperson",
+  "trait.bmfstown.dog_rider": "Dog Cavalry",
+  "trait.bmfstown.dylar": "Dylar Test Subject",
+  "trait.bmfstown.ghostwriter": "Ghostwriter",
+  "trait.bmfstown.selfless": "Selfless",
+  "trait.bmfstown.duplicity": "Duplicity",
+  "trait.bmfstown.fool_sage": "Foolsage"
 }

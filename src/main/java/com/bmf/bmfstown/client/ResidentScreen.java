@@ -247,7 +247,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * 喜好页面板高：v0.8 偏好一览 10 行（名字/口味/工作/建材/动物/颜色/
      * 音乐/天气/生物/性格），行距 LINE，高度按 ROW_H 预留（与想法页同构）。
      */
-    private static final int HOBBY_GUI_HEIGHT = ResidentMenu.PANEL_Y + 10 * ROW_H + 6;
+    private static final int HOBBY_GUI_HEIGHT = ResidentMenu.PANEL_Y + 11 * ROW_H + 6;
 
     /** 想法日志可见条数（滚轮/滚动条翻更早的）。 */
     private static final int THOUGHTS_VISIBLE = 10;
@@ -760,6 +760,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             drawPrefRow(gfx, textY + LINE * 9,
                     I18n.get("gui.bmfstown.resident.stat.personality"), none, 0x808080);
         }
+
+        // 特性（v0.8.1 第三类词条；同步失败为空 → 显示"无"）
+        String trait = com.bmf.bmfstown.client.ClientMoodState.traitOf(resident.getUUID());
+        drawPrefRow(gfx, textY + LINE * 10,
+                I18n.get("gui.bmfstown.resident.stat.trait"),
+                trait.isEmpty() ? none : I18n.get("trait.bmfstown." + trait), 0xB06A10);
     }
 
     /**
@@ -802,7 +808,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         int rowY = ResidentMenu.PANEL_Y + 1;
         for (int i = end - 1; i >= start; i--) {
             ModNetworking.MoodThought t = thoughts.get(i);
-            String line = I18n.get(t.key());
+            // 海象：显示同步瞬间随机生成的"咕咕咕"展示版（完全随机无法反推原文；
+            // 真实信息在服务端）。非海象照常翻译。
+            java.util.List<String> goo = com.bmf.bmfstown.client.ClientMoodState
+                    .walrusLinesOf(resident.getUUID());
+            String line = goo != null && i < goo.size() ? goo.get(i) : I18n.get(t.key());
             // 性格滤镜标记（乐观"+" / 悲观"−"）已按用户 2026-10-25 决定不再显示；
             // Thought.marker 字段保留（同步协议与存档兼容），将来要恢复只改这里。
             // 深底上用原版聊天的亮绿/亮红/灰，暗色调在 0xFF373737 上看不清；

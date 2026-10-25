@@ -70,7 +70,8 @@ public final class Perks {
      *
      * @return true = 允许落档
      */
-    public static boolean canChoose(ResidentProfile profile, String node, String branch) {
+    public static boolean canChoose(ResidentProfile profile,
+            com.bmf.bmfstown.entity.profile.TraitType trait, String node, String branch) {
         var profession = profile.profession();
         boolean workerTree = node.startsWith("worker.");
         // 节点树前缀必须与职业匹配
@@ -86,9 +87,16 @@ public final class Perks {
             if (!nodes[n].equals(node)) {
                 continue;
             }
-            // 段位必须达标（按当前职业主技能实时推导，不是按存档记录）
             var skill = profession == null ? null : profession.mainSkill();
-            if (skill == null || SkillTiers.tierOf(profile.skillXp(skill)) < UNLOCK_TIER[n]) {
+            if (skill == null) {
+                return false;
+            }
+            // 大智若愚：满级前一个 perk 都解锁不了；满级（传奇）跳过段位门槛全解锁
+            if (trait == com.bmf.bmfstown.entity.profile.TraitType.FOOL_SAGE) {
+                return SkillTiers.tierOf(profile.skillXp(skill)) >= SkillTiers.MAX_TIER;
+            }
+            // 段位必须达标（按当前职业主技能实时推导，不是按存档记录）
+            if (SkillTiers.tierOf(profile.skillXp(skill)) < UNLOCK_TIER[n]) {
                 return false;
             }
             for (String b : branches[n]) {
