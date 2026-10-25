@@ -12,6 +12,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -247,6 +248,71 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：工人工坊绑定确认（三步选取完成，一次带齐三件套）。
+     * 服务端复核职业=工人、合成台方块无误后才落账。
+     */
+    public record WorkshopBindPayload(int entityId, BlockPos table, BlockPos input,
+                                      BlockPos output) implements CustomPacketPayload {
+
+        public static final Type<WorkshopBindPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "workshop_bind"));
+
+        public static final StreamCodec<ByteBuf, WorkshopBindPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, WorkshopBindPayload::entityId,
+                        BlockPos.STREAM_CODEC, WorkshopBindPayload::table,
+                        BlockPos.STREAM_CODEC, WorkshopBindPayload::input,
+                        BlockPos.STREAM_CODEC, WorkshopBindPayload::output,
+                        WorkshopBindPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：工人开工/停工切换（服务端翻转开关并回执）。
+     */
+    public record WorkerTogglePayload(int entityId) implements CustomPacketPayload {
+
+        public static final Type<WorkerTogglePayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "worker_toggle"));
+
+        public static final StreamCodec<ByteBuf, WorkerTogglePayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, WorkerTogglePayload::entityId,
+                        WorkerTogglePayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：工人订单切换（工坊配方目录索引）。
+     * 服务端复核职业与段位解锁（防客户端改包越级下单）。
+     */
+    public record WorkerOrderPayload(int entityId, String product)
+            implements CustomPacketPayload {
+
+        public static final Type<WorkerOrderPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "worker_order"));
+
+        public static final StreamCodec<ByteBuf, WorkerOrderPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, WorkerOrderPayload::entityId,
+                        ByteBufCodecs.STRING_UTF8, WorkerOrderPayload::product,
+                        WorkerOrderPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：perk 选档（成长区分支行点击）。
      *
      * <p>服务端用 {@code Perks.canChoose} 复核段位与分支合法性后才落档，
@@ -367,6 +433,110 @@ public final class ModNetworking {
                     resident.getName().getString(),
                     payload.pos().toShortString(),
                     com.bmf.bmfstown.config.Config.WARRIOR_GUARD_RADIUS.get()), true);
+        });
+    }
+
+    /** 工坊绑定：校验职业=工人、合成台方块无误，三件套落账。 */
+    private static void handleWorkshopBind(WorkshopBindPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return; // 镇民不在了：静默丢弃
+            }
+            if (resident.getProfession()
+                    != com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_worker"), true);
+                return;
+            }
+            ServerLevel level = serverPlayer.serverLevel();
+            if (!(level.getBlockState(payload.table())
+                    .is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE))) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.workshop.need_table"), true);
+                return;
+            }
+            resident.getMoodState().setWorkshop(
+                    payload.table().asLong(), payload.input().asLong(), payload.output().asLong());
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.workshop.bound", resident.getName().getString()), true);
+        });
+    }
+
+    /** 工人开工/停工切换：校验职业后翻转开关。 */
+    private static void handleWorkerToggle(WorkerTogglePayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (resident.getProfession()
+                    != com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_worker"), true);
+                return;
+            }
+            boolean nowEnabled = !resident.getMoodState().workerEnabled();
+            resident.getMoodState().setWorkerEnabled(nowEnabled);
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    nowEnabled ? "msg.bmfstown.workshop.enabled" : "msg.bmfstown.workshop.disabled",
+                    resident.getName().getString()), false);
+        });
+    }
+
+    /** 工人订单：校验职业、索引合法与段位解锁，落账。 */
+    private static void handleWorkerOrder(WorkerOrderPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (resident.getProfession()
+                    != com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_worker"), true);
+                return;
+            }
+            var product = com.bmf.bmfstown.entity.profile.WorkshopCrafts.BuiltInItemKey.item(
+                    payload.product());
+            if (product == net.minecraft.world.item.Items.AIR
+                    || !com.bmf.bmfstown.entity.profile.WorkshopCrafts.isWhitelisted(product)) {
+                return; // 非白名单产物：静默丢弃
+            }
+            if (!com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
+                    resident.getProfile(), product)) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.workshop.locked"), true);
+                return;
+            }
+            var craft = com.bmf.bmfstown.entity.profile.WorkshopCrafts.byProduct(
+                    serverPlayer.serverLevel().getRecipeManager(),
+                    serverPlayer.serverLevel().registryAccess(), payload.product());
+            if (craft == null) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.workshop.locked"), true);
+                return; // 白名单里但没有对应配方（异常数据）：拒绝
+            }
+            resident.getMoodState().setOrderItem(payload.product());
+            // 双通道反馈：主聊天栏（醒目、不消失）+ actionbar（轻提示）
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.workshop.order_set",
+                    craft.result().getDefaultInstance().getHoverName()), false);
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.workshop.order_set",
+                    craft.result().getDefaultInstance().getHoverName()), true);
         });
     }
 
@@ -559,7 +729,7 @@ public final class ModNetworking {
      * 没有"codec + 容量"重载，整条串比逐字段编省事也省字节。
      */
     public record MoodSyncPayload(String residentId, java.util.List<MoodThought> thoughts,
-            String prefs)
+            String prefs, String workerOrder)
             implements CustomPacketPayload {
 
         public static final Type<MoodSyncPayload> TYPE = new Type<>(
@@ -579,6 +749,7 @@ public final class ModNetworking {
                         MoodThought.STREAM_CODEC.encode(buf, t);
                     }
                     ByteBufCodecs.STRING_UTF8.encode(buf, payload.prefs());
+                    ByteBufCodecs.STRING_UTF8.encode(buf, payload.workerOrder());
                 },
                 buf -> {
                     String residentId = ByteBufCodecs.STRING_UTF8.decode(buf);
@@ -588,7 +759,9 @@ public final class ModNetworking {
                         list.add(MoodThought.STREAM_CODEC.decode(buf));
                     }
                     String prefs = ByteBufCodecs.STRING_UTF8.decode(buf);
-                    return new MoodSyncPayload(residentId, java.util.List.copyOf(list), prefs);
+                    String workerOrder = ByteBufCodecs.STRING_UTF8.decode(buf);
+                    return new MoodSyncPayload(residentId, java.util.List.copyOf(list), prefs,
+                            workerOrder);
                 });
 
         @Override
@@ -622,7 +795,8 @@ public final class ModNetworking {
         }
         player.connection.send(new MoodSyncPayload(
                 resident.getStringUUID(), java.util.List.copyOf(list),
-                resident.getMoodState().prefsString()));
+                resident.getMoodState().prefsString(),
+                resident.getMoodState().orderItem()));
     }
 
     // ==========================================================
@@ -648,6 +822,12 @@ public final class ModNetworking {
                 ModNetworking::handleWorkGuardPost);
         registrar.playToServer(WorkFollowPayload.TYPE, WorkFollowPayload.STREAM_CODEC,
                 ModNetworking::handleWorkFollow);
+        registrar.playToServer(WorkshopBindPayload.TYPE, WorkshopBindPayload.STREAM_CODEC,
+                ModNetworking::handleWorkshopBind);
+        registrar.playToServer(WorkerOrderPayload.TYPE, WorkerOrderPayload.STREAM_CODEC,
+                ModNetworking::handleWorkerOrder);
+        registrar.playToServer(WorkerTogglePayload.TYPE, WorkerTogglePayload.STREAM_CODEC,
+                ModNetworking::handleWorkerToggle);
         registrar.playToServer(PerkChoosePayload.TYPE, PerkChoosePayload.STREAM_CODEC,
                 ModNetworking::handlePerkChoose);
         registrar.playToClient(HandbookSyncPayload.TYPE, HandbookSyncPayload.STREAM_CODEC,

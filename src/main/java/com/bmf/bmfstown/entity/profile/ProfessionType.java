@@ -30,7 +30,17 @@ public enum ProfessionType implements StringRepresentable {
      * <p>历史注记：最初这个职业叫"卫士"（guard），与"战士"讨论后合并——
      * 老存档里序列化的 "guard" 会在 {@link #byName} 中自动映射到本职业。
      */
-    WARRIOR("warrior", "战士", 10);
+    WARRIOR("warrior", "战士", 10),
+
+    /**
+     * 工人（v0.8.1）：白天在工坊（WORK 区）合成红石元件。
+     *
+     * <p>不需要工作模式（WorkMode 保持 NONE）——工作由 {@code WorkerGoal}
+     * 按"职业 + 城镇里有工作区 + 白天"自动激活，日落自动下班回家
+     * （吃住作息与普通镇民完全一致，睡眠惩罚也照常结算）。
+     * 材料即订单：工坊箱子里放什么原料，他就做什么元件。
+     */
+    WORKER("worker", "工人", 10);
 
     private final String name;
     private final String zhName;
@@ -68,11 +78,15 @@ public enum ProfessionType implements StringRepresentable {
 
     /**
      * 该职业的主技能（UI 经验条显示用）。
-     * 无业没有经验条；战士主修格斗（警戒是副修，入账但不在此显示）。
-     * 以后新职业在这里补映射。
+     * 无业没有经验条；战士主修格斗（警戒是副修，入账但不在此显示）；
+     * 工人主修合成。以后新职业在这里补映射。
      */
     public SkillType mainSkill() {
-        return this == WARRIOR ? SkillType.COMBAT : null;
+        return switch (this) {
+            case WARRIOR -> SkillType.COMBAT;
+            case WORKER -> SkillType.CRAFTING;
+            default -> null;
+        };
     }
 
     /**

@@ -108,10 +108,10 @@ public final class Config {
                     "Base XP per level of the legacy level curve (does NOT affect skill tiers)")
             .defineInRange("growth.xpPerLevelBase", 100, 1, 100000);
 
-    /** 出生时的心情。 */
+    /** 出生时的心情（v0.8.1 由 100 改 50：出生只是"还行"，让玩家有经营空间）。 */
     public static final ModConfigSpec.IntValue INITIAL_MOOD = BUILDER
             .comment("镇民出生时的心情", "Initial mood of a new resident")
-            .defineInRange("growth.initialMood", 100, 0, 100);
+            .defineInRange("growth.initialMood", 50, 0, 100);
 
     // ==========================================================
     //  心情系统（v0.7）
@@ -484,6 +484,45 @@ public final class Config {
             .comment("斩杀：秒杀触发概率（百分点）",
                     "Execute: instant-kill chance in percentage points")
             .defineInRange("perk.executeChancePercent", 25, 0, 100);
+
+    // ==========================================================
+    //  工人（工坊合成，v0.8.1）
+    // ==========================================================
+
+    /** 每件合成的基础耗时（tick；再除以职业效率、乘工人效率 perk 的缩减）。 */
+    public static final ModConfigSpec.IntValue CRAFT_TICKS_PER_ITEM = BUILDER
+            .comment("工人每合成一件的基础耗时（tick，受熟练度/心情效率缩放）",
+                    "Base ticks for the worker to craft one item (scaled by proficiency/mood efficiency)")
+            .defineInRange("craft.ticksPerItem", 100, 10, 24000);
+
+    /** 每件合成涨多少合成经验。 */
+    public static final ModConfigSpec.IntValue CRAFT_XP_PER_ITEM = BUILDER
+            .comment("工人每合成一件获得的合成经验", "Crafting xp per item for the worker")
+            .defineInRange("craft.xpPerCraft", 10, 0, 1000);
+
+    /** 开源 perk（传奇分支解锁）：每件产出 +1 的概率（百分比）。 */
+    public static final ModConfigSpec.IntValue CRAFT_OPEN_SOURCE_PERCENT = BUILDER
+            .comment("工人'开源'perk（Lv6 解锁）：每件产出 +1 的概率（百分比）",
+                    "Worker 'Open Source' perk (unlocked at Lv6): chance for +1 output per craft (percent)")
+            .defineInRange("craft.openSourcePercent", 10, 0, 100);
+
+    /** 节流 perk（传奇分支解锁）：整次合成不消耗原料的概率（百分比）。 */
+    public static final ModConfigSpec.IntValue CRAFT_THRIFT_PERCENT = BUILDER
+            .comment("工人'节流'perk（传奇分支解锁）：整次合成不消耗原料的概率（百分比）",
+                    "Worker 'Thrift' perk (legend branch): chance for a craft to consume no materials (percent)")
+            .defineInRange("craft.thriftPercent", 10, 0, 100);
+
+    /** 工人开工时刻（dayTime 0~24000；起床 23000 后留一段空闲，默认次日凌晨 2000）。 */
+    public static final ModConfigSpec.IntValue CRAFT_WORK_START = BUILDER
+            .comment("工人开工时刻（dayTime 0~24000；起床后要留一段空闲）",
+                    "Day time when the worker starts working")
+            .defineInRange("craft.workStartTick", 2000, 0, 23999);
+
+    /** 工人收工时刻（默认 10000，日落前留一段空闲）。 */
+    public static final ModConfigSpec.IntValue CRAFT_WORK_END = BUILDER
+            .comment("工人收工时刻（dayTime 0~24000；睡觉前要留一段空闲）",
+                    "Day time when the worker stops working")
+            .defineInRange("craft.workEndTick", 10000, 1, 24000);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 

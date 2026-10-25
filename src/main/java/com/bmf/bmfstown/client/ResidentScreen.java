@@ -14,9 +14,12 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.level.Level;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -261,7 +264,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * 工作页面板高：工作控件 + 经验条 + 效率行 + perk 节点区。
      * perk 区按"3 节点 + 1 个展开的分支组"的最大高度预留，展开/收起时面板不跳动。
      */
-    private static final int WORK_GUI_HEIGHT = ResidentMenu.STATS_Y + 32 + 6 * ROW_H + 10;
+    private static final int WORK_GUI_HEIGHT = ResidentMenu.STATS_Y + 32 + 7 * ROW_H + 12;
 
     private void switchPage(int newPage) {
         this.page = newPage;
@@ -536,7 +539,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (this.page == PAGE_TOWN) {
             renderTownPageText(gfx);
         } else if (this.page == PAGE_WORK) {
-            renderWorkPageText(gfx);
+            renderWorkPageText(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_HOBBY) {
             renderHobbyPageText(gfx);
         } else if (this.page == PAGE_THOUGHTS) {
@@ -900,6 +903,38 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return x + this.font.width(text);
     }
 
+    /** 效率公式的一个可悬停片段：热区（x 范围）+ 悬停理由（多行）。 */
+    private record EffPart(int xStart, int xEnd, List<Component> tooltip) {
+    }
+
+    /** 效率公式片段的悬停热区（每帧渲染时重建）。 */
+    private final List<EffPart> effParts = new ArrayList<>();
+
+    /** 工人产物选择弹层是否打开（点产物格开，选完/点外面收）。 */
+    private boolean orderPickerOpen;
+
+    /** 工人订单物品格：20×20（含边框），空 = 未设置；有单显示产物图标。 */
+    private void drawOrderSlot(GuiGraphics gfx, int x, int y, ItemStack orderStack,
+            int mouseX, int mouseY) {
+        boolean hovered = mouseX >= x && mouseX < x + 20 && mouseY >= y && mouseY < y + 20;
+        gfx.fill(x, y, x + 20, y + 20, hovered ? 0xFF5A5A5A : 0xFF3D3D3D);
+        gfx.fill(x, y, x + 20, y + 1, 0xFF161616);
+        gfx.fill(x, y, x + 1, y + 20, 0xFF161616);
+        gfx.fill(x + 19, y, x + 20, y + 20, 0xFF8A8A8A);
+        gfx.fill(x, y + 19, x + 20, y + 20, 0xFF8A8A8A);
+        if (!orderStack.isEmpty()) {
+            gfx.renderItem(orderStack, x + 2, y + 2);
+        }
+    }
+
+    /** 画一段效率公式并登记悬停热区。返回结束 x。 */
+    private int addEffPart(GuiGraphics gfx, int x, int y, String text, int color,
+                           List<Component> tooltip) {
+        int end = drawSegment(gfx, x, y, text, color);
+        this.effParts.add(new EffPart(x, end, tooltip));
+        return end;
+    }
+
     // ==========================================================
     //  工作页（职业分配 + 战士工作模式）
     // ==========================================================
@@ -935,12 +970,34 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
     // ---- perk 节点区（工作页下半段，背包收起后腾出的空间） ----
 
+    /** 产物选择弹层的行数（每行 5 格）。 */
+    private static int pickerRows(int count) {
+        return (count + 4) / 5;
+    }
+
     /** 展开的 perk 节点下标（-1 = 全部收起）。选择结果走 PerkChoosePayload 落档。 */
     private int perkExpandedNode = -1;
 
     /** 节点/分支定义表（{@link com.bmf.bmfstown.entity.profile.Perks}，下标对齐）。 */
-    private static final String[] PERK_NODE_IDS = com.bmf.bmfstown.entity.profile.Perks.NODES;
-    private static final String[][] PERK_BRANCH_IDS = com.bmf.bmfstown.entity.profile.Perks.BRANCHES;
+    /** 当前职业的 perk 节点/分支 id（战士/工人各一棵树）。 */
+    private String[] perkNodeIds() {
+        return currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
+                ? com.bmf.bmfstown.entity.profile.Perks.WORKER_NODES
+                : com.bmf.bmfstown.entity.profile.Perks.NODES;
+    }
+
+    private String[][] perkBranchIds() {
+        return currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
+                ? com.bmf.bmfstown.entity.profile.Perks.WORKER_BRANCHES
+                : com.bmf.bmfstown.entity.profile.Perks.BRANCHES;
+    }
+
+    /** 分支名/描述的语言键前缀（战士/工人各一套文案）。 */
+    private String branchKeyPrefix() {
+        return currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
+                ? "gui.bmfstown.resident.perk.wb"
+                : "gui.bmfstown.resident.perk.b";
+    }
 
     /** 节点解锁所需段位（与 {@code Perks.UNLOCK_TIER} 一致，避免每次跨类引用）。 */
     private static final int[] PERK_NODE_TIERS = com.bmf.bmfstown.entity.profile.Perks.UNLOCK_TIER;
@@ -952,8 +1009,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
     /** perk 区总行数（3 节点 + 展开的分支组）。 */
     private int perkRowCount() {
-        return PERK_NODE_IDS.length + (this.perkExpandedNode >= 0
-                ? PERK_BRANCH_IDS[this.perkExpandedNode].length : 0);
+        return perkNodeIds().length + (this.perkExpandedNode >= 0
+                ? perkBranchIds()[this.perkExpandedNode].length : 0);
     }
 
     /** 某节点当前选中的分支序号；未选返回 -1。 */
@@ -962,12 +1019,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (r == null) {
             return -1;
         }
-        String choice = r.getProfile().perkChoice(PERK_NODE_IDS[node]);
+        String choice = r.getProfile().perkChoice(perkNodeIds()[node]);
         if (choice == null) {
             return -1;
         }
-        for (int b = 0; b < PERK_BRANCH_IDS[node].length; b++) {
-            if (PERK_BRANCH_IDS[node][b].equals(choice)) {
+        for (int b = 0; b < perkBranchIds()[node].length; b++) {
+            if (perkBranchIds()[node][b].equals(choice)) {
                 return b;
             }
         }
@@ -1059,7 +1116,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF141414);
                 gfx.renderOutline(x + 5, rowY, this.imageWidth - 10, ROW_H, 0xFFE0E0E0);
                 perkRow++;
-                for (int b = 0; b < PERK_BRANCH_IDS[n].length; b++) {
+                for (int b = 0; b < perkBranchIds()[n].length; b++) {
                     int branchY = y + perkAreaTop() + perkRow * ROW_H;
                     boolean bHovered = mouseX >= x + 5 && mouseX < x + this.imageWidth - 5
                             && mouseY >= branchY && mouseY < branchY + ROW_H;
@@ -1120,7 +1177,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     }
 
     /** 工作页文字：页名、职业行（✔ 选中）、按钮文字、底部提示。 */
-    private void renderWorkPageText(GuiGraphics gfx) {
+    private void renderWorkPageText(GuiGraphics gfx, int mouseX, int mouseY) {
         Resident resident = this.menu.getResident();
         if (resident != null) {
             String name = resident.getName().getString();
@@ -1147,19 +1204,54 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (!workControlsVisible()) {
             return;
         }
-        int workMode = currentWorkMode();
         int bw = this.imageWidth - 10;
         int followY = workButtonsTop();
         int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
-        String followLabel = I18n.get(workMode == 1
-                ? "gui.bmfstown.resident.work.follow_btn_on"
-                : "gui.bmfstown.resident.work.follow_btn_off");
-        String guardLabel = I18n.get(workMode == 2
-                ? "gui.bmfstown.resident.work.guard_btn_on"
-                : "gui.bmfstown.resident.work.guard_btn");
-        // 开启态文字用亮绿（配合凹陷底），关闭态普通亮灰——一眼分清开关
-        drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
-        drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
+        if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR) {
+            // 战士：跟随/站岗两枚按钮
+            int workMode = currentWorkMode();
+            String followLabel = I18n.get(workMode == 1
+                    ? "gui.bmfstown.resident.work.follow_btn_on"
+                    : "gui.bmfstown.resident.work.follow_btn_off");
+            String guardLabel = I18n.get(workMode == 2
+                    ? "gui.bmfstown.resident.work.guard_btn_on"
+                    : "gui.bmfstown.resident.work.guard_btn");
+            // 开启态文字用亮绿（配合凹陷底），关闭态普通亮灰——一眼分清开关
+            drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
+            drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
+        } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+            // 工人：设置工坊（左半）+ 开工开关（右半）；下行产物标签 + 订单格
+            boolean enabled = resident.workerEnabledSynced();
+            int half = bw / 2 - 2;
+            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.set_bench"),
+                    5, half, followY + 3, 0xE0E0E0);
+            drawCenteredInPanel(gfx, I18n.get(enabled
+                            ? "gui.bmfstown.resident.work.ws_toggle_on"
+                            : "gui.bmfstown.resident.work.ws_toggle_off"),
+                    5 + half + 4, half, followY + 3, enabled ? 0xA8FFA8 : 0xE0E0E0);
+            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.product_label"),
+                    5, bw, guardY + 3, 0xE0E0E0);
+            int bound = resident.workerBoundSynced() ? 1 : 0;
+            int phase = resident.workerPhaseSynced();
+            String orderItem = com.bmf.bmfstown.client.ClientMoodState.workerOrderOf(
+                    resident.getUUID());
+            var orderStack = new ItemStack(com.bmf.bmfstown.entity.profile.WorkshopCrafts
+                    .BuiltInItemKey.item(orderItem));
+            drawOrderSlot(gfx, this.imageWidth - 29, guardY - 2, orderStack, mouseX, mouseY);
+            // ---- 状态行（实体同步通道，实时）：绑定 / 订单 / 阶段 ----
+            String boundTxt = I18n.get(bound == 1
+                    ? "gui.bmfstown.resident.work.ws_bound"
+                    : "gui.bmfstown.resident.work.ws_unbound");
+            String orderTxt = orderStack.isEmpty()
+                    ? I18n.get("gui.bmfstown.resident.work.ws_no_order")
+                    : orderStack.getHoverName().getString();
+            // 面板打开时镇民必然被玩家优先交互（不工作中），阶段只在干活时出现
+            String line = I18n.get("gui.bmfstown.resident.work.ws_line", boundTxt, orderTxt);
+            if (phase >= 0) {
+                line += " · " + I18n.get("gui.bmfstown.resident.work.wphase." + phase);
+            }
+            drawCenteredInPanel(gfx, line, 5, bw, perkAreaBottom() + 3, 0x9E9E9E);
+        }
 
         // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框）----
         // 文字只报段位与进度（如"老练 · 1470/1500"）——职业名在上方列表，
@@ -1201,20 +1293,137 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 gfx.fill(barX, barY, barX + filled, barY + barH, 0xFF7EFC20);
             }
 
-            // ---- 效率行：职业效率随等级线性变化（SkillTiers A 方案）。
-            //      抽象参数的具体效果由各职业自行定义（战士=伤害倍率），
-            //      这里只做展示：让玩家直观看到"练级有用"。
-            double eff = com.bmf.bmfstown.entity.profile.SkillTiers.efficiencyOf(xp);
-            int effPct = (int) Math.round(eff * 100);
-            int effColor = eff >= 1.0 ? 0x2E7D2E : 0xB02020;   // 回本点 Lv.5=100%
+            // ---- 效率行（v0.8.1）：实时公式 = 熟练度 × 强壮 × 心情，
+            //      每段可悬停看"这一段为什么是这个数"。
+            //      算式与服务端 Resident.professionEfficiency 共用
+            //      EfficiencyMath——面板展示的就是实际生效的数值。
+            this.effParts.clear();
+            var profile = resident.getProfile();
             int effY = textY + 20;
             int ex = 8;
             ex = drawSegment(gfx, ex, effY, I18n.get("gui.bmfstown.resident.work.efficiency_label"), 0x555555);
             ex = drawSegment(gfx, ex, effY, " ", 0x555555);
-            drawSegment(gfx, ex, effY, effPct + "%", effColor);
 
-            // ---- perk 节点区（占位文字） ----
+            double base = com.bmf.bmfstown.entity.profile.EfficiencyMath.baseOf(xp);
+            int basePct = (int) Math.round(base * 100);
+            // 基础段染段位稀有度色，与上方 Lv/段位名一致
+            ex = addEffPart(gfx, ex, effY, basePct + "%", tierColor(tier),
+                    List.of(Component.translatable("gui.bmfstown.resident.work.eff_base",
+                            lv, I18n.get("gui.bmfstown.resident.tier." + tier), basePct)));
+
+            double mood = profile.mood();
+            if (resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong")) {
+                double sm = com.bmf.bmfstown.entity.profile.EfficiencyMath.strongMultiplier();
+                int strongPct = (int) Math.round((sm - 1.0) * 100);
+                ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                ex = addEffPart(gfx, ex, effY, "× " + sm, 0x2E7D2E,
+                        List.of(Component.translatable("gui.bmfstown.resident.work.eff_strong", strongPct)));
+            }
+
+            double mm = com.bmf.bmfstown.entity.profile.EfficiencyMath.moodMultiplier(mood);
+            if (mm < 1.0) {
+                int mmPct = (int) Math.round(mm * 100);
+                int threshold = com.bmf.bmfstown.config.Config.MOOD_SLOW_THRESHOLD.get();
+                ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                ex = addEffPart(gfx, ex, effY, "× " + mm, 0xB02020,
+                        List.of(Component.translatable("gui.bmfstown.resident.work.eff_mood", threshold, mmPct)));
+            }
+
+            double ws = 1.0;
+            if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+                // 工人精通分支：效率（速度 +20%）/ 节能（速度 -20%）→ 公式可见
+                ws = com.bmf.bmfstown.entity.profile.EfficiencyMath.workerSpeedMultiplier(
+                        resident.getProfile().perkChoice(
+                                com.bmf.bmfstown.entity.profile.Perks.NODE_W_ADEPT));
+                if (ws != 1.0) {
+                    int wsPct = (int) Math.round(ws * 100);
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    ex = addEffPart(gfx, ex, effY, "× " + ws, ws > 1.0 ? 0x2E7D2E : 0xB02020,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_wspeed", wsPct)));
+                }
+            }
+
+            double eff = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(xp, mood,
+                    resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong"))
+                    * ws;
+            int effPct = (int) Math.round(eff * 100);
+            int effColor = eff >= 1.0 ? 0x2E7D2E : 0xB02020;   // 回本点 Lv.5=100%
+            ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+            addEffPart(gfx, ex, effY, "= " + effPct + "%", effColor,
+                    List.of(Component.translatable("gui.bmfstown.resident.work.eff_total", effPct)));
+
+            // 悬停提示：鼠标落在哪段公式上，就显示"这一段为什么是这个数"。
+            // 坐标口径（1.21.1 实测）：renderLabels 收到的是绝对鼠标坐标，
+            // 而本方法所有绘制都发生在 translate(leftPos, topPos) 平移后的
+            // 面板相对坐标系里——判定与提示都要换算回相对坐标。
+            int relX = mouseX - this.leftPos;
+            int relY = mouseY - this.topPos;
+            for (EffPart part : this.effParts) {
+                if (relX >= part.xStart() && relX < part.xEnd()
+                        && relY >= effY && relY < effY + 10) {
+                    gfx.renderComponentTooltip(this.font, part.tooltip(), relX, relY + 12);
+                    break;
+                }
+            }
+
+            // ---- perk 节点区：按职业动态渲染（战士节点树 / 工人节点树同构） ----
             renderPerkText(gfx);
+
+            // ---- 产物选择弹层（合成书式格子网格，最后画保证盖在内容上）----
+            if (this.orderPickerOpen
+                    && current == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+                // 白名单按线别过滤：基础档人人可见，布线/机关看天赋分支
+                java.util.List<Item> unlocked = new java.util.ArrayList<>();
+                for (var entry : com.bmf.bmfstown.entity.profile.WorkshopCrafts.whitelist()) {
+                    if (com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
+                            resident.getProfile(), entry.getKey())) {
+                        unlocked.add(entry.getKey());
+                    }
+                }
+                int cols = 5;
+                int rows = (unlocked.size() + cols - 1) / cols;
+                int pw = cols * 20 + 8;
+                int ph = 16 + rows * 20 + 6;
+                int px = 4;
+                int py = perkAreaTop() - 2;
+                // 米白纸面板（合成书质感）+ 顶部深线
+                gfx.fill(px, py, px + pw, py + ph, 0xFFE9E3D5);
+                gfx.fill(px, py, px + pw, py + 1, 0xFF8A7A55);
+                drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.picker_title"),
+                        px, pw, py + 3, 0x4A3B22);
+                int hoverIdx = -1;
+                Item hoverProduct = null;
+                int hoverCellX = -1;
+                int hoverCellY = -1;
+                for (int k = 0; k < unlocked.size(); k++) {
+                    int cellX = px + 4 + (k % cols) * 20;
+                    int cellY = py + 16 + (k / cols) * 20;
+                    boolean hov = mouseX >= this.leftPos + cellX && mouseX < this.leftPos + cellX + 18
+                            && mouseY >= this.topPos + cellY && mouseY < this.topPos + cellY + 18;
+                    gfx.fill(cellX, cellY, cellX + 18, cellY + 18, hov ? 0xFFCFC5A2 : 0xFFD8D0B8);
+                    gfx.renderItem(new ItemStack(unlocked.get(k)), cellX + 1, cellY + 1);
+                    if (hov) {
+                        hoverIdx = k;
+                        hoverProduct = unlocked.get(k);
+                        hoverCellX = cellX;
+                        hoverCellY = cellY;
+                    }
+                }
+                if (hoverProduct != null) {
+                    // 鼠标换算成面板相对坐标给 tooltip（renderLabels 在平移姿势里）
+                    gfx.renderComponentTooltip(this.font, List.of(Component.translatable(
+                            hoverProduct.getDescriptionId())),
+                            mouseX - this.leftPos + 8, mouseY - this.topPos + 8);
+                }
+                // 悬停高亮的白框最后描一遍
+                if (hoverIdx >= 0) {
+                    gfx.fill(hoverCellX, hoverCellY, hoverCellX + 18, hoverCellY + 1, 0xFFFFFFFF);
+                    gfx.fill(hoverCellX, hoverCellY + 17, hoverCellX + 18, hoverCellY + 18, 0xFFFFFFFF);
+                    gfx.fill(hoverCellX, hoverCellY, hoverCellX + 1, hoverCellY + 18, 0xFFFFFFFF);
+                    gfx.fill(hoverCellX + 17, hoverCellY, hoverCellX + 18, hoverCellY + 18, 0xFFFFFFFF);
+                }
+            }
         }
     }
 
@@ -1232,7 +1441,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private void renderPerkText(GuiGraphics gfx) {
         int tier = mainSkillTier();
         int row = 0;
-        for (int n = 0; n < PERK_NODE_IDS.length; n++) {
+        for (int n = 0; n < perkNodeIds().length; n++) {
             boolean unlocked = tier >= PERK_NODE_TIERS[n];
             int textY = perkAreaTop() + row * ROW_H + 3;
             row++;
@@ -1242,7 +1451,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 status = I18n.get("gui.bmfstown.resident.perk.locked", PERK_NODE_TIERS[n] + 1);
             } else if (selected >= 0) {
                 status = I18n.get("gui.bmfstown.resident.perk.chosen",
-                        I18n.get("gui.bmfstown.resident.perk.bname." + n + "." + selected));
+                        I18n.get(branchKeyPrefix() + "name." + n + "." + selected));
             } else if (this.perkExpandedNode == n) {
                 status = "▾";
             } else {
@@ -1252,12 +1461,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             gfx.drawString(this.font, "◆ " + I18n.get("gui.bmfstown.resident.perk.node." + n)
                     + "  " + status, 8, textY, color, false);
             if (this.perkExpandedNode == n && unlocked) {
-                for (int b = 0; b < PERK_BRANCH_IDS[n].length; b++) {
+                for (int b = 0; b < perkBranchIds()[n].length; b++) {
                     int branchY = perkAreaTop() + row * ROW_H + 3;
                     row++;
-                    String name = I18n.get("gui.bmfstown.resident.perk.bname." + n + "." + b);
+                    String name = I18n.get(branchKeyPrefix() + "name." + n + "." + b);
                     // 描述文本带 %s 占位，数值从配置现读——改 toml 文案跟着变
-                    String desc = I18n.get("gui.bmfstown.resident.perk.bdesc." + n + "." + b,
+                    String desc = I18n.get(branchKeyPrefix() + "desc." + n + "." + b,
                             perkDescArgs(n, b));
                     String prefix = selected == b ? "✔ " : "   ";
                     // 选中分支亮白，未选灰白；锁定描述不额外变色（父节点已置灰）
@@ -1509,10 +1718,52 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (button == 0 && clickTab(mouseX, mouseY)) {
             return true;
         }
-        // ---- 工作页点击：职业行 + 两个工作模式按钮 ----
+        // ---- 工作页点击：职业行 + 工作控件区 ----
         if (this.page == PAGE_WORK && button == 0) {
             int listX = this.leftPos + 5;
             int listW = this.imageWidth - 10;
+
+            var clickedProf = currentProfession();
+
+            // ---- 产物选择弹层打开：点击优先归弹层（格子下单 / 点外面收起） ----
+            if (this.orderPickerOpen
+                    && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+                Resident r = this.menu.getResident();
+                int relX = (int) (mouseX - this.leftPos);
+                int relY = (int) (mouseY - this.topPos);
+                int px = 4;
+                int py = perkAreaTop() - 2;
+                var catalog = com.bmf.bmfstown.entity.profile.WorkshopCrafts.whitelist();
+                int cols = 5;
+                boolean insidePopup = relX >= px && relX < px + cols * 20 + 8
+                        && relY >= py && relY < py + 16 + pickerRows(catalog.size()) * 20 + 6;
+                if (insidePopup && r != null
+                        && relY >= py + 16 && relX >= px + 4 && relX < px + 4 + cols * 20) {
+                    int row = (relY - (py + 16)) / 20;
+                    int col = (relX - (px + 4)) / 20;
+                    java.util.List<Item> unlocked = new java.util.ArrayList<>();
+                    for (var entry : catalog) {
+                        if (com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
+                                r.getProfile(), entry.getKey())) {
+                            unlocked.add(entry.getKey());
+                        }
+                    }
+                    int cellIndex = row * cols + col;
+                    if (row >= 0 && cellIndex >= 0 && cellIndex < unlocked.size()) {
+                        Item product = unlocked.get(cellIndex);
+                        String productId = com.bmf.bmfstown.entity.profile.WorkshopCrafts
+                                .BuiltInItemKey.of(product);
+                        ModNetworking.sendToServer(new ModNetworking.WorkerOrderPayload(
+                                r.getId(), productId));
+                        com.bmf.bmfstown.client.ClientMoodState.setWorkerOrder(
+                                r.getUUID(), productId);
+                        this.orderPickerOpen = false;
+                        return true;
+                    }
+                }
+                this.orderPickerOpen = false; // 点弹层外：收起
+                return true;
+            }
 
             // 职业行（滚动窗口：可见行 v → 实际下标 workScroll + v）
             int rowTop = this.topPos + workRowTop();
@@ -1531,7 +1782,37 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 这块区域按职业动态分配，不属于战士专属。
             int followY = this.topPos + workButtonsTop();
             int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
-            if (workControlsVisible() && mouseX >= listX && mouseX < listX + listW) {
+            // ---- 工人：设置工坊（三步绑定）+ 切换产物 ----
+            //      只吞两个按钮带；按钮区以外的点击（perk 区等）必须放行，
+            //      否则 perk 区点击会被这里吞掉（v0.8.1 踩过：工人 perk 点不动）。
+            if (workControlsVisible() && mouseX >= listX && mouseX < listX + listW
+                    && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+                Resident r = this.menu.getResident();
+                if (r == null) {
+                    return true;
+                }
+                if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
+                    // 左半 = 设置工坊；右半 = 开工/停工切换
+                    if (mouseX < this.leftPos + 5 + this.imageWidth / 2 - 2) {
+                        if (this.minecraft != null) {
+                            this.minecraft.setScreen(null);
+                        }
+                        WorkshopBenchClient.startPick(r.getId());
+                    } else {
+                        ModNetworking.sendToServer(new ModNetworking.WorkerTogglePayload(r.getId()));
+                    }
+                    return true;
+                }
+                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H) {
+                    // 打开产物选择弹层（合成书式格子）
+                    this.orderPickerOpen = true;
+                    return true;
+                }
+                // 不在按钮上：掉出本块，交给后面的 perk 区点击
+            }
+            // ---- 战士：跟随 / 站岗 ----
+            if (workControlsVisible() && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR
+                    && mouseX >= listX && mouseX < listX + listW) {
                 if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
                     // 走自定义包（与站岗同链路），菜单按钮协议留作兜底
                     Resident r = this.menu.getResident();
@@ -1560,23 +1841,23 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 int perkTier = mainSkillTier();
                 int relPerk = (int) (mouseY - (this.topPos + perkAreaTop()));
                 int perkRow = 0;
-                for (int n = 0; n < PERK_NODE_IDS.length; n++) {
+                for (int n = 0; n < perkNodeIds().length; n++) {
                     int nodeRow = perkRow;
                     perkRow++;
                     boolean expandedHere = n == this.perkExpandedNode && perkTier >= PERK_NODE_TIERS[n];
                     if (expandedHere) {
                         // 分支行：点中就发选档包（服务端复核段位后落档，免费改选）
                         if (relPerk >= (nodeRow + 1) * ROW_H
-                                && relPerk < (nodeRow + 1 + PERK_BRANCH_IDS[n].length) * ROW_H) {
+                                && relPerk < (nodeRow + 1 + perkBranchIds()[n].length) * ROW_H) {
                             int b = (relPerk - (nodeRow + 1) * ROW_H) / ROW_H;
                             Resident r = this.menu.getResident();
                             if (r != null) {
                                 ModNetworking.sendToServer(new ModNetworking.PerkChoosePayload(
-                                        r.getId(), PERK_NODE_IDS[n], PERK_BRANCH_IDS[n][b]));
+                                        r.getId(), perkNodeIds()[n], perkBranchIds()[n][b]));
                             }
                             return true;
                         }
-                        perkRow += PERK_BRANCH_IDS[n].length;
+                        perkRow += perkBranchIds()[n].length;
                     }
                     if (relPerk >= nodeRow * ROW_H && relPerk < (nodeRow + 1) * ROW_H) {
                         // 已解锁节点：展开/收起切换；锁定的吞掉点击给死反馈

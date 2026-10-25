@@ -37,12 +37,16 @@ public final class ClientMoodState {
     /** 居民 UUID → 偏好摘要（v0.8）。 */
     private static final Map<UUID, MoodPrefs> PREFS = new ConcurrentHashMap<>();
 
+    /** 居民 UUID → 工人当前订单（产物注册名，空 = 未设置）。 */
+    private static final Map<UUID, String> WORKER_ORDER = new ConcurrentHashMap<>();
+
     /** 收到服务端同步包：整包覆盖该居民的想法与偏好。 */
     public static void handleSync(MoodSyncPayload payload) {
         try {
             UUID id = UUID.fromString(payload.residentId());
             THOUGHTS.put(id, List.copyOf(payload.thoughts()));
             PREFS.put(id, MoodPrefs.parse(payload.prefs()));
+            WORKER_ORDER.put(id, payload.workerOrder() == null ? "" : payload.workerOrder());
         } catch (IllegalArgumentException ignored) {
             // 非法 UUID：包被篡改/版本串了，忽略
         }
@@ -58,10 +62,21 @@ public final class ClientMoodState {
         return PREFS.getOrDefault(residentId, MoodPrefs.EMPTY);
     }
 
+    /** 工人当前订单（产物注册名；没有缓存返回空 = 未设置）。 */
+    public static String workerOrderOf(UUID residentId) {
+        return WORKER_ORDER.getOrDefault(residentId, "");
+    }
+
+    /** 本地点击下单后的乐观更新（服务端为权威，失败会被服务端消息纠正）。 */
+    public static void setWorkerOrder(UUID residentId, String product) {
+        WORKER_ORDER.put(residentId, product);
+    }
+
     /** 断线清空。 */
     public static void clear() {
         THOUGHTS.clear();
         PREFS.clear();
+        WORKER_ORDER.clear();
     }
 
     private ClientMoodState() {

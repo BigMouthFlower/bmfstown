@@ -270,6 +270,61 @@ public final class MoodState {
      */
     private int lastChargedNightK = Integer.MIN_VALUE;
 
+    // ---- 工人工坊绑定（v0.8.1）：合成台/原料箱/产物箱三个方块坐标 ----
+    // 0 = 未绑定（BlockPos.asLong 对合法方块不会是 0）
+
+    /** 工人绑定的合成台（干活站位）。 */
+    private long craftTablePos = 0L;
+    /** 工人绑定的原料箱（取料）。 */
+    private long inputChestPos = 0L;
+    /** 工人绑定的产物箱（入库）。 */
+    private long outputChestPos = 0L;
+    /** 工人当前订单：产物注册名（"minecraft:repeater"）；空 = 未设订单。 */
+    private String orderItem = "";
+    /** 工人开工开关（用户定稿：绑定好了也可以手动停工）。 */
+    private boolean workerEnabled = true;
+
+    /** 工人绑定的合成台（{@code BlockPos.asLong}；0 = 未绑定）。 */
+    public long craftTablePos() {
+        return this.craftTablePos;
+    }
+
+    /** 工人绑定的原料箱（0 = 未绑定）。 */
+    public long inputChestPos() {
+        return this.inputChestPos;
+    }
+
+    /** 工人绑定的产物箱（0 = 未绑定）。 */
+    public long outputChestPos() {
+        return this.outputChestPos;
+    }
+
+    /** 当前订单（产物注册名；空 = 未设订单）。 */
+    public String orderItem() {
+        return this.orderItem;
+    }
+
+    /** 一键落账工坊三件套（绑定流程完成时服务端调用）。 */
+    public void setWorkshop(long table, long input, long output) {
+        this.craftTablePos = table;
+        this.inputChestPos = input;
+        this.outputChestPos = output;
+    }
+
+    /** 设置当前订单（产物注册名；服务端已复核白名单与线别）。 */
+    public void setOrderItem(String product) {
+        this.orderItem = product == null ? "" : product;
+    }
+
+    /** 工人开工开关（false = 已停工，Goal 不激活）。 */
+    public boolean workerEnabled() {
+        return this.workerEnabled;
+    }
+
+    public void setWorkerEnabled(boolean enabled) {
+        this.workerEnabled = enabled;
+    }
+
     // ==========================================================
     //  读接口
     // ==========================================================
@@ -1160,6 +1215,11 @@ public final class MoodState {
             tag.putLong("LastTimidAt", this.lastTimidAt);
             tag.putInt("LastSleptNightK", this.lastSleptNightK);
             tag.putInt("SleepChargedNightK", this.lastChargedNightK);
+            tag.putLong("CraftTablePos", this.craftTablePos);
+            tag.putLong("InputChestPos", this.inputChestPos);
+            tag.putLong("OutputChestPos", this.outputChestPos);
+            tag.putString("OrderItem", this.orderItem);
+            tag.putBoolean("WorkerEnabled", this.workerEnabled);
         }
         return tag;
     }
@@ -1249,6 +1309,11 @@ public final class MoodState {
             // 夜序号缺省保持 MIN_VALUE：settleSleep 首次结算时懒初始化为"当前"，不追溯
             this.lastSleptNightK = tag.contains("LastSleptNightK") ? tag.getInt("LastSleptNightK") : Integer.MIN_VALUE;
             this.lastChargedNightK = tag.contains("SleepChargedNightK") ? tag.getInt("SleepChargedNightK") : Integer.MIN_VALUE;
+            this.craftTablePos = tag.contains("CraftTablePos") ? tag.getLong("CraftTablePos") : 0L;
+            this.inputChestPos = tag.contains("InputChestPos") ? tag.getLong("InputChestPos") : 0L;
+            this.outputChestPos = tag.contains("OutputChestPos") ? tag.getLong("OutputChestPos") : 0L;
+            this.orderItem = tag.contains("OrderItem") ? tag.getString("OrderItem") : "";
+            this.workerEnabled = !tag.contains("WorkerEnabled") || tag.getBoolean("WorkerEnabled");
         }
     }
 }

@@ -39,6 +39,23 @@ public final class Perks {
             {"taunt", "execute"},    // 传奇：嘲讽 / 斩杀
     };
 
+    // ---- 工人节点（v0.8.1，与战士树同构：3 节点 × 2 分支） ----
+
+    /** 工人精通：效率（快但饿得快）/ 节能（慢但省粮）。 */
+    public static final String NODE_W_ADEPT = "worker.adept";
+    /** 工人大师：布线（传递/改变信号）/ 机关（接收信号）——决定解锁哪一域配方。 */
+    public static final String NODE_W_MASTER = "worker.master";
+    /** 工人传奇：开源 / 节流。 */
+    public static final String NODE_W_LEGEND = "worker.legend";
+
+    public static final String[] WORKER_NODES = {NODE_W_ADEPT, NODE_W_MASTER, NODE_W_LEGEND};
+
+    public static final String[][] WORKER_BRANCHES = {
+            {"efficiency", "frugal"},    // 精通：效率 / 节能
+            {"wiring", "mechanism"},     // 大师：布线 / 机关
+            {"opensource", "thrift"},    // 传奇：开源 / 节流
+    };
+
     /** 节点解锁所需段位（与 {@code SkillTiers.PERK_TIERS} 对齐：精通/大师/传奇）。 */
     public static final int[] UNLOCK_TIER = {3, 6, 9};
 
@@ -48,19 +65,33 @@ public final class Perks {
      * <p><b>不能信客户端</b>——payload 里的节点/分支必须复核段位与合法性，
      * 改包客户端想跳级选传奇分支时在这里被拒。
      *
+     * <p>职业门禁：战士节点只认战士，工人节点只认工人——
+     * 拿工人 payload 给战士点天赋在这里被拒。
+     *
      * @return true = 允许落档
      */
     public static boolean canChoose(ResidentProfile profile, String node, String branch) {
-        for (int n = 0; n < NODES.length; n++) {
-            if (!NODES[n].equals(node)) {
+        var profession = profile.profession();
+        boolean workerTree = node.startsWith("worker.");
+        // 节点树前缀必须与职业匹配
+        if (workerTree && profession != ProfessionType.WORKER) {
+            return false;
+        }
+        if (!workerTree && profession != ProfessionType.WARRIOR) {
+            return false;
+        }
+        String[] nodes = workerTree ? WORKER_NODES : NODES;
+        String[][] branches = workerTree ? WORKER_BRANCHES : BRANCHES;
+        for (int n = 0; n < nodes.length; n++) {
+            if (!nodes[n].equals(node)) {
                 continue;
             }
             // 段位必须达标（按当前职业主技能实时推导，不是按存档记录）
-            var skill = profile.profession() == null ? null : profile.profession().mainSkill();
+            var skill = profession == null ? null : profession.mainSkill();
             if (skill == null || SkillTiers.tierOf(profile.skillXp(skill)) < UNLOCK_TIER[n]) {
                 return false;
             }
-            for (String b : BRANCHES[n]) {
+            for (String b : branches[n]) {
                 if (b.equals(branch)) {
                     return true;
                 }

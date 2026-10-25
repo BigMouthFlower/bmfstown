@@ -109,6 +109,23 @@ public class Resident extends PathfinderMob {
             SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.INT);
 
     /**
+     * 工人"工作中"可视化标记（v0.8.1）：true = 头顶显示工作气泡。
+     * 与 DATA_WORK 同理走已被验证的实体同步通道；仅表演用，逻辑不读它。
+     */
+    private static final EntityDataAccessor<Boolean> DATA_WORKER_VISUAL =
+            SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.BOOLEAN);
+
+    /**
+     * 工人状态（v0.8.1）：绑定/订单/工作阶段打包进一个 int，
+     * 走实体同步通道（菜单数据槽实测客户端收不到更新，别再踩）。
+     *
+     * <p>编码：{@code (订单索引+1) << 5 | (绑定 ? 16 : 0) | (阶段+2)}——
+     * 阶段 -1~5 加 2 后落 0~15；订单索引 -1~14 加 1 后左移 5。
+     */
+    private static final EntityDataAccessor<Integer> DATA_WORKER_STATUS =
+            SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.INT);
+
+    /**
      * 背包（27 格）。
      *
      * <p><b>只在服务端有实际内容</b>。客户端实例的背包是空的，
@@ -381,6 +398,10 @@ public class Resident extends PathfinderMob {
         this.goalSelector.addGoal(3, new MeleeAttackGoal(this, 1.0D, true));
         this.goalSelector.addGoal(4, new WarriorGoals.FollowPlayerGoal(this));
         this.goalSelector.addGoal(4, new WarriorGoals.GuardPostGoal(this));
+        // ---- 工人工作（只在职业=工人且白天激活，见 WorkerGoal） ----
+        // 与战士工作 Goal 靠职业天然互斥（一个镇民只有一个职业）
+        this.workerGoal = new WorkerGoal(this);
+        this.goalSelector.addGoal(4, this.workerGoal);
         // 索敌：锚点半径内的敌对生物（跟随=玩家身边，站岗=岗哨周围）；
         // 被打还手是所有镇民的保底本能。
         this.targetSelector.addGoal(2, new WarriorGoals.MonsterTargetGoal(this));
@@ -397,6 +418,53 @@ public class Resident extends PathfinderMob {
         // 默认档案：先给一份"满饥饿满心情"的，finalizeSpawn 里会替换成随机的
         builder.define(DATA_PROFILE, ResidentProfile.createRandom(this.random));
         builder.define(DATA_WORK, WorkMode.NONE.ordinal());
+        builder.define(DATA_WORKER_VISUAL, false);
+        builder.define(DATA_WORKER_STATUS, 0);
+    }
+
+    /** 工人"工作中"可视化标记（气泡渲染读客户端同步值）。 */
+    public void setWorkerVisual(boolean working) {
+        this.entityData.set(DATA_WORKER_VISUAL, working);
+    }
+
+    public boolean isWorkerVisual() {
+        return this.entityData.get(DATA_WORKER_VISUAL);
+    }
+
+    /** 服务端每 tick 刷新打包状态（set 同值不发包，无流量）。 */
+    private void refreshWorkerStatus() {
+        int phase = !workerEnabledSynced() ? -2
+                : workerGoalRunning() ? workerGoalPhase() : -1;
+        boolean hasOrder = !getMoodState().orderItem().isEmpty();
+        int value = (hasOrder ? 64 : 0)
+                | (workerEnabledSynced() ? 32 : 0)
+                | (workerBound() ? 16 : 0)
+                | (Math.max(-2, Math.min(13, phase)) + 2);
+        this.entityData.set(DATA_WORKER_STATUS, value);
+    }
+
+    /** 客户端读：开工开关（bit 32；true = 开工中）。 */
+    public boolean workerEnabledSynced() {
+        var m = getMoodState();
+        if (this.level() instanceof net.minecraft.server.level.ServerLevel) {
+            return m.workerEnabled();
+        }
+        return (this.entityData.get(DATA_WORKER_STATUS) & 32) != 0;
+    }
+
+    /** 客户端读：订单索引（-1 = 未设置）。 */
+    public int workerOrderIndexSynced() {
+        return (this.entityData.get(DATA_WORKER_STATUS) >> 5) - 1;
+    }
+
+    /** 客户端读：三件套是否齐备。 */
+    public boolean workerBoundSynced() {
+        return (this.entityData.get(DATA_WORKER_STATUS) & 16) != 0;
+    }
+
+    /** 客户端读：工作阶段（-1 = 闲置，0~5 = Goal 阶段）。 */
+    public int workerPhaseSynced() {
+        return (this.entityData.get(DATA_WORKER_STATUS) & 15) - 2;
     }
 
     // ==========================================================
@@ -514,6 +582,32 @@ public class Resident extends PathfinderMob {
     /** 是否是战士（能否执行战斗类工作）。 */
     public boolean isWarrior() {
         return this.getProfession() == ProfessionType.WARRIOR;
+    }
+
+    /** 工人 Goal 引用（注册时挂上；面板状态显示用）。 */
+    @Nullable
+    private WorkerGoal workerGoal;
+
+    /** 工人 Goal 是否在执行（面板状态显示用）。 */
+    public boolean workerGoalRunning() {
+        return this.workerGoal != null && this.workerGoal.isRunningGoal();
+    }
+
+    /** 工人 Goal 当前阶段序号（未执行返回 -1）。 */
+    public int workerGoalPhase() {
+        return this.workerGoal != null && this.workerGoal.isRunningGoal()
+                ? this.workerGoal.phaseOrdinal() : -1;
+    }
+
+    /** 工人三件套是否齐备（面板状态显示用）。 */
+    public boolean workerBound() {
+        var m = getMoodState();
+        return m.craftTablePos() != 0 && m.inputChestPos() != 0 && m.outputChestPos() != 0;
+    }
+
+    /** 是否正在觅食（工人 Goal 据此让位：饿了先吃饭，吃完回来接着干活）。 */
+    public boolean isForaging() {
+        return this.forageState != ForageState.NONE;
     }
 
     /** 涨一条职业技能经验（干中学的唯一入口，服务端专用）。 */
@@ -845,6 +939,8 @@ public class Resident extends PathfinderMob {
     @Override
     protected void customServerAiStep() {
         super.customServerAiStep();
+        // ---- 0. 工人状态打包同步（面板状态行用；set 同值不发包） ----
+        this.refreshWorkerStatus();
 
         // ---- 1. 推进饥饿 ----
         this.hungerTickAccumulator++;
@@ -1460,7 +1556,7 @@ public class Resident extends PathfinderMob {
      * 原版玩家开容器的声音走的正是同一条路（ContainerOpenersCounter
      * 里也是 {@code state.getSoundType().getOpenSound()}）。
      */
-    private void containerFx(net.minecraft.server.level.ServerLevel level, BlockPos pos, boolean open) {
+    public void containerFx(net.minecraft.server.level.ServerLevel level, BlockPos pos, boolean open) {
         var state = level.getBlockState(pos);
         var block = state.getBlock();
         if (block instanceof net.minecraft.world.level.block.ChestBlock
@@ -1570,6 +1666,25 @@ public class Resident extends PathfinderMob {
             this.sleepKickCooldown--;
         }
         boolean night = isNightTime(level.getDayTime());
+
+        // 读档对账（v0.8.1 实测 bug 修复）：sleepState 不落档，而 vanilla 会把
+        // "睡姿 + 床坐标"存进实体 NBT——存档时正在睡的镇民，读档后睡姿还在、
+        // 状态机却已回 AWAKE，从此没人清睡姿 → 白天躺着走路吃饭。
+        // 对账两种结局：还在睡觉窗口且床还在 → 恢复 SLEEPING 继续睡；
+        // 否则（天亮/床没了）→ 清掉残留睡姿，绝不允许躺姿行走。
+        if (this.sleepState == SleepState.AWAKE && this.getSleepingPos().isPresent()) {
+            BlockPos staleBed = this.getSleepingPos().get();
+            if (night && level.getBlockState(staleBed).is(net.minecraft.tags.BlockTags.BEDS)) {
+                this.sleepState = SleepState.SLEEPING;
+                this.targetBed = staleBed;
+                this.sleepTravelTicks = 0;
+                LOGGER.debug("[BmfTown][睡眠] {} 读档恢复睡眠状态 {}",
+                        this.getName().getString(), staleBed.toShortString());
+            } else {
+                this.stopSleeping();
+                LOGGER.debug("[BmfTown][睡眠] {} 读档清理残留睡姿", this.getName().getString());
+            }
+        }
 
         switch (this.sleepState) {
             case AWAKE -> {
@@ -2603,10 +2718,9 @@ public class Resident extends PathfinderMob {
     }
 
     /**
-     * 当前职业效率（{@code SkillTiers} A 方案）：主技能等级越高伤害越高。
-     *
-     * <p>无职业 / 无主技能 → 1.0：效率是<b>职业</b>参数，无业不吃减益也不吃增益。
-     * 选了精通节点"强壮"分支再乘加成（默认 +10%，可配置；满级 150% → 160%）。
+     * 当前职业效率：统一走 {@code EfficiencyMath.total}（客户端面板展示的公式
+     * 与此同源，所见即所得）。无职业 / 无主技能 → 1.0：效率是<b>职业</b>参数，
+     * 无业不吃减益也不吃增益。强壮 perk 与心情打折的语义见 EfficiencyMath。
      */
     private double professionEfficiency() {
         var profession = this.getProfile().profession();
@@ -2614,25 +2728,16 @@ public class Resident extends PathfinderMob {
         if (skill == null) {
             return 1.0;
         }
-        double eff = com.bmf.bmfstown.entity.profile.SkillTiers.efficiencyOf(this.getProfile().skillXp(skill));
-        if (hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong")) {
-            eff *= 1.0 + Config.PERK_STRONG_BONUS_PERCENT.get() / 100.0;
-        }
-        // ---- 心情打折档（v0.7）：mood 低于阈值（默认 40）→ 效率 ×0.7 ----
-        // 注意：当前"效率"只作用于战士攻击伤害（还没有生产职业），
-        // 心情差的战士打人没劲是符合直觉的；生产职业实装后同一乘数自动作用于产出。
-        // 更低的心情档（罢工）不在这处理——走 WarriorGoals 的 onStrike 检查。
-        int slowThreshold = Config.MOOD_SLOW_THRESHOLD.get();
-        if (slowThreshold > 0 && this.getProfile().mood() < slowThreshold) {
-            eff *= Config.MOOD_SLOW_MULTIPLIER_PERCENT.get() / 100.0;
-        }
-        return eff;
+        return com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
+                this.getProfile().skillXp(skill),
+                this.getProfile().mood(),
+                hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong"));
     }
 
     /**
      * 是否选定了某个 perk 分支（数据层查询：{@code perks} 列表存 "节点:分支"）。
      */
-    private boolean hasPerk(String node, String branch) {
+    public boolean hasPerk(String node, String branch) {
         String choice = this.getProfile().perkChoice(node);
         return branch.equals(choice);
     }

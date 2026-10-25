@@ -59,12 +59,32 @@ public final class HungerSystem {
             return null;
         }
         int points = elapsedTicks / ticksPerPoint;
+        // 工人'效率/节能'分支的饥饿速度修正（效率饿得快 ×1.5 / 节能省粮 ×0.5）
+        points = applyWorkerHungerTrait(profile, points);
         // 0 是下限，已经饿到底就不再往下掉
         int newHunger = Math.max(0, profile.hunger() - points);
         if (newHunger == profile.hunger()) {
             return null;
         }
         return profile.withHunger(newHunger);
+    }
+
+    /**
+     * 工人精通分支的饥饿速度修正（v0.8.1）。
+     * 效率：饿得快（×1.5，力量换饭量）；节能：省粮（×0.5，慢工出细活）。
+     */
+    private static int applyWorkerHungerTrait(ResidentProfile profile, int points) {
+        if (profile.profession() != ProfessionType.WORKER) {
+            return points;
+        }
+        String choice = profile.perkChoice(Perks.NODE_W_ADEPT);
+        if ("efficiency".equals(choice)) {
+            return Math.max(1, points * 3 / 2);
+        }
+        if ("frugal".equals(choice)) {
+            return Math.max(1, points / 2);
+        }
+        return points;
     }
 
     /**

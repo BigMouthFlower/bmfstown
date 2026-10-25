@@ -145,7 +145,8 @@ public class ResidentMenu extends AbstractContainerMenu {
     public static final int DATA_MOOD = 2;
     /** 数据槽索引：工作模式（{@code WorkMode.ordinal()}：0 无 / 1 跟随 / 2 站岗）。 */
     public static final int DATA_WORKMODE = 3;
-    /** 数据槽总数。客户端和服务端必须一致，否则索引会错位。 */
+    /** 数据槽总数。客户端和服务端必须一致，否则索引会错位。
+     *  （工人状态行改走实体同步通道 DATA_WORKER_STATUS——数据槽实测不可靠。） */
     public static final int DATA_COUNT = 4;
 
     // ==========================================================
