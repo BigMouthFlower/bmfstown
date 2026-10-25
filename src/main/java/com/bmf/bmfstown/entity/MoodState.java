@@ -587,34 +587,19 @@ public final class MoodState {
      * "指派模式 → 职业"的映射。
      */
     private void settleProfession(Resident resident, ServerLevel level) {
-        ProfessionAssignment job = assignedProfession(resident);
-        if (job == ProfessionAssignment.NONE) {
+        // 数据驱动（v0.8.1 重构）：按"当前职业"结算，不走指派模式查表——
+        // 旧实现硬编码只有战士（ProfessionAssignment 枚举），
+        // 喜欢工人/簿记员的镇民被指派后永远拿不到加成（用户点名纠正）。
+        // 以后新增职业（农夫/厨师…）自动参与，此处零改动。
+        var profile = resident.getProfile();
+        ProfessionType current = resident.getProfession();
+        if (current == null || current == ProfessionType.NONE) {
             return; // 无业可评（用户定稿：无业不算一种工作）
         }
-        var profile = resident.getProfile();
-        if (job.profession == profile.likedProfession()) {
+        if (current == profile.likedProfession()) {
             this.applyClamped(resident, Config.MOOD_JOB_LIKED.get());
             addThought(level, EventType.JOB_LIKED);
         }
-    }
-
-    /** 指派工作对应的"职业"。当前只有战士一种真实职业。 */
-    private enum ProfessionAssignment {
-        NONE(null), WARRIOR(ProfessionType.WARRIOR);
-
-        final ProfessionType profession;
-
-        ProfessionAssignment(ProfessionType profession) {
-            this.profession = profession;
-        }
-    }
-
-    private static ProfessionAssignment assignedProfession(Resident resident) {
-        // 两种被指派模式（跟随战斗/岗哨站岗）都是"干战士的活"；
-        // 无业（NONE）不参与好恶结算。
-        return resident.getWorkMode() == WorkMode.NONE
-                ? ProfessionAssignment.NONE
-                : ProfessionAssignment.WARRIOR;
     }
 
     /**
@@ -1015,6 +1000,10 @@ public final class MoodState {
     public void reroll(Resident resident, ServerLevel level) {
         this.prefsGenerated = false;
         ensureGenerated(resident, level);
+        // 职业好恶与喜欢的食物存在 ResidentProfile（record），MoodState 侧重摇
+        // 够不到它们——旧实现只摇 MoodState 侧，职业偏好怎么 reroll 都不变
+        //（用户实测点名："不能 roll 的字段不止职业"）。
+        resident.updateProfile(p -> p.rerollPreferences(resident.getRandom()));
     }
 
     /**

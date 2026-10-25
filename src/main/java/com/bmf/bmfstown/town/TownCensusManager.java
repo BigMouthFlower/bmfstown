@@ -66,16 +66,18 @@ public final class TownCensusManager {
     }
 
     /**
-     * 请求统计：当天已有新鲜结果直接返回；否则委托扫描（幂等）。
+     * 请求统计：当天已有新鲜结果直接返回；否则委托扫描（幂等），
+     * 扫描完成后自动推送给请求者（不用再点第二次）。
      *
      * @return 当天的新鲜结果，没有（正在扫/还没扫过）返回 null
      */
-    public static Census request(ServerLevel level, Town town) {
+    public static Census request(ServerLevel level, Town town,
+            com.bmf.bmfstown.entity.Resident bookkeeper,
+            net.minecraft.server.level.ServerPlayer requester) {
         Census fresh = RESULTS.get(town.id());
         if (fresh != null && fresh.day() == currentDay(level)) {
             return fresh;
         }
-        // 过期/不存在：委托今天的扫描（同镇同日幂等）
         int day = currentDay(level);
         List<Job> list = JOBS.computeIfAbsent(level.dimension().location().toString(),
                 k -> new ArrayList<>());
@@ -84,8 +86,9 @@ public final class TownCensusManager {
                 return null; // 今天已经在扫了
             }
         }
-        list.add(new Job(town, day));
-        LOGGER.info("[BmfTown][簿记] 城镇 {} 委托物资统计（当日首次）", town.name());
+        list.add(new Job(town, day, bookkeeper, requester));
+        LOGGER.info("[BmfTown][簿记] 城镇 {} 委托物资统计（当日首次，完成后推送给 {}）",
+                town.name(), requester.getName().getString());
         return null;
     }
 
@@ -120,9 +123,16 @@ public final class TownCensusManager {
             budget -= scanBlocks(job, level, budget);
             if (job.done) {
                 it.remove();
-                RESULTS.put(job.townId, job.finish());
+                Census census = job.finish();
+                RESULTS.put(job.townId, census);
                 LOGGER.info("[BmfTown][簿记] 城镇 {} 统计完成：{} 种物品",
                         job.townName, job.totals.size());
+                // 完成即推送：请求者在线就直接收到数据并弹出界面
+                if (job.requester != null && !job.requester.hasDisconnected()
+                        && job.bookkeeper != null && job.bookkeeper.isAlive()) {
+                    com.bmf.bmfstown.network.ModNetworking.playCensusSync(
+                            job.requester, job.bookkeeper, job.town, census);
+                }
             }
         }
     }
@@ -136,6 +146,12 @@ public final class TownCensusManager {
                 BlockEntity be = level.getBlockEntity(pos);
                 if (be instanceof Container container) {
                     recordContainer(job, pos.immutable(), container);
+                } else if (be instanceof net.minecraft.world.level.block.entity.JukeboxBlockEntity juke) {
+                    // 唱片机不是 Container（唱片机里的唱片会被漏统计），单独收录
+                    ItemStack disc = juke.getTheItem();
+                    if (!disc.isEmpty()) {
+                        recordStack(job, pos.immutable(), disc);
+                    }
                 }
             }
             used++;
@@ -147,16 +163,20 @@ public final class TownCensusManager {
     /** 读一个容器的全部格子，聚合进统计。 */
     private static void recordContainer(Job job, BlockPos pos, Container container) {
         for (int i = 0; i < container.getContainerSize(); i++) {
-            ItemStack stack = container.getItem(i);
-            if (stack.isEmpty()) {
-                continue;
-            }
-            Item item = stack.getItem();
-            job.totals.merge(item, stack.getCount(), Integer::sum);
-            List<BlockPos> where = job.where.computeIfAbsent(item, k -> new ArrayList<>());
-            if (where.size() < MAX_POSITIONS_PER_ITEM && !where.contains(pos)) {
-                where.add(pos);
-            }
+            recordStack(job, pos, container.getItem(i));
+        }
+    }
+
+    /** 聚合一个物品堆。 */
+    private static void recordStack(Job job, BlockPos pos, ItemStack stack) {
+        if (stack.isEmpty()) {
+            return;
+        }
+        Item item = stack.getItem();
+        job.totals.merge(item, stack.getCount(), Integer::sum);
+        List<BlockPos> where = job.where.computeIfAbsent(item, k -> new ArrayList<>());
+        if (where.size() < MAX_POSITIONS_PER_ITEM && !where.contains(pos)) {
+            where.add(pos);
         }
     }
 
@@ -186,16 +206,23 @@ public final class TownCensusManager {
         final UUID townId;
         final String townName;
         final int day;
+        final com.bmf.bmfstown.entity.Resident bookkeeper;
+        final net.minecraft.server.level.ServerPlayer requester;
+        final Town town;
         final int minX, minY, minZ, maxX, maxY, maxZ;
         final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         final Map<Item, Integer> totals = new LinkedHashMap<>();
         final Map<Item, List<BlockPos>> where = new LinkedHashMap<>();
         boolean done;
 
-        Job(Town town, int day) {
+        Job(Town town, int day, com.bmf.bmfstown.entity.Resident bookkeeper,
+                net.minecraft.server.level.ServerPlayer requester) {
             this.townId = town.id();
             this.townName = town.name();
             this.day = day;
+            this.town = town;
+            this.bookkeeper = bookkeeper;
+            this.requester = requester;
             this.minX = town.min().getX();
             this.minY = town.min().getY();
             this.minZ = town.min().getZ();

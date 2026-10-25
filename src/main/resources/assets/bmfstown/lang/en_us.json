@@ -377,5 +377,10 @@
   "msg.bmfstown.bookkeeper.no_town": "§cThe bookkeeper has no town yet",
   "msg.bmfstown.bookkeeper.counting": "§7The bookkeeper is counting town goods, try again soon…",
   "msg.bmfstown.bookkeeper.not_found": "§7No %s found in this town",
-  "msg.bmfstown.bookkeeper.leading": "§a%s is leading you to the nearest chest with %s"
+  "msg.bmfstown.bookkeeper.leading": "§a%s is leading you to the nearest chest with %s",
+  "gui.bmfstown.resident.rename_btn": "Rename",
+  "gui.bmfstown.resident.rename_title": "Rename Resident",
+  "gui.bmfstown.resident.rename_hint": "Type a new name, Enter to confirm · Esc to cancel",
+  "msg.bmfstown.rename.invalid": "§cName must be 1-32 characters",
+  "msg.bmfstown.rename.done": "§aRenamed to %s"
 }

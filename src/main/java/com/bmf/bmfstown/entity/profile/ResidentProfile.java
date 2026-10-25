@@ -115,8 +115,7 @@ public record ResidentProfile(
      * <ul>
      *   <li>从「真实职业」（非 {@link ProfessionType#NONE}）里均匀抽 1 个喜欢、
      *       1 个讨厌，二者互斥；</li>
-     *   <li>当前职业列表只有战士，所以表现为"喜欢/讨厌当战士"二选一；</li>
-     *   <li>以后新职业加入 {@link ProfessionType} 后自动参与抽取，此处不用改。</li>
+     *   <li>抽取按 {@link ProfessionType#isReal()} 数据驱动，新职业自动参与；</li>
      * </ul>
      *
      * @param random 随机源，由实体提供（{@code this.getRandom()}）
@@ -141,7 +140,7 @@ public record ResidentProfile(
         );
     }
 
-    /** 从真实职业里均匀抽一个。当前只有战士；NONE 永远不参与。 */
+    /** 从真实职业里均匀抽一个（数据驱动，随 {@link ProfessionType} 扩充自动覆盖）；NONE 永远不参与。 */
     private static ProfessionType randomRealProfession(RandomSource random) {
         return randomRealProfession(random, null);
     }
@@ -153,8 +152,7 @@ public record ResidentProfile(
                 .filter(ProfessionType::isReal)
                 .toArray(ProfessionType[]::new);
         // 真实职业只有一个时，排除后就没有合法候选了——直接返回它。
-        // （当前职业列表只有战士，好恶会同职业；settleProfession 先判喜欢再判讨厌，
-        //   同职业时表现为"喜欢"，不会双重加减。等第二职业实装后此分支自然不再触发。）
+        // （多职业时代此分支基本不触发；好恶互斥由 exclude 保证。）
         if (real.length <= 1 || real.length == 1 && real[0] == exclude) {
             return real.length == 0 ? ProfessionType.NONE : real[0];
         }
@@ -355,6 +353,39 @@ public record ResidentProfile(
         return new ResidentProfile(hunger, clamp(value, 0, MAX_MOOD), profession, xp,
                 hobbyFood, likedProfession, dislikedProfession, townId, homePos,
                 housingZoneId, housingAssignedAt, this.skills, this.perks);
+    }
+
+    public ResidentProfile withHobbyFood(Hobbies.Food value) {
+        return new ResidentProfile(hunger, mood, profession, xp,
+                value, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
+    }
+
+    public ResidentProfile withLikedProfession(ProfessionType type) {
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, type, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
+    }
+
+    public ResidentProfile withDislikedProfession(ProfessionType type) {
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, likedProfession, type, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
+    }
+
+    /**
+     * 重摇 profile 侧偏好：喜欢的食物 + 职业好恶（互斥对）。
+     *
+     * <p>调试命令 {@code /bmfstown reroll} 用。这三样存在 {@link ResidentProfile}
+     * 而不是 MoodState，旧 reroll 只重摇 MoodState 侧（方块/动物/颜色/音乐/
+     * 天气/生物/性格），职业怎么摇都不变——用户实测点名后补齐。
+     */
+    public ResidentProfile rerollPreferences(RandomSource random) {
+        ProfessionType liked = randomRealProfession(random);
+        ProfessionType disliked = randomRealProfession(random, liked);
+        return withHobbyFood(Hobbies.Food.random(random))
+                .withLikedProfession(liked)
+                .withDislikedProfession(disliked);
     }
 
     public ResidentProfile withProfession(ProfessionType type) {

@@ -38,6 +38,9 @@ import net.minecraft.world.entity.ai.goal.FloatGoal;
 import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.goal.LookAtPlayerGoal;
 import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
+import net.minecraft.world.entity.ai.goal.OpenDoorGoal;
+import net.minecraft.world.entity.ai.navigation.GroundPathNavigation;
+import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.ai.goal.RandomLookAroundGoal;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
@@ -373,6 +376,17 @@ public class Resident extends PathfinderMob {
      * 高优先级会抢占低优先级，结束后低优先级自动恢复 ——
      * 这是后续「饿了要吃饭」能打断「随便溜达」的机制基础。
      */
+    /**
+     * 寻路把"关闭的木门"当可通行节点（村民同款）。
+     * 只改节点评估口径，不在此处理开关门——开关门由 {@link OpenDoorGoal} 表演。
+     */
+    @Override
+    protected PathNavigation createNavigation(net.minecraft.world.level.Level level) {
+        GroundPathNavigation navigation = new GroundPathNavigation(this, level);
+        navigation.setCanOpenDoors(true);
+        return navigation;
+    }
+
     @Override
     protected void registerGoals() {
         // 优先级 0：掉水里先浮上来。几乎所有陆地生物都有这条
@@ -404,6 +418,11 @@ public class Resident extends PathfinderMob {
         this.goalSelector.addGoal(4, this.workerGoal);
         // ---- 簿记员带路（一次性差事，见 BookkeeperGoal） ----
         this.goalSelector.addGoal(4, new BookkeeperGoal(this));
+        // ---- 开门/关门（原版村民同款，用户定稿） ----
+        // DoorInteractGoal 系不占 MOVE/LOOK 旗标（构造器无 setFlags，已核对字节码）：
+        // 寻路撞上关闭的木门时它并行启动——开门、等走过、再关门。
+        // 铁门照旧进不去（村民同款）；栅栏门不管（村民也不管）。
+        this.goalSelector.addGoal(2, new OpenDoorGoal(this, true));
         // 索敌：锚点半径内的敌对生物（跟随=玩家身边，站岗=岗哨周围）；
         // 被打还手是所有镇民的保底本能。
         this.targetSelector.addGoal(2, new WarriorGoals.MonsterTargetGoal(this));
@@ -611,6 +630,9 @@ public class Resident extends PathfinderMob {
     public boolean isForaging() {
         return this.forageState != ForageState.NONE;
     }
+
+    /** 簿记员在职经验计时器（每 100 tick +1）。 */
+    private int bookkeepingXpTimer;
 
     // ---- 簿记员带路目标（v0.8.1；null = 无差事） ----
 
@@ -958,6 +980,14 @@ public class Resident extends PathfinderMob {
         super.customServerAiStep();
         // ---- 0. 工人状态打包同步（面板状态行用；set 同值不发包） ----
         this.refreshWorkerStatus();
+        // ---- 0.5 簿记员在职成长（用户定稿：在职每 5 秒 +1 簿记经验） ----
+        if (this.getProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER
+                && this.isAlive()) {
+            if (++this.bookkeepingXpTimer >= 100) { // 100 tick = 5 秒
+                this.bookkeepingXpTimer = 0;
+                this.addSkillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING, 1);
+            }
+        }
 
         // ---- 1. 推进饥饿 ----
         this.hungerTickAccumulator++;

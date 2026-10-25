@@ -272,6 +272,28 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：重命名镇民（资料页"重命名"按钮 → 输入屏回车）。
+     * 服务端复核长度（1~32，对齐原版命名牌口径）后 setCustomName（自动入 NBT）。
+     */
+    public record ResidentRenamePayload(int entityId, String name)
+            implements CustomPacketPayload {
+
+        public static final Type<ResidentRenamePayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "resident_rename"));
+
+        public static final StreamCodec<ByteBuf, ResidentRenamePayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, ResidentRenamePayload::entityId,
+                        ByteBufCodecs.STRING_UTF8, ResidentRenamePayload::name,
+                        ResidentRenamePayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：工人开工/停工切换（服务端翻转开关并回执）。
      */
     public record WorkerTogglePayload(int entityId) implements CustomPacketPayload {
@@ -556,9 +578,38 @@ public final class ModNetworking {
         });
     }
 
+    /** 重命名镇民：校验长度后 setCustomName（原版 NBT 持久化，头顶名牌同步生效）。 */
+    private static void handleResidentRename(ResidentRenamePayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            String name = payload.name().trim();
+            if (name.isEmpty() || name.length() > 32) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.rename.invalid"), true);
+                return;
+            }
+            resident.setCustomName(net.minecraft.network.chat.Component.literal(name));
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.rename.done", name), false);
+        });
+    }
+
     private static void handleCensusData(CensusDataPayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
-            if (ctx.player() instanceof net.minecraft.client.player.LocalPlayer) {
+            if (ctx.player() instanceof net.minecraft.client.player.LocalPlayer player) {
+                // 先关容器：面板 → 搜索屏是 setScreen 直接替换，容器不关的话
+                // 服务端交互锁残留（FaceInteractingPlayerGoal 占 MOVE+LOOK），
+                // 簿记员带路 Goal 被冻结（"选完物品不走，重开面板才走"根因）
+                if (player.containerMenu != null
+                        && player.containerMenu != player.inventoryMenu) {
+                    player.closeContainer();
+                }
                 com.bmf.bmfstown.client.BookkeeperSearchScreen.openWith(payload);
             }
         });
@@ -588,25 +639,42 @@ public final class ModNetworking {
                 return;
             }
             var census = com.bmf.bmfstown.town.TownCensusManager.request(
-                    serverPlayer.serverLevel(), town);
+                    serverPlayer.serverLevel(), town, resident, serverPlayer);
             if (census == null) {
+                // 扫描完成会自动推送给请求者并弹出选择界面，无需再点
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.bookkeeper.counting"), false);
                 return;
             }
-            // 精度按簿记员段位：生疏/入门=有无；熟练/老练=数量级；专家+=精确
-            int bkTier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(
-                    resident.getProfile().skillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING));
-            int precision = bkTier < 2 ? 0 : bkTier < 4 ? 1 : 2;
             java.util.List<CensusEntryPayload> entries = new java.util.ArrayList<>();
             for (var e : census.totals().entrySet()) {
                 entries.add(new CensusEntryPayload(
                         com.bmf.bmfstown.entity.profile.WorkshopCrafts.keyOf(e.getKey()),
                         e.getValue()));
             }
-            serverPlayer.connection.send(new CensusDataPayload(
-                    payload.entityId(), town.name(), precision, entries));
+            playCensusSync(serverPlayer, resident, town, census);
         });
+    }
+
+    /**
+     * 服务端把城镇物资统计发给玩家（打开选择界面）。
+     * 精度按簿记员段位：生疏/入门=有无；熟练/老练=数量级；专家+=精确。
+     */
+    public static void playCensusSync(ServerPlayer player,
+            com.bmf.bmfstown.entity.Resident resident,
+            com.bmf.bmfstown.town.Town town,
+            com.bmf.bmfstown.town.TownCensusManager.Census census) {
+        int bkTier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(
+                resident.getProfile().skillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING));
+        int precision = bkTier < 2 ? 0 : bkTier < 4 ? 1 : 2;
+        java.util.List<CensusEntryPayload> entries = new java.util.ArrayList<>();
+        for (var e : census.totals().entrySet()) {
+            entries.add(new CensusEntryPayload(
+                    com.bmf.bmfstown.entity.profile.WorkshopCrafts.keyOf(e.getKey()),
+                    e.getValue()));
+        }
+        player.connection.send(new CensusDataPayload(
+                resident.getId(), town.name(), precision, entries));
     }
 
     /** 簿记员寻物：找最近的装着该物品的容器，挂带路目标。 */
@@ -1023,6 +1091,8 @@ public final class ModNetworking {
                 ModNetworking::handleWorkerToggle);
         registrar.playToServer(CensusRequestPayload.TYPE, CensusRequestPayload.STREAM_CODEC,
                 ModNetworking::handleCensusRequest);
+        registrar.playToServer(ResidentRenamePayload.TYPE, ResidentRenamePayload.STREAM_CODEC,
+                ModNetworking::handleResidentRename);
         registrar.playToServer(BookkeeperFindPayload.TYPE, BookkeeperFindPayload.STREAM_CODEC,
                 ModNetworking::handleBookkeeperFind);
         registrar.playToClient(CensusDataPayload.TYPE, CensusDataPayload.STREAM_CODEC,

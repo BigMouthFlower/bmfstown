@@ -545,18 +545,37 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         } else if (this.page == PAGE_THOUGHTS) {
             renderThoughtsPageText(gfx);
         } else {
-            renderInfoPageText(gfx);
+            renderInfoPageText(gfx, mouseX, mouseY);
         }
         drawBottomLabels(gfx, this.page == PAGE_INFO);
     }
 
     /** 资料页的状态文字（名字 + 七行状态）。浅灰底上用深色字。 */
-    private void renderInfoPageText(GuiGraphics gfx) {
+    private void renderInfoPageText(GuiGraphics gfx, int mouseX, int mouseY) {
         Resident resident = this.menu.getResident();
         int textY = ResidentMenu.STATS_Y;
 
         // ---- 第 0 行：名字。和数据显示在一起，代替原来的面板标题。 ----
         gfx.drawString(this.font, resident.getName(), TEXT_PAD, textY, 0x303030, false);
+
+        // ---- 名字右边的"重命名"按钮（v0.8.1 用户需求） ----
+        // renderLabels 的画笔已平移到面板原点：绘制用相对坐标，
+        // hover/点击判定用绝对坐标（renderLabels 收到绝对鼠标坐标，1.21.1 实测口径）
+        int nameW = this.font.width(resident.getName());
+        int btnX = TEXT_PAD + nameW + 8;
+        int btnW = this.font.width(RENAME_BTN_LABEL) + 8;
+        int btnH = 11;
+        this.renameBtnRel = new int[]{btnX, textY - 1, btnW, btnH};
+        boolean btnHover = mouseX >= this.leftPos + btnX && mouseX < this.leftPos + btnX + btnW
+                && mouseY >= this.topPos + textY - 1 && mouseY < this.topPos + textY - 1 + btnH;
+        int btnY = textY - 1;
+        gfx.fill(btnX, btnY, btnX + btnW, btnY + btnH, btnHover ? 0xFF707070 : 0xFF5A5A5A);
+        gfx.fill(btnX, btnY, btnX + 1, btnY + btnH, 0xFF909090);
+        gfx.fill(btnX, btnY, btnX + btnW, btnY + 1, 0xFF909090);
+        gfx.fill(btnX, btnY + btnH - 1, btnX + btnW, btnY + btnH, 0xFF2E2E2E);
+        gfx.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF2E2E2E);
+        gfx.drawString(this.font, RENAME_BTN_LABEL, btnX + 4, textY, 0xFFE8E8E8, false);
+
         textY += LINE;
         //
         // 数值一律从 menu 的数据槽读，不从实体档案读。
@@ -1435,6 +1454,28 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         }
     }
 
+    /** 资料页"重命名"按钮的文案。 */
+    private static final String RENAME_BTN_LABEL = I18n.get("gui.bmfstown.resident.rename_btn");
+
+    /** 资料页"重命名"按钮的面板相对区域 {x, y, w, h}（渲染时更新；null = 本帧无按钮）。 */
+    private int[] renameBtnRel;
+
+    /**
+     * 切换到非容器 Screen 前调用：显式关闭容器菜单。
+     *
+     * <p>直接 {@code setScreen} 替换容器屏<b>不会</b>触发 closeContainer，
+     * 服务端交互锁（interactingPlayer + FaceInteractingPlayerGoal 占用 MOVE/LOOK）
+     * 会一直残留，冻结带路/工作等 Goal——簿记员"选完物品不走，重开面板才走"
+     * 的实测根因（v0.8.1）。重开面板"治好"它纯属巧合（openMenu 内部先关旧容器）。
+     */
+    private void closeContainerBeforeSwitch() {
+        if (this.minecraft != null && this.minecraft.player != null
+                && this.minecraft.player.containerMenu != null
+                && this.minecraft.player.containerMenu != this.minecraft.player.inventoryMenu) {
+            this.minecraft.player.closeContainer();
+        }
+    }
+
     /** 在面板横向范围内居中画一行字。 */
     private void drawCenteredInPanel(GuiGraphics gfx, String text, int x, int w, int y, int color) {
         gfx.drawString(this.font, text, x + (w - this.font.width(text)) / 2, y, color, false);
@@ -1726,6 +1767,21 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (button == 0 && clickTab(mouseX, mouseY)) {
             return true;
         }
+        // ---- 资料页：名字右侧的"重命名"按钮 ----
+        if (this.page == PAGE_INFO && button == 0 && this.renameBtnRel != null) {
+            int[] b = this.renameBtnRel;
+            if (mouseX >= this.leftPos + b[0] && mouseX < this.leftPos + b[0] + b[2]
+                    && mouseY >= this.topPos + b[1] && mouseY < this.topPos + b[1] + b[3]) {
+                Resident r = this.menu.getResident();
+                if (r != null && this.minecraft != null) {
+                    // 交互锁教训：切到非容器屏前必须显式关容器，
+                    // 否则服务端交互锁残留冻结镇民 AI
+                    closeContainerBeforeSwitch();
+                    RenameResidentScreen.open(r.getId(), r.getName().getString());
+                }
+                return true;
+            }
+        }
         // ---- 工作页点击：职业行 + 工作控件区 ----
         if (this.page == PAGE_WORK && button == 0) {
             int listX = this.leftPos + 5;
@@ -1819,6 +1875,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     // 左半 = 设置工坊；右半 = 开工/停工切换
                     if (mouseX < this.leftPos + 5 + this.imageWidth / 2 - 2) {
                         if (this.minecraft != null) {
+                            closeContainerBeforeSwitch();
                             this.minecraft.setScreen(null);
                         }
                         WorkshopBenchClient.startPick(r.getId());
@@ -1851,6 +1908,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     if (r != null && r.isWarrior()) {
                         clickMenu(ResidentMenu.BTN_GUARD_POST);
                         if (this.minecraft != null) {
+                            closeContainerBeforeSwitch();
                             this.minecraft.setScreen(null);
                         }
                         GuardPostClient.startPick(r.getId());
@@ -1996,6 +2054,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      */
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (this.page == PAGE_WORK) {
+            // 职业列表滚轮：职业超过 3 行（可见上限）时翻页（簿记员就是从这里漏掉的）
+            int max = Math.max(0, PROFESSION_ROW_COUNT - VISIBLE_PROF_ROWS);
+            this.workScroll = Mth.clamp(this.workScroll - (int) Math.signum(scrollY), 0, max);
+            return true;
+        }
         if (this.page == PAGE_TOWN) {
             int max = Math.max(0, currentRows().size() - MAX_VISIBLE);
             this.townScroll = Mth.clamp(this.townScroll - (int) Math.signum(scrollY), 0, max);
