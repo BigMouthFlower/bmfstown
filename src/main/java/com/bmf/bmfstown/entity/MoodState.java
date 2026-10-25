@@ -47,7 +47,7 @@ import java.util.ArrayList;
  * <h2>v0.8 偏好体系（用户定稿）</h2>
  * <ul>
  *   <li>必出：喜欢的工作（{@code ResidentProfile.likedProfession}）、口味
- *       （{@code hobbyFood}）、性格（{@link PersonalityType}，7 选 1 无"普通人"）；</li>
+ *       （{@code hobbyFood}）、性格（{@link PersonalityType}，9 选 1 无"普通人"）；</li>
  *   <li>各 1/2 概率：建筑方块（最多 2 种）、动物、颜色、音乐；</li>
  *   <li>天气厌恶 1/3（晴 1 / 雨 15 / 雷暴 5，权重和 21）；</li>
  *   <li>敌对生物厌恶 1/4（14 种等权）；</li>
@@ -153,7 +153,13 @@ public final class MoodState {
         /** 乐观：每日固定增量。 */
         OPTIMIST_DAILY(TONE_POSITIVE),
         /** 悲观：每日固定减量。 */
-        PESSIMIST_DAILY(TONE_NEGATIVE);
+        PESSIMIST_DAILY(TONE_NEGATIVE),
+        /** 和平主义（v0.8.1）：附近有生物死亡（含自己杀的）。 */
+        PACIFIST_DEATH(TONE_NEGATIVE),
+        /** 爆炸主义（v0.8.1）：附近发生爆炸。 */
+        EXPLOSION_LOVED(TONE_POSITIVE),
+        /** 没睡好（v0.8.1）：昨晚整夜没躺过床，每多一夜多扣一次。 */
+        NO_SLEEP(TONE_NEGATIVE);
 
         final int tone;
 
@@ -226,7 +232,7 @@ public final class MoodState {
     /** 讨厌的敌对生物（1/4 概率）。 */
     private MobPref dislikedMob = null;
 
-    /** 性格标签（必出 1 条，7 选 1）。 */
+    /** 性格标签（必出 1 条，9 选 1）。 */
     private PersonalityType personality = PersonalityType.OPTIMIST;
 
     // ---- v0.8 性格附加状态 ----
@@ -251,6 +257,18 @@ public final class MoodState {
 
     /** 上次胆小受惊的 dayTime。 */
     private long lastTimidAt = Long.MIN_VALUE;
+
+    /**
+     * 睡眠结算：最后一次睡觉所处的夜序号（{@link #nightIndex} 口径，
+     * 躺下时由 {@code Resident.lieDown} 登记）。
+     */
+    private int lastSleptNightK = Integer.MIN_VALUE;
+
+    /**
+     * 睡眠结算：已惩罚到的夜序号（含）。之后结束的夜在下次结算时处理——
+     * 保证每个"没睡的夜"只罚一次（v0.8.1：连续没睡逐夜叠加、不封顶）。
+     */
+    private int lastChargedNightK = Integer.MIN_VALUE;
 
     // ==========================================================
     //  读接口
@@ -430,6 +448,51 @@ public final class MoodState {
         addThought(level, type);
     }
 
+    /**
+     * 和平主义者（v0.8.1）：附近有生物死亡 → −3（每天 5 次）。
+     *
+     * <p>挂在 {@code PersonalityEventHandler} 的 {@code LivingDeathEvent} 上。
+     * <b>任何</b>死亡都算——被怪杀的、被玩家杀的、甚至自己作为战士击杀的，
+     * 用户定稿："自己杀人也是不行的，就看不了死人"。
+     * 由事件处理器遍历死亡点周围的镇民逐个调用。
+     */
+    public void noteDeathNearby(Resident resident, ServerLevel level) {
+        ensureGenerated(resident, level);
+        if (this.personality != PersonalityType.PACIFIST) {
+            return;
+        }
+        EventType type = EventType.PACIFIST_DEATH;
+        int limit = Config.MOOD_TRAIT_PACIFIST_DAILY_LIMIT.get();
+        if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
+            return;
+        }
+        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
+        this.applyClamped(resident, -Config.MOOD_TRAIT_VALUE.get());
+        addThought(level, type);
+    }
+
+    /**
+     * 爆炸主义者（v0.8.1）：附近发生爆炸 → +3（每天 1 次）。
+     *
+     * <p>挂在 {@code PersonalityEventHandler} 的 {@code ExplosionEvent.Detonate} 上。
+     * 苦力怕自爆、TNT、床/重生锚在下半区爆炸——凡是爆炸都算。
+     * 由事件处理器遍历爆炸点周围的镇民逐个调用。
+     */
+    public void noteExplosionNearby(Resident resident, ServerLevel level) {
+        ensureGenerated(resident, level);
+        if (this.personality != PersonalityType.EXPLOSION_LOVER) {
+            return;
+        }
+        EventType type = EventType.EXPLOSION_LOVED;
+        int limit = Config.MOOD_TRAIT_EXPLOSION_DAILY_LIMIT.get();
+        if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
+            return;
+        }
+        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
+        this.applyClamped(resident, Config.MOOD_TRAIT_VALUE.get());
+        addThought(level, type);
+    }
+
     // ==========================================================
     //  每日结算（Resident.customServerAiStep 每 tick 调，内部自挡）
     // ==========================================================
@@ -457,6 +520,7 @@ public final class MoodState {
         settleGregarious(resident, level);
         settleDisposition(resident, level);
         settleHomeMaterials(resident, level);
+        settleSleep(resident, level);
     }
 
     /**
@@ -661,6 +725,79 @@ public final class MoodState {
             this.applyClamped(resident, Config.MOOD_COLOR_LIKED.get());
             addThought(level, EventType.COLOR_LIKED);
         }
+    }
+
+    // ==========================================================
+    //  睡眠结算（v0.8.1）
+    // ==========================================================
+
+    /**
+     * 夜序号：dayTime {@code t} 所属夜晚的编号。夜 k 从日落
+     * {@code 12000 + k*24000} 开始，到日出 {@code (k+1)*24000} 结束。
+     */
+    private static int nightIndex(long dayTime) {
+        return (int) Math.floorDiv(dayTime - 12000L, 24000L);
+    }
+
+    /**
+     * 躺下睡觉的瞬间登记（{@code Resident.lieDown} 调用，不落当天心情账）。
+     */
+    public void noteSlept(ServerLevel level) {
+        this.lastSleptNightK = nightIndex(level.getDayTime());
+    }
+
+    /**
+     * 结算 8：昨晚睡了吗（v0.8.1 用户定稿）。
+     *
+     * <p>规则：每个"完整结束的夜"检查一次——昨晚躺过床就没事，
+     * 没躺就 {@code mood.noSleep}（默认 3），<b>连续没睡逐夜叠加、不封顶</b>
+     * （漏两夜扣 6，漏三夜扣 9……）。每个夜只罚一次，靠
+     * {@link #lastChargedNightK} 账本防双计。
+     *
+     * <p><b>战士守夜豁免</b>：结算时正在跟随时/站岗中（workMode ≠ NONE）
+     * → 不罚，但账本照样推进——否则转职成农民那天会把守夜期间的
+     * 夜全追溯扣一遍。
+     *
+     * <p>惩罚走 {@link #applyRaw}（绕过 clamp，与挨饿同一口径：
+     * 惩罚必须真实，不能被温柔化）。
+     */
+    private void settleSleep(Resident resident, ServerLevel level) {
+        int noSleep = Config.MOOD_NO_SLEEP.get();
+        if (noSleep <= 0) {
+            return; // 0 = 关闭
+        }
+        long now = level.getDayTime();
+        int kNow = nightIndex(now);
+        // 当前夜已经完整结束了吗？白天（0~12000）→ 今晚刚结束的那夜可结算；
+        // 夜里（12000~24000）→ 当前夜还没过完，只结算到昨夜
+        boolean daytime = Math.floorMod(now, 24000L) < 12000L;
+        int kLastComplete = daytime ? kNow : kNow - 1;
+
+        // 老档/新居民首次结算：不追溯历史，从现在起记账
+        if (this.lastSleptNightK == Integer.MIN_VALUE) {
+            this.lastSleptNightK = kNow;
+        }
+        if (this.lastChargedNightK == Integer.MIN_VALUE) {
+            this.lastChargedNightK = kLastComplete;
+            return;
+        }
+
+        // 战士守夜豁免：不罚，但账本推进（防止卸职后追溯扣守夜期间）
+        if (resident.getWorkMode() != WorkMode.NONE) {
+            this.lastChargedNightK = kLastComplete;
+            return;
+        }
+
+        // 漏掉的夜 = 已结算账本之后、且在最后一次睡觉之后的完整夜数
+        int floor = Math.max(this.lastChargedNightK, this.lastSleptNightK);
+        int missed = kLastComplete - floor;
+        if (missed <= 0) {
+            this.lastChargedNightK = Math.max(this.lastChargedNightK, kLastComplete);
+            return;
+        }
+        this.lastChargedNightK = kLastComplete;
+        this.applyRaw(resident, -missed * noSleep);
+        addThought(level, EventType.NO_SLEEP);
     }
 
     // ==========================================================
@@ -952,6 +1089,9 @@ public final class MoodState {
             case GLUTTON_FED -> "glutton_fed";
             case OPTIMIST_DAILY -> "optimist_daily";
             case PESSIMIST_DAILY -> "pessimist_daily";
+            case PACIFIST_DEATH -> "pacifist_death";
+            case EXPLOSION_LOVED -> "explosion_loved";
+            case NO_SLEEP -> "no_sleep";
         };
     }
 
@@ -1018,6 +1158,8 @@ public final class MoodState {
             putEnum(tag, "LastWeather", this.lastWeather);
             tag.putLong("LastMobAt", this.lastMobAt);
             tag.putLong("LastTimidAt", this.lastTimidAt);
+            tag.putInt("LastSleptNightK", this.lastSleptNightK);
+            tag.putInt("SleepChargedNightK", this.lastChargedNightK);
         }
         return tag;
     }
@@ -1104,6 +1246,9 @@ public final class MoodState {
             this.lastWeather = getEnum(tag, "LastWeather", WeatherPref.class, null);
             this.lastMobAt = tag.contains("LastMobAt") ? tag.getLong("LastMobAt") : Long.MIN_VALUE;
             this.lastTimidAt = tag.contains("LastTimidAt") ? tag.getLong("LastTimidAt") : Long.MIN_VALUE;
+            // 夜序号缺省保持 MIN_VALUE：settleSleep 首次结算时懒初始化为"当前"，不追溯
+            this.lastSleptNightK = tag.contains("LastSleptNightK") ? tag.getInt("LastSleptNightK") : Integer.MIN_VALUE;
+            this.lastChargedNightK = tag.contains("SleepChargedNightK") ? tag.getInt("SleepChargedNightK") : Integer.MIN_VALUE;
         }
     }
 }

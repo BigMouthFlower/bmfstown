@@ -28,7 +28,11 @@ public enum PersonalityType {
     /** 乐观：每日固定 +2；正面想法文案带 "+" 提示。 */
     OPTIMIST("乐观", "看什么都往好处想"),
     /** 悲观：每日固定 −2；负面想法文案带 "−" 提示。 */
-    PESSIMIST("悲观", "看什么都往坏处想");
+    PESSIMIST("悲观", "看什么都往坏处想"),
+    /** 和平主义者（v0.8.1）：附近有生物死亡（含自己杀的）→ −3，每天 5 次。 */
+    PACIFIST("和平主义者", "见不得任何生命逝去"),
+    /** 爆炸主义者（v0.8.1）：附近发生爆炸 → +3，每天 1 次。 */
+    EXPLOSION_LOVER("爆炸主义者", "轰的一声就是浪漫");
 
     private final String zhName;
     private final String desc;

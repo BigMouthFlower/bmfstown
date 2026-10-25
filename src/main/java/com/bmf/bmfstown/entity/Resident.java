@@ -1768,6 +1768,8 @@ public class Resident extends PathfinderMob {
             if (!bed.equals(this.getProfile().homePos())) {
                 this.setProfile(this.getProfile().withHomePos(bed));
             }
+            // 睡眠结算登记（v0.8.1）：记录"今晚睡过了"，防止每日结算扣"没睡好"
+            this.moodState.noteSlept(level);
             LOGGER.debug("[BmfTown][睡眠] {} 上床睡觉 {}",
                     this.getName().getString(), bed.toShortString());
         } else {

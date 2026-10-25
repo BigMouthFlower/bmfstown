@@ -249,6 +249,24 @@ public final class Config {
                     "Starvation mood-loss multiplier (percent) for the Glutton trait")
             .defineInRange("mood.traitGluttonStarvePercent", 150, 100, 300);
 
+    /** 和平主义性格：附近死亡的负面想法每天最多几次（v0.8.1）。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_PACIFIST_DAILY_LIMIT = BUILDER
+            .comment("和平主义性格的'附近有生物死亡'负面想法每天最多几次",
+                    "Daily cap on nearby-death negative thoughts for the Pacifist trait")
+            .defineInRange("mood.traitPacifistDailyLimit", 5, 1, 100);
+
+    /** 爆炸主义性格：附近爆炸的正面想法每天最多几次（v0.8.1）。 */
+    public static final ModConfigSpec.IntValue MOOD_TRAIT_EXPLOSION_DAILY_LIMIT = BUILDER
+            .comment("爆炸主义性格的'附近发生爆炸'正面想法每天最多几次",
+                    "Daily cap on nearby-explosion positive thoughts for the Explosion Lover trait")
+            .defineInRange("mood.traitExplosionDailyLimit", 1, 1, 100);
+
+    /** 昨晚没睡的每日心情减量；连续没睡逐夜叠加、不封顶；0 = 关闭（v0.8.1）。 */
+    public static final ModConfigSpec.IntValue MOOD_NO_SLEEP = BUILDER
+            .comment("昨晚没睡的每日心情减量（连续没睡逐夜叠加不封顶；战士守夜豁免）；0 = 关闭",
+                    "Daily mood loss for not sleeping (stacks per missed night, uncapped; warriors on duty exempt); 0 = disabled")
+            .defineInRange("mood.noSleep", 3, 0, 100);
+
     /** 心情低于此值时干活效率打折。 */
     public static final ModConfigSpec.IntValue MOOD_SLOW_THRESHOLD = BUILDER
             .comment("心情低于此值时干活效率打折（0 = 关闭）",
