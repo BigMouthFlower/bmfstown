@@ -362,5 +362,20 @@
   "gui.bmfstown.resident.work.ws_toggle_off": "已停工",
   "gui.bmfstown.resident.work.wphase.-2": "已停用",
   "msg.bmfstown.workshop.enabled": "§a%s 已开工",
-  "msg.bmfstown.workshop.disabled": "§e%s 已停工"
+  "msg.bmfstown.workshop.disabled": "§e%s 已停工",
+  "profession.bmfstown.bookkeeper": "簿记员",
+  "gui.bmfstown.resident.work.census_btn": "查询物资",
+  "gui.bmfstown.resident.work.census_hint": "统计城镇容器物资 · 寻物带路",
+  "gui.bmfstown.bookkeeper.title": "城镇物资 · %s",
+  "gui.bmfstown.bookkeeper.search": "搜索物品…",
+  "gui.bmfstown.bookkeeper.search_hint": "输入关键词后回车搜索",
+  "gui.bmfstown.bookkeeper.footer": "过滤：%s · 共 %s 种 · 滚轮翻页 · 点击物品让簿记员带路",
+  "gui.bmfstown.bookkeeper.footer_all": "全部",
+  "gui.bmfstown.bookkeeper.tip_presence": "城镇里有这个物品",
+  "gui.bmfstown.bookkeeper.tip_count": "城镇共有：%s",
+  "msg.bmfstown.bookkeeper.need_bookkeeper": "§c只有簿记员才能执行该操作",
+  "msg.bmfstown.bookkeeper.no_town": "§c簿记员还没有归属的城镇",
+  "msg.bmfstown.bookkeeper.counting": "§7簿记员正在盘点城镇物资，请稍后再试…",
+  "msg.bmfstown.bookkeeper.not_found": "§7城镇里没有找到 %s",
+  "msg.bmfstown.bookkeeper.leading": "§a%s 正在带你去最近存放 %s 的箱子"
 }

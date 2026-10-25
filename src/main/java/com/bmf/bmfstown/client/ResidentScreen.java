@@ -1219,6 +1219,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 开启态文字用亮绿（配合凹陷底），关闭态普通亮灰——一眼分清开关
             drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
             drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
+        } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER) {
+            // 簿记员：查询物资按钮（统计+寻物都从这里进）
+            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.census_btn"),
+                    5, bw, followY + 3, 0xE0E0E0);
+            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.census_hint"),
+                    5, bw, guardY + 3, 0x707070);
         } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
             // 工人：设置工坊（左半）+ 开工开关（右半）；下行产物标签 + 订单格
             boolean enabled = resident.workerEnabledSynced();
@@ -1367,8 +1373,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 }
             }
 
-            // ---- perk 节点区：按职业动态渲染（战士节点树 / 工人节点树同构） ----
-            renderPerkText(gfx);
+            // ---- perk 节点区：按职业动态渲染（簿记员暂无天赋） ----
+            if (current != com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER) {
+                renderPerkText(gfx);
+            }
 
             // ---- 产物选择弹层（合成书式格子网格，最后画保证盖在内容上）----
             if (this.orderPickerOpen
@@ -1785,6 +1793,22 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // ---- 工人：设置工坊（三步绑定）+ 切换产物 ----
             //      只吞两个按钮带；按钮区以外的点击（perk 区等）必须放行，
             //      否则 perk 区点击会被这里吞掉（v0.8.1 踩过：工人 perk 点不动）。
+            if (workControlsVisible() && mouseX >= listX && mouseX < listX + listW
+                    && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER) {
+                // 簿记员：查询物资按钮带（吞掉本带即可，perk 区放行）
+                if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
+                    Resident r = this.menu.getResident();
+                    if (r != null) {
+                        ModNetworking.sendToServer(new ModNetworking.CensusRequestPayload(
+                                r.getId()));
+                    }
+                    return true;
+                }
+                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H) {
+                    return true; // 提示行，无点击
+                }
+                // 按钮带以外放行
+            }
             if (workControlsVisible() && mouseX >= listX && mouseX < listX + listW
                     && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
                 Resident r = this.menu.getResident();

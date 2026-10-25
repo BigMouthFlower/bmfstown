@@ -362,5 +362,20 @@
   "gui.bmfstown.resident.work.ws_toggle_off": "Paused",
   "gui.bmfstown.resident.work.wphase.-2": "paused",
   "msg.bmfstown.workshop.enabled": "§a%s is now working",
-  "msg.bmfstown.workshop.disabled": "§e%s is paused"
+  "msg.bmfstown.workshop.disabled": "§e%s is paused",
+  "profession.bmfstown.bookkeeper": "Bookkeeper",
+  "gui.bmfstown.resident.work.census_btn": "Census",
+  "gui.bmfstown.resident.work.census_hint": "Town container census · item finder",
+  "gui.bmfstown.bookkeeper.title": "Town goods · %s",
+  "gui.bmfstown.bookkeeper.search": "Search items…",
+  "gui.bmfstown.bookkeeper.search_hint": "Type and press Enter to search",
+  "gui.bmfstown.bookkeeper.footer": "Filter: %s · %s kinds · scroll to page · click an item to be led",
+  "gui.bmfstown.bookkeeper.footer_all": "all",
+  "gui.bmfstown.bookkeeper.tip_presence": "Present in this town",
+  "gui.bmfstown.bookkeeper.tip_count": "Town total: %s",
+  "msg.bmfstown.bookkeeper.need_bookkeeper": "§cOnly a Bookkeeper can do this",
+  "msg.bmfstown.bookkeeper.no_town": "§cThe bookkeeper has no town yet",
+  "msg.bmfstown.bookkeeper.counting": "§7The bookkeeper is counting town goods, try again soon…",
+  "msg.bmfstown.bookkeeper.not_found": "§7No %s found in this town",
+  "msg.bmfstown.bookkeeper.leading": "§a%s is leading you to the nearest chest with %s"
 }

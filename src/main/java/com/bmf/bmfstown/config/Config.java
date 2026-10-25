@@ -495,10 +495,11 @@ public final class Config {
                     "Base ticks for the worker to craft one item (scaled by proficiency/mood efficiency)")
             .defineInRange("craft.ticksPerItem", 100, 10, 24000);
 
-    /** 每件合成涨多少合成经验。 */
+    /** 每件合成涨多少合成经验（用户定稿削弱：一批 3 件 = 15 点）。 */
     public static final ModConfigSpec.IntValue CRAFT_XP_PER_ITEM = BUILDER
-            .comment("工人每合成一件获得的合成经验", "Crafting xp per item for the worker")
-            .defineInRange("craft.xpPerCraft", 10, 0, 1000);
+            .comment("工人每合成一件获得的合成经验（一批 3 件 = 3 倍）",
+                    "Crafting xp per item for the worker")
+            .defineInRange("craft.xpPerCraft", 5, 0, 1000);
 
     /** 开源 perk（传奇分支解锁）：每件产出 +1 的概率（百分比）。 */
     public static final ModConfigSpec.IntValue CRAFT_OPEN_SOURCE_PERCENT = BUILDER

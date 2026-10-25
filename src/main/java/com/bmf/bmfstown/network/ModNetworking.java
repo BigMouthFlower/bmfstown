@@ -291,6 +291,95 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：簿记员请求城镇物资统计（面板按钮）。
+     * 服务端：有新鲜数据 → 直接回 CensusDataPayload；没有 → 委托扫描并提示稍候。
+     */
+    public record CensusRequestPayload(int entityId) implements CustomPacketPayload {
+
+        public static final Type<CensusRequestPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "census_request"));
+
+        public static final StreamCodec<ByteBuf, CensusRequestPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, CensusRequestPayload::entityId,
+                        CensusRequestPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * S → C：城镇物资统计数据（打开选择界面用）。
+     * entries = (产物注册名, 总数)；精度（有/无、数量级、精确）由客户端按簿记员段位渲染。
+     */
+    public record CensusEntryPayload(String item, int count) {
+
+        public static final StreamCodec<ByteBuf, CensusEntryPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.STRING_UTF8, CensusEntryPayload::item,
+                        ByteBufCodecs.VAR_INT, CensusEntryPayload::count,
+                        CensusEntryPayload::new);
+    }
+
+    public record CensusDataPayload(int entityId, String townName, int precision,
+            java.util.List<CensusEntryPayload> entries) implements CustomPacketPayload {
+
+        public static final Type<CensusDataPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "census_data"));
+
+        public static final StreamCodec<ByteBuf, CensusDataPayload> STREAM_CODEC = StreamCodec.of(
+                (buf, payload) -> {
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.entityId());
+                    ByteBufCodecs.STRING_UTF8.encode(buf, payload.townName());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.precision());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.entries().size());
+                    for (CensusEntryPayload e : payload.entries()) {
+                        CensusEntryPayload.STREAM_CODEC.encode(buf, e);
+                    }
+                },
+                buf -> {
+                    int entityId = ByteBufCodecs.VAR_INT.decode(buf);
+                    String townName = ByteBufCodecs.STRING_UTF8.decode(buf);
+                    int precision = ByteBufCodecs.VAR_INT.decode(buf);
+                    int size = ByteBufCodecs.VAR_INT.decode(buf);
+                    java.util.List<CensusEntryPayload> list = new java.util.ArrayList<>(size);
+                    for (int i = 0; i < size; i++) {
+                        list.add(CensusEntryPayload.STREAM_CODEC.decode(buf));
+                    }
+                    return new CensusDataPayload(entityId, townName, precision,
+                            java.util.List.copyOf(list));
+                });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：簿记员寻物（玩家在选择界面点了某物品）。
+     * 服务端找"最近的装着该物品的容器"，簿记员带路过去并撒粒子。
+     */
+    public record BookkeeperFindPayload(int entityId, String item) implements CustomPacketPayload {
+
+        public static final Type<BookkeeperFindPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "bookkeeper_find"));
+
+        public static final StreamCodec<ByteBuf, BookkeeperFindPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, BookkeeperFindPayload::entityId,
+                        ByteBufCodecs.STRING_UTF8, BookkeeperFindPayload::item,
+                        BookkeeperFindPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：工人订单切换（工坊配方目录索引）。
      * 服务端复核职业与段位解锁（防客户端改包越级下单）。
      */
@@ -464,6 +553,110 @@ public final class ModNetworking {
                     payload.table().asLong(), payload.input().asLong(), payload.output().asLong());
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.workshop.bound", resident.getName().getString()), true);
+        });
+    }
+
+    private static void handleCensusData(CensusDataPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof net.minecraft.client.player.LocalPlayer) {
+                com.bmf.bmfstown.client.BookkeeperSearchScreen.openWith(payload);
+            }
+        });
+    }
+
+    /** 簿记员：请求城镇物资统计（有新鲜数据直接下发，否则委托扫描）。 */
+    private static void handleCensusRequest(CensusRequestPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (resident.getProfession()
+                    != com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.bookkeeper.need_bookkeeper"), true);
+                return;
+            }
+            var town = resident.boundTown();
+            if (town == null) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.bookkeeper.no_town"), true);
+                return;
+            }
+            var census = com.bmf.bmfstown.town.TownCensusManager.request(
+                    serverPlayer.serverLevel(), town);
+            if (census == null) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.bookkeeper.counting"), false);
+                return;
+            }
+            // 精度按簿记员段位：生疏/入门=有无；熟练/老练=数量级；专家+=精确
+            int bkTier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(
+                    resident.getProfile().skillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING));
+            int precision = bkTier < 2 ? 0 : bkTier < 4 ? 1 : 2;
+            java.util.List<CensusEntryPayload> entries = new java.util.ArrayList<>();
+            for (var e : census.totals().entrySet()) {
+                entries.add(new CensusEntryPayload(
+                        com.bmf.bmfstown.entity.profile.WorkshopCrafts.keyOf(e.getKey()),
+                        e.getValue()));
+            }
+            serverPlayer.connection.send(new CensusDataPayload(
+                    payload.entityId(), town.name(), precision, entries));
+        });
+    }
+
+    /** 簿记员寻物：找最近的装着该物品的容器，挂带路目标。 */
+    private static void handleBookkeeperFind(BookkeeperFindPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (resident.getProfession()
+                    != com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.bookkeeper.need_bookkeeper"), true);
+                return;
+            }
+            var town = resident.boundTown();
+            var census = town == null ? null : com.bmf.bmfstown.town.TownCensusManager.peek(town);
+            if (census == null) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.bookkeeper.counting"), true);
+                return;
+            }
+            var item = com.bmf.bmfstown.entity.profile.WorkshopCrafts.BuiltInItemKey.item(
+                    payload.item());
+            var where = census.where().get(item);
+            if (where == null || where.isEmpty()) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.bookkeeper.not_found",
+                        item.getDefaultInstance().getHoverName()), false);
+                return;
+            }
+            // 离玩家最近的容器
+            BlockPos best = null;
+            double bestDist = Double.MAX_VALUE;
+            for (BlockPos pos : where) {
+                double d = pos.distSqr(serverPlayer.blockPosition());
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = pos;
+                }
+            }
+            resident.setBookkeeperFindTarget(best);
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.bookkeeper.leading",
+                    resident.getName().getString(),
+                    item.getDefaultInstance().getHoverName()), false);
         });
     }
 
@@ -828,6 +1021,12 @@ public final class ModNetworking {
                 ModNetworking::handleWorkerOrder);
         registrar.playToServer(WorkerTogglePayload.TYPE, WorkerTogglePayload.STREAM_CODEC,
                 ModNetworking::handleWorkerToggle);
+        registrar.playToServer(CensusRequestPayload.TYPE, CensusRequestPayload.STREAM_CODEC,
+                ModNetworking::handleCensusRequest);
+        registrar.playToServer(BookkeeperFindPayload.TYPE, BookkeeperFindPayload.STREAM_CODEC,
+                ModNetworking::handleBookkeeperFind);
+        registrar.playToClient(CensusDataPayload.TYPE, CensusDataPayload.STREAM_CODEC,
+                ModNetworking::handleCensusData);
         registrar.playToServer(PerkChoosePayload.TYPE, PerkChoosePayload.STREAM_CODEC,
                 ModNetworking::handlePerkChoose);
         registrar.playToClient(HandbookSyncPayload.TYPE, HandbookSyncPayload.STREAM_CODEC,

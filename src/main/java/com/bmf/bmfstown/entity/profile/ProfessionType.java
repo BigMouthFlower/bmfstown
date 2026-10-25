@@ -40,7 +40,13 @@ public enum ProfessionType implements StringRepresentable {
      * （吃住作息与普通镇民完全一致，睡眠惩罚也照常结算）。
      * 材料即订单：工坊箱子里放什么原料，他就做什么元件。
      */
-    WORKER("worker", "工人", 10);
+    WORKER("worker", "工人", 10),
+
+    /**
+     * 簿记员（v0.8.1）：统计城镇容器物资 + 带玩家去找指定物品。
+     * 信息向职业：不生产、不战斗，劳动是" walk & look "。
+     */
+    BOOKKEEPER("bookkeeper", "簿记员", 10);
 
     private final String name;
     private final String zhName;
@@ -85,6 +91,7 @@ public enum ProfessionType implements StringRepresentable {
         return switch (this) {
             case WARRIOR -> SkillType.COMBAT;
             case WORKER -> SkillType.CRAFTING;
+            case BOOKKEEPER -> SkillType.BOOKKEEPING;
             default -> null;
         };
     }

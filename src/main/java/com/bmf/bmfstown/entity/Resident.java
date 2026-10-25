@@ -402,6 +402,8 @@ public class Resident extends PathfinderMob {
         // 与战士工作 Goal 靠职业天然互斥（一个镇民只有一个职业）
         this.workerGoal = new WorkerGoal(this);
         this.goalSelector.addGoal(4, this.workerGoal);
+        // ---- 簿记员带路（一次性差事，见 BookkeeperGoal） ----
+        this.goalSelector.addGoal(4, new BookkeeperGoal(this));
         // 索敌：锚点半径内的敌对生物（跟随=玩家身边，站岗=岗哨周围）；
         // 被打还手是所有镇民的保底本能。
         this.targetSelector.addGoal(2, new WarriorGoals.MonsterTargetGoal(this));
@@ -608,6 +610,21 @@ public class Resident extends PathfinderMob {
     /** 是否正在觅食（工人 Goal 据此让位：饿了先吃饭，吃完回来接着干活）。 */
     public boolean isForaging() {
         return this.forageState != ForageState.NONE;
+    }
+
+    // ---- 簿记员带路目标（v0.8.1；null = 无差事） ----
+
+    @Nullable
+    private BlockPos bookkeeperFindTarget;
+
+    /** 簿记员带路目标（服务端设置，Goal 完成后清空）。 */
+    public void setBookkeeperFindTarget(@Nullable BlockPos pos) {
+        this.bookkeeperFindTarget = pos;
+    }
+
+    @Nullable
+    public BlockPos getBookkeeperFindTarget() {
+        return this.bookkeeperFindTarget;
     }
 
     /** 涨一条职业技能经验（干中学的唯一入口，服务端专用）。 */
@@ -969,6 +986,8 @@ public class Resident extends PathfinderMob {
             this.moodState.tickSenses(this, moodLevel);
             // 住宅区建材/颜色扫描的推进（内部按 gameTime 去重，一 tick 只跑一次）
             HomeMaterialScanManager.tick(moodLevel);
+            // 簿记员城镇物资统计的推进（同为摊派式，一 tick 只跑一次）
+            com.bmf.bmfstown.town.TownCensusManager.tick(moodLevel);
         }
 
         // ---- 3. 回血 ----
@@ -1068,7 +1087,7 @@ public class Resident extends PathfinderMob {
 
     /** 档案里绑定的城镇（仅在镇民当前所处维度有效时返回，否则 null）。服务端专用。 */
     @Nullable
-    private Town boundTown() {
+    public Town boundTown() {
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
             return null;
         }
