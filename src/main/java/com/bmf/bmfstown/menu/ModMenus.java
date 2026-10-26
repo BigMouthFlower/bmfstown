@@ -49,10 +49,19 @@ public final class ModMenus {
                         // 只有客户端需要读额外数据（服务端那次调用不会走这里）
                         if (extraData != null) {
                             int entityId = extraData.readVarInt();
+                            // 可选尾字段：fromHandbook（手册居民列表打开，关闭时回跳手册）。
+                            // 旧调用（右键）不带这个字段，readableBytes 判空兼容
+                            boolean fromHandbook = extraData.readableBytes() >= 1
+                                    && extraData.readBoolean();
+                            if (fromHandbook && playerInventory.player.level().isClientSide) {
+                                com.bmf.bmfstown.client.ResidentScreen.FROM_HANDBOOK = true;
+                            }
                             var entity = playerInventory.player.level().getEntity(entityId);
                             if (entity instanceof Resident r) {
                                 resident = r;
                             }
+                            return new ResidentMenu(containerId, playerInventory, resident,
+                                    fromHandbook);
                         }
                         if (resident == null) {
                             return new ResidentMenu(containerId, playerInventory);

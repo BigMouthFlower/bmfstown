@@ -211,6 +211,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         ResidentMenu.CLIENT_PAGE = PAGE_INFO;
     }
 
+    /**
+     * 关闭：若本面板从城镇手册打开（用户定稿），回跳手册的城镇页
+     * （恢复到关闭前的城镇页码），而不是退到游戏画面。
+     */
+    @Override
+    public void onClose() {
+        boolean back = FROM_HANDBOOK;
+        FROM_HANDBOOK = false;
+        super.onClose();
+        if (back && this.minecraft != null) {
+            this.minecraft.setScreen(new TownHandbookScreen());
+        }
+    }
+
     // ==========================================================
     //  页签 / 按钮装配
     // ==========================================================
@@ -576,6 +590,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         gfx.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF2E2E2E);
         gfx.drawString(this.font, RENAME_BTN_LABEL, btnX + 4, textY, 0xFFE8E8E8, false);
 
+        // ---- "传送"按钮（重命名右侧，用户定稿）：把玩家传到该镇民身边 ----
+        String tpLabel = I18n.get("gui.bmfstown.resident.tp_btn");
+        int tpX = btnX + btnW + 4;
+        int tpW = this.font.width(tpLabel) + 8;
+        this.teleportBtnRel = new int[]{tpX, btnY, tpW, btnH};
+        boolean tpHover = mouseX >= this.leftPos + tpX && mouseX < this.leftPos + tpX + tpW
+                && mouseY >= this.topPos + btnY && mouseY < this.topPos + btnY + btnH;
+        gfx.fill(tpX, btnY, tpX + tpW, btnY + btnH, tpHover ? 0xFF707070 : 0xFF5A5A5A);
+        gfx.fill(tpX, btnY, tpX + 1, btnY + btnH, 0xFF909090);
+        gfx.fill(tpX, btnY, tpX + tpW, btnY + 1, 0xFF909090);
+        gfx.fill(tpX, btnY + btnH - 1, tpX + tpW, btnY + btnH, 0xFF2E2E2E);
+        gfx.fill(tpX + tpW - 1, btnY, tpX + tpW, btnY + btnH, 0xFF2E2E2E);
+        gfx.drawString(this.font, tpLabel, tpX + 4, textY, 0xFFE8E8E8, false);
+
         textY += LINE;
         //
         // 数值一律从 menu 的数据槽读，不从实体档案读。
@@ -835,14 +863,6 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * 当前归属的行前面画 ✔。
      */
     private void renderTownPageText(GuiGraphics gfx) {
-        // 右上角带个名字——归属页没有状态区，名字别跟着消失
-        Resident resident = this.menu.getResident();
-        if (resident != null) {
-            String name = resident.getName().getString();
-            gfx.drawString(this.font, name,
-                    this.imageWidth - 6 - this.font.width(name), 4, 0x303030, false);
-        }
-
         List<ListRow> rows = currentRows();
         UUID current = currentSectionTargetId();
 
@@ -1208,12 +1228,6 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 工作页文字：页名、职业行（✔ 选中）、按钮文字、底部提示。 */
     private void renderWorkPageText(GuiGraphics gfx, int mouseX, int mouseY) {
         Resident resident = this.menu.getResident();
-        if (resident != null) {
-            String name = resident.getName().getString();
-            gfx.drawString(this.font, name,
-                    this.imageWidth - 6 - this.font.width(name), 4, 0x303030, false);
-        }
-
         // ---- 职业行文字（滚动窗口，与背景层同一偏移） ----
         var professions = com.bmf.bmfstown.entity.profile.ProfessionType.values();
         var current = currentProfession();
@@ -1469,6 +1483,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
     /** 资料页"重命名"按钮的面板相对区域 {x, y, w, h}（渲染时更新；null = 本帧无按钮）。 */
     private int[] renameBtnRel;
+
+    /** 资料页"传送"按钮的面板相对区域（同上）。 */
+    private int[] teleportBtnRel;
+
+    /** 本面板是否从城镇手册居民列表打开（关闭时回跳手册；由菜单 extraData 写入）。 */
+    public static boolean FROM_HANDBOOK;
 
     /**
      * 切换到非容器 Screen 前调用：显式关闭容器菜单。
@@ -1790,6 +1810,19 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     RenameResidentScreen.open(r.getId(), r.getName().getString());
                 }
                 return true;
+            }
+            // ---- 传送按钮 ----
+            if (this.teleportBtnRel != null) {
+                int[] tb = this.teleportBtnRel;
+                if (mouseX >= this.leftPos + tb[0] && mouseX < this.leftPos + tb[0] + tb[2]
+                        && mouseY >= this.topPos + tb[1] && mouseY < this.topPos + tb[1] + tb[3]) {
+                    Resident r = this.menu.getResident();
+                    if (r != null) {
+                        ModNetworking.sendToServer(new ModNetworking.TeleportToResidentPayload(
+                                r.getId()));
+                    }
+                    return true;
+                }
             }
         }
         // ---- 工作页点击：职业行 + 工作控件区 ----

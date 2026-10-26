@@ -38,7 +38,12 @@ public final class TownHandbookClient {
 
     /** 一个城镇的展示数据（含它下面的子区域）。 */
     public record TownView(UUID id, String name, String dimension, String owner,
-                           BlockPos min, BlockPos max, List<ZoneView> zones) {
+                           BlockPos min, BlockPos max, List<ZoneView> zones,
+                           List<MemberView> members) {
+    }
+
+    /** 一条居民展示数据（手册"居民列表"用）。 */
+    public record MemberView(int entityId, String name, String professionId) {
     }
 
     private static volatile List<TownView> towns = List.of();
@@ -117,6 +122,14 @@ public final class TownHandbookClient {
                             parsePos(f[5]), parsePos(f[6]));
                     byId.put(b.id, b);
                     order.add(b);
+                } else if (f[0].equals("M") && f.length >= 5) {
+                    Builder b = byId.get(UUID.fromString(f[1]));
+                    if (b != null) {
+                        // 名字在最后一段（玩家可重命名，可能带 |）
+                        String[] limited = line.split("\\|", 5);
+                        b.members.add(new MemberView(Integer.parseInt(limited[2]),
+                                limited[4], limited[3]));
+                    }
                 } else if (f[0].equals("Z") && (f.length == 7 || f.length == 9)) {
                     Builder b = byId.get(UUID.fromString(f[1]));
                     if (b != null) {
@@ -154,6 +167,7 @@ public final class TownHandbookClient {
         final BlockPos min;
         final BlockPos max;
         final List<ZoneView> zones = new ArrayList<>();
+        final List<MemberView> members = new ArrayList<>();
 
         Builder(UUID id, String name, String dimension, String owner,
                 BlockPos min, BlockPos max) {
@@ -166,7 +180,8 @@ public final class TownHandbookClient {
         }
 
         TownView build() {
-            return new TownView(id, name, dimension, owner, min, max, List.copyOf(zones));
+            return new TownView(id, name, dimension, owner, min, max,
+                    List.copyOf(zones), List.copyOf(members));
         }
     }
 

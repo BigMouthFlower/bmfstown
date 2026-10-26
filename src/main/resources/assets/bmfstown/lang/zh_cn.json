@@ -369,7 +369,7 @@
   "gui.bmfstown.bookkeeper.title": "城镇物资 · %s",
   "gui.bmfstown.bookkeeper.search": "搜索物品…",
   "gui.bmfstown.bookkeeper.search_hint": "输入关键词后回车搜索",
-  "gui.bmfstown.bookkeeper.footer": "过滤：%s · 共 %s 种 · 滚轮翻页 · 点击物品让簿记员带路",
+  "gui.bmfstown.bookkeeper.footer": "过滤：%s · 共 %s 种 · 滚轮翻页 · 点击物品让簿记员带路 · ESC/E 退出",
   "gui.bmfstown.bookkeeper.footer_all": "全部",
   "gui.bmfstown.bookkeeper.tip_presence": "城镇里有这个物品",
   "gui.bmfstown.bookkeeper.tip_count": "城镇共有：%s",
@@ -397,5 +397,9 @@
   "trait.bmfstown.ghostwriter": "第二作者",
   "trait.bmfstown.selfless": "舍己为人",
   "trait.bmfstown.duplicity": "口是心非",
-  "trait.bmfstown.fool_sage": "大智若愚"
+  "trait.bmfstown.fool_sage": "大智若愚",
+  "gui.bmfstown.handbook.member_name": "名字",
+  "gui.bmfstown.handbook.member_prof": "职业",
+  "gui.bmfstown.resident.tp_btn": "传送",
+  "msg.bmfstown.teleport.done": "§a已传送到 %s 身边"
 }

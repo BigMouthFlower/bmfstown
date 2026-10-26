@@ -369,7 +369,7 @@
   "gui.bmfstown.bookkeeper.title": "Town goods · %s",
   "gui.bmfstown.bookkeeper.search": "Search items…",
   "gui.bmfstown.bookkeeper.search_hint": "Type and press Enter to search",
-  "gui.bmfstown.bookkeeper.footer": "Filter: %s · %s kinds · scroll to page · click an item to be led",
+  "gui.bmfstown.bookkeeper.footer": "Filter: %s · %s kinds · scroll · click item to be led · ESC/E to exit",
   "gui.bmfstown.bookkeeper.footer_all": "all",
   "gui.bmfstown.bookkeeper.tip_presence": "Present in this town",
   "gui.bmfstown.bookkeeper.tip_count": "Town total: %s",
@@ -397,5 +397,9 @@
   "trait.bmfstown.ghostwriter": "Ghostwriter",
   "trait.bmfstown.selfless": "Selfless",
   "trait.bmfstown.duplicity": "Duplicity",
-  "trait.bmfstown.fool_sage": "Foolsage"
+  "trait.bmfstown.fool_sage": "Foolsage",
+  "gui.bmfstown.handbook.member_name": "Name",
+  "gui.bmfstown.handbook.member_prof": "Job",
+  "gui.bmfstown.resident.tp_btn": "TP",
+  "msg.bmfstown.teleport.done": "§aTeleported to %s"
 }

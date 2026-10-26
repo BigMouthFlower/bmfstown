@@ -244,6 +244,19 @@ public class BookkeeperSearchScreen extends Screen {
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == 257 || keyCode == 335) { // 回车/小键盘回车：应用过滤
             applyFilter();
+            // 焦点移出搜索框：之后的 E 键是"关闭"而不是打字（用户定稿的退出机制）
+            this.searchBox.setFocused(false);
+            this.setFocused(null);
+            return true;
+        }
+        // ESC 显式关闭：无论搜索框是否有焦点都生效（用户定稿）
+        if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
+            this.onClose();
+            return true;
+        }
+        // E 关闭（仅搜索框无焦点时；有焦点时 E 是正常打字）
+        if (keyCode == 69 /* GLFW_KEY_E */ && !this.searchBox.isFocused()) {
+            this.onClose();
             return true;
         }
         if (this.searchBox.keyPressed(keyCode, scanCode, modifiers)
@@ -290,13 +303,7 @@ public class BookkeeperSearchScreen extends Screen {
                     return true;
                 }
             }
-            // 点底板空白不算关（避免误触）；点面板外才关
-            boolean insidePanel = mouseX >= x0 && mouseX < x0 + W
-                    && mouseY >= y0() && mouseY < y0() + H;
-            if (!insidePanel) {
-                this.onClose();
-                return true;
-            }
+            // 退出只走 ESC / E 键（用户定稿）：点空白不再关闭
         }
         return super.mouseClicked(mouseX, mouseY, button);
     }

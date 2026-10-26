@@ -207,6 +207,19 @@ public class TownSaveData extends SavedData {
                     .append('|').append(TownWandItem.fmt(town.min()))
                     .append('|').append(TownWandItem.fmt(town.max()))
                     .append('\n');
+            // 居民行（手册"居民列表"用，v0.8.1）：M|城镇ID|实体ID|职业id|名字
+            // 名字放最后（split 限段数），玩家重命名可能带 | 不至于炸解析
+            for (com.bmf.bmfstown.entity.Resident r : level.getEntitiesOfClass(
+                    com.bmf.bmfstown.entity.Resident.class,
+                    new net.minecraft.world.phys.AABB(
+                            town.min().getX(), town.min().getY(), town.min().getZ(),
+                            town.max().getX() + 1, town.max().getY() + 1, town.max().getZ() + 1),
+                    r -> town.id().equals(r.getProfile().townId()))) {
+                sb.append("M|").append(town.id()).append('|').append(r.getId())
+                        .append('|').append(r.getProfession().displayName().substring("profession.bmfstown.".length()))
+                        .append('|').append(r.getName().getString())
+                        .append('\n');
+            }
             for (TownWandMode mode : TownWandMode.values()) {
                 if (mode == TownWandMode.TOWN) {
                     continue;

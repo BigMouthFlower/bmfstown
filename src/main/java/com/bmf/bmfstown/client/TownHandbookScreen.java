@@ -5,6 +5,7 @@ import com.bmf.bmfstown.network.ModNetworking;
 import com.bmf.bmfstown.town.TownWandMode;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.language.I18n;
+import net.minecraft.util.Mth;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
@@ -73,8 +74,24 @@ public class TownHandbookScreen extends Screen {
 
     private List<Row> rows = List.of();
     private final List<InkButton> buttons = new ArrayList<>();
+
+    // ---- 居民列表（v0.8.1：城镇页左页，用户定稿）----
+    /** 排序列：0=名字 1=职业（跨打开保留，回跳时也是这个状态）。 */
+    private static int memberSortCol = 0;
+    /** 排序方向：0=升序 1=降序。 */
+    private static int memberSortDir = 0;
+    private static int memberScroll;
+    private static final int MEMBER_HEADER_H = 10;
+    private static final int MEMBER_ROW_H = 12;
+    private static final int MEMBER_VISIBLE = 6;
+    private static final int MEMBER_COL_W = 46;
+    /** 列表首行 y（渲染时更新，点击判定用）。 */
+    private int memberListY;
     /** 当前显示第几个城镇。 */
     private int pageIndex = 0;
+
+    /** 回跳恢复：镇民面板关闭回跳手册时，恢复到离开前的城镇页（-1 = 不恢复）。 */
+    public static int restorePageIndex = -1;
     private int selected = -1;
     private int scroll = 0;
 
@@ -112,6 +129,11 @@ public class TownHandbookScreen extends Screen {
     @Override
     protected void init() {
         TownHandbookClient.screenOpened(this);
+        if (restorePageIndex >= 0) {
+            this.pageIndex = Mth.clamp(restorePageIndex, 0,
+                    Math.max(0, TownHandbookClient.towns().size() - 1));
+            restorePageIndex = -1; // 用后即清
+        }
         bookX = (this.width - BOOK_W) / 2;
         bookY = Math.max(2, (this.height - BOOK_H) / 2);
         lx = bookX + 24;
@@ -450,6 +472,11 @@ public class TownHandbookScreen extends Screen {
                         fmt(town.min()), fmt(town.max()))),
                 lx, bookY + 50, TEXT_W, INK_FADED);
 
+        // ---- 左页居民列表（红框区域，用户定稿）----
+        if (!confirmDelete && !renameMode) {
+            drawMemberList(graphics, town, mouseX, mouseY);
+        }
+
         // 页码
         graphics.drawCenteredString(this.font, (pageIndex + 1) + " / "
                 + TownHandbookClient.towns().size(), bookX + BOOK_W / 2, bookY + 150, INK_FADED);
@@ -501,6 +528,68 @@ public class TownHandbookScreen extends Screen {
         }
         // 城镇页右页：预览图 + 区域管理入口，不再显示"选中子区域"详情——
         // 子区域的选择和详情都在对应的管理子页里进行。
+    }
+
+    /** 按当前表头排序状态返回排序后的居民副本。 */
+    private java.util.List<TownHandbookClient.MemberView> sortedMembers(
+            TownHandbookClient.TownView town) {
+        java.util.List<TownHandbookClient.MemberView> list =
+                new java.util.ArrayList<>(town.members());
+        list.sort((a, b) -> {
+            int cmp;
+            if (memberSortCol == 0) {
+                cmp = a.name().compareToIgnoreCase(b.name());
+            } else {
+                cmp = I18n.get("profession.bmfstown." + a.professionId())
+                        .compareToIgnoreCase(I18n.get("profession.bmfstown." + b.professionId()));
+            }
+            return memberSortDir == 0 ? cmp : -cmp;
+        });
+        return list;
+    }
+
+    /** 居民列表：表头（名字/职业，点击排序带箭头）+ 滚动行（点击开面板）。 */
+    private void drawMemberList(GuiGraphics graphics, TownHandbookClient.TownView town,
+                                int mouseX, int mouseY) {
+        var list = sortedMembers(town);
+        int headerY = bookY + 64;
+        this.memberListY = headerY + MEMBER_HEADER_H;
+
+        for (int col = 0; col < 2; col++) {
+            int cx = lx + col * MEMBER_COL_W;
+            boolean hov = mouseX >= cx && mouseX < cx + MEMBER_COL_W - 2
+                    && mouseY >= headerY && mouseY < headerY + MEMBER_HEADER_H;
+            graphics.fill(cx, headerY, cx + MEMBER_COL_W - 2, headerY + MEMBER_HEADER_H,
+                    hov ? 0xFFDCCEA6 : 0xFFEDE2C2);
+            String label = I18n.get(col == 0
+                    ? "gui.bmfstown.handbook.member_name"
+                    : "gui.bmfstown.handbook.member_prof");
+            if (memberSortCol == col) {
+                label += memberSortDir == 0 ? " ▲" : " ▼";
+            }
+            graphics.drawString(this.font, label, cx + 2, headerY + 2, INK_HEADER, false);
+        }
+
+        int max = Math.max(0, list.size() - MEMBER_VISIBLE);
+        this.memberScroll = Mth.clamp(this.memberScroll, 0, max);
+        for (int v = 0; v < MEMBER_VISIBLE; v++) {
+            int idx = this.memberScroll + v;
+            if (idx >= list.size()) {
+                break;
+            }
+            var m = list.get(idx);
+            int ry = this.memberListY + v * MEMBER_ROW_H;
+            if (mouseX >= lx && mouseX < lx + TEXT_W && mouseY >= ry && mouseY < ry + MEMBER_ROW_H) {
+                graphics.fill(lx, ry, lx + TEXT_W, ry + MEMBER_ROW_H, 0x30A08050);
+            }
+            graphics.drawString(this.font,
+                    this.font.plainSubstrByWidth(m.name(), MEMBER_COL_W - 5),
+                    lx + 1, ry + 2, INK, false);
+            graphics.drawString(this.font,
+                    this.font.plainSubstrByWidth(I18n.get("profession.bmfstown." + m.professionId()),
+                            MEMBER_COL_W - 5),
+                    lx + MEMBER_COL_W + 1, ry + 2, INK_FADED, false);
+        }
     }
 
     /**
@@ -748,6 +837,39 @@ public class TownHandbookScreen extends Screen {
                     return true;
                 }
             }
+            // 城镇页：居民列表（表头排序 / 行打开镇民面板，用户定稿）
+            if (zonePage < 0 && !renameMode && !confirmDelete) {
+                int headerY = bookY + 64;
+                if (mouseY >= headerY && mouseY < headerY + MEMBER_HEADER_H) {
+                    for (int col = 0; col < 2; col++) {
+                        int cx = lx + col * MEMBER_COL_W;
+                        if (mouseX >= cx && mouseX < cx + MEMBER_COL_W - 2) {
+                            if (memberSortCol == col) {
+                                memberSortDir ^= 1; // 再点反转（降↔升循环）
+                            } else {
+                                memberSortCol = col;
+                                memberSortDir = 1;  // 首点该列=降序（用户定稿）
+                            }
+                            return true;
+                        }
+                    }
+                }
+                var town = currentTown();
+                if (town != null && mouseY >= this.memberListY
+                        && mouseY < this.memberListY + MEMBER_VISIBLE * MEMBER_ROW_H) {
+                    var members = sortedMembers(town);
+                    int max = Math.max(0, members.size() - MEMBER_VISIBLE);
+                    int sc = Mth.clamp(this.memberScroll, 0, max);
+                    int v = (int) ((mouseY - this.memberListY) / MEMBER_ROW_H);
+                    int idx = sc + v;
+                    if (idx >= 0 && idx < members.size()
+                            && mouseX >= lx && mouseX < lx + TEXT_W) {
+                        ModNetworking.sendToServer(new ModNetworking.OpenResidentFromHandbookPayload(
+                                members.get(idx).entityId()));
+                        return true;
+                    }
+                }
+            }
             // 城镇页：点"区域管理"入口行 → 开对应子页
             if (zonePage < 0 && !renameMode) {
                 int kind = manageListClick(mouseX, mouseY);
@@ -775,6 +897,13 @@ public class TownHandbookScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double dx, double dy) {
+        // 居民列表区域内滚轮：滚居民行（不抢城镇翻页/列表滚动）
+        if (this.zonePage < 0 && !renameMode && mouseY >= this.memberListY
+                && mouseY < this.memberListY + MEMBER_VISIBLE * MEMBER_ROW_H
+                && mouseX >= lx && mouseX < lx + TEXT_W) {
+            this.memberScroll -= (int) Math.signum(dy);
+            return true;
+        }
         if (!renameMode) {
             if (this.hasShiftDown()) {
                 if (dy > 0 && hasPrev()) {
@@ -793,6 +922,11 @@ public class TownHandbookScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // E 关闭手册（用户定稿；改名模式排除——那时 E 是输入）
+        if (!renameMode && keyCode == 69 /* GLFW_KEY_E */) {
+            onClose();
+            return true;
+        }
         if (renameMode && keyCode == 257 /* Enter */ && nameBox != null
                 && nameBox.isFocused()) {
             confirmRename();

@@ -24,9 +24,15 @@ import org.jetbrains.annotations.Nullable;
 public class ResidentMenuProvider implements MenuProvider {
 
     private final Resident resident;
+    private final boolean fromHandbook;
 
     public ResidentMenuProvider(Resident resident) {
+        this(resident, false);
+    }
+
+    public ResidentMenuProvider(Resident resident, boolean fromHandbook) {
         this.resident = resident;
+        this.fromHandbook = fromHandbook;
     }
 
     @Override
@@ -38,6 +44,6 @@ public class ResidentMenuProvider implements MenuProvider {
     @Nullable
     @Override
     public AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player) {
-        return new ResidentMenu(containerId, playerInventory, this.resident);
+        return new ResidentMenu(containerId, playerInventory, this.resident, this.fromHandbook);
     }
 }

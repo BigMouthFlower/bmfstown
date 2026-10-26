@@ -188,6 +188,18 @@ public class Resident extends PathfinderMob {
     private enum SleepState { AWAKE, GO_HOME, FIND_BED, SLEEPING }
 
     private SleepState sleepState = SleepState.AWAKE;
+
+    /**
+     * 叫醒差事（用户定稿：夜里被点单就起床带路，不躺回去）。
+     * 睡姿与床占用旗标由原版 {@code stopSleeping} 清理，状态机由 {@link #abortSleep} 归位；
+     * 差事期间 {@link #tickSleep} 会跳过（带路目标挂着），带完自动恢复夜间回床流程。
+     */
+    public void wakeUpForErrand() {
+        if (this.isSleeping() || this.getPose() == net.minecraft.world.entity.Pose.SLEEPING) {
+            this.stopSleeping();
+        }
+        this.abortSleep();
+    }
     /** 已锁定的目标床位（住宅区内扫描得出，HEAD 坐标）。 */
     @Nullable
     private BlockPos targetBed = null;
@@ -1036,7 +1048,9 @@ public class Resident extends PathfinderMob {
         }
 
         // ---- 5. 觅食（就餐区箱子补给；睡着/回家路上/跟随玩家时不觅食）----
-        if (this.sleepState == SleepState.AWAKE && this.getWorkMode() != WorkMode.FOLLOW) {
+        // 簿记员带路差事进行中同样跳过：起来后寻路任务优先，别半路跑去吃饭
+        if (this.sleepState == SleepState.AWAKE && this.getWorkMode() != WorkMode.FOLLOW
+                && this.getBookkeeperFindTarget() == null) {
             this.tickForaging();
         }
 
@@ -1709,6 +1723,10 @@ public class Resident extends PathfinderMob {
      * 就由超时与天亮两个出口保证必然回到 AWAKE。
      */
     private void tickSleep() {
+        // 簿记员带路差事进行中（目标挂着）不睡觉：被玩家夜里叫醒就干完活再回床
+        if (this.getBookkeeperFindTarget() != null) {
+            return;
+        }
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel level)) {
             return;
         }

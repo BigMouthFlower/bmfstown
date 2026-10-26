@@ -272,6 +272,48 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：从城镇手册居民列表打开镇民面板。
+     * 不走交互锁（用户定稿：NPC 该干啥干啥），面板照常打开；
+     * fromHandbook=true → 镇民面板关闭时回跳城镇手册。
+     */
+    public record OpenResidentFromHandbookPayload(int entityId)
+            implements CustomPacketPayload {
+
+        public static final Type<OpenResidentFromHandbookPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "open_resident_handbook"));
+
+        public static final StreamCodec<ByteBuf, OpenResidentFromHandbookPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, OpenResidentFromHandbookPayload::entityId,
+                        OpenResidentFromHandbookPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：把玩家传送到目标镇民身边（资料页"传送"按钮）。
+     */
+    public record TeleportToResidentPayload(int entityId)
+            implements CustomPacketPayload {
+
+        public static final Type<TeleportToResidentPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "teleport_resident"));
+
+        public static final StreamCodec<ByteBuf, TeleportToResidentPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, TeleportToResidentPayload::entityId,
+                        TeleportToResidentPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：重命名镇民（资料页"重命名"按钮 → 输入屏回车）。
      * 服务端复核长度（1~32，对齐原版命名牌口径）后 setCustomName（自动入 NBT）。
      */
@@ -579,6 +621,48 @@ public final class ModNetworking {
         });
     }
 
+    /** 手册居民列表打开镇民面板：不走交互锁，NPC 不被打断。 */
+    private static void handleOpenResidentFromHandbook(OpenResidentFromHandbookPayload payload,
+                                                       IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            serverPlayer.openMenu(new com.bmf.bmfstown.menu.ResidentMenuProvider(resident, true),
+                    buf -> {
+                        buf.writeVarInt(resident.getId());
+                        buf.writeBoolean(true); // fromHandbook：免距离关闭 + 关闭回跳手册
+                    });
+        });
+    }
+
+    /** 传送玩家到镇民身边（支持跨维度）。 */
+    private static void handleTeleportToResident(TeleportToResidentPayload payload,
+                                                 IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (!(resident.level() instanceof net.minecraft.server.level.ServerLevel targetLevel)) {
+                return;
+            }
+            serverPlayer.teleportTo(targetLevel,
+                    resident.getX(), resident.getY(), resident.getZ(),
+                    resident.getYRot(), resident.getXRot());
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.teleport.done",
+                    resident.getName().getString()), false);
+        });
+    }
+
     /** 重命名镇民：校验长度后 setCustomName（原版 NBT 持久化，头顶名牌同步生效）。 */
     private static void handleResidentRename(ResidentRenamePayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
@@ -722,6 +806,9 @@ public final class ModNetworking {
                 }
             }
             resident.setBookkeeperFindTarget(best);
+            // 夜里被点单：叫醒去带路（用户定稿：叫醒就干活，别躺回去），
+            // 带完 tickSleep 自动恢复夜间回床流程
+            resident.wakeUpForErrand();
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.bookkeeper.leading",
                     resident.getName().getString(),
@@ -1098,6 +1185,12 @@ public final class ModNetworking {
                 ModNetworking::handleCensusRequest);
         registrar.playToServer(ResidentRenamePayload.TYPE, ResidentRenamePayload.STREAM_CODEC,
                 ModNetworking::handleResidentRename);
+        registrar.playToServer(OpenResidentFromHandbookPayload.TYPE,
+                OpenResidentFromHandbookPayload.STREAM_CODEC,
+                ModNetworking::handleOpenResidentFromHandbook);
+        registrar.playToServer(TeleportToResidentPayload.TYPE,
+                TeleportToResidentPayload.STREAM_CODEC,
+                ModNetworking::handleTeleportToResident);
         registrar.playToServer(BookkeeperFindPayload.TYPE, BookkeeperFindPayload.STREAM_CODEC,
                 ModNetworking::handleBookkeeperFind);
         registrar.playToClient(CensusDataPayload.TYPE, CensusDataPayload.STREAM_CODEC,

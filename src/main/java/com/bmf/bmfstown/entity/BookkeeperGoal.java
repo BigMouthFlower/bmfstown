@@ -51,6 +51,7 @@ public class BookkeeperGoal extends Goal {
         return this.resident.getProfession()
                 == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER
                 && this.resident.getBookkeeperFindTarget() != null
+                // 夜里被点单时服务端会先 wakeUpForErrand() 叫醒（用户定稿：叫醒就去带路）
                 && !this.resident.isSleeping()
                 && !this.resident.isForaging();
     }

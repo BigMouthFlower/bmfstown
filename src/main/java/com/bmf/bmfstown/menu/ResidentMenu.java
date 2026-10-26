@@ -489,8 +489,17 @@ public class ResidentMenu extends AbstractContainerMenu {
     /**
      * 服务端用：拿得到实体，装备槽直接绑到实体身上。
      */
+    /** 手册居民列表打开的面板：免距离关闭（用户定稿：远距离也保持打开）。 */
+    private final boolean fromHandbook;
+
     public ResidentMenu(int containerId, Inventory playerInventory, Resident resident) {
+        this(containerId, playerInventory, resident, false);
+    }
+
+    public ResidentMenu(int containerId, Inventory playerInventory, Resident resident,
+                        boolean fromHandbook) {
         super(ModMenus.RESIDENT.get(), containerId);
+        this.fromHandbook = fromHandbook;
         this.resident = resident;
         this.equipmentContainer = new EquipmentContainer(resident);
         this.residentData = new ContainerData() {
@@ -528,6 +537,7 @@ public class ResidentMenu extends AbstractContainerMenu {
      */
     public ResidentMenu(int containerId, Inventory playerInventory) {
         super(ModMenus.RESIDENT.get(), containerId);
+        this.fromHandbook = false;
         this.resident = null;
         this.equipmentContainer = null;
         this.residentData = new SimpleContainerData(DATA_COUNT);
@@ -660,6 +670,10 @@ public class ResidentMenu extends AbstractContainerMenu {
         }
         if (!this.resident.isAlive()) {
             return false;
+        }
+        // 手册打开的面板免距离限制（用户定稿）：远距离也能看，死亡才关
+        if (this.fromHandbook) {
+            return true;
         }
         return player.isCloseEnough(this.resident, 8.0D);
     }
