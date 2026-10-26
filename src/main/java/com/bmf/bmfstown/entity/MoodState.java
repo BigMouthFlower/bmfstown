@@ -217,6 +217,9 @@ public final class MoodState {
     /** 轻浮：漂浮检定计时器。 */
     private int flightyTimer;
 
+    /** 末影步：上次已传送的路径（引用比较，识别"新行程"；同一路径不重复传）。 */
+    private net.minecraft.world.level.pathfinder.Path enderstepLastPath;
+
     /** 喜欢的建筑材质（0~2 种，各 1/2 概率刷出，去重）。 */
     private List<BlockMaterial> likedBlocks = List.of();
 
@@ -1031,7 +1034,63 @@ public final class MoodState {
                             false, true));
                 }
             }
+        } else if (this.trait == com.bmf.bmfstown.entity.profile.TraitType.ENDERSTEP) {
+            tickEnderstep(resident);
         }
+    }
+
+    /**
+     * 末影步（用户定稿 v2：别人寻路是走过去，他是<b>起点直接瞬移到终点</b>，
+     * 不掉血，起点终点粒子特效，无 CD 无概率）。
+     *
+     * <p>新行程识别：路径对象引用一变（Goal 每次 moveTo 都生成新 Path）就传，
+     * 同一段路继续走不重复传；落点交给原版 {@code randomTeleport} 找安全地面，
+     * 找不到落点（如终点全悬空）就放弃本次、老实走路（标记已记，不会重试）。
+     * 距离不足 3 格不传（贴脸瞬移很滑稽），常量可调。
+     */
+    private void tickEnderstep(Resident resident) {
+        if (!(resident.level() instanceof net.minecraft.server.level.ServerLevel level)) {
+            return;
+        }
+        var navigation = resident.getNavigation();
+        net.minecraft.world.level.pathfinder.Path path = navigation.getPath();
+        if (path == null) {
+            this.enderstepLastPath = null;
+            return; // 没在赶路（stop/到达后 getPath 为 null）
+        }
+        if (path != this.enderstepLastPath) {
+            this.enderstepLastPath = path;
+        } else {
+            return; // 同一段路：已处理过，不重复传
+        }
+        if (path.isDone() || path.getNodeCount() <= 0) {
+            return;
+        }
+        net.minecraft.world.level.pathfinder.Node end = path.getNode(path.getNodeCount() - 1);
+        if (resident.distanceToSqr(end.x, end.y, end.z) < 3.0D * 3.0D) {
+            return; // 太近：直接走
+        }
+
+        // 起点特效：一撮传送门粒子 + 音效
+        level.sendParticles(net.minecraft.core.particles.ParticleTypes.PORTAL,
+                resident.getX(), resident.getY() + 0.8D, resident.getZ(),
+                30, 0.4D, 0.8D, 0.4D, 0.3D);
+        level.playSound(null, resident.blockPosition(),
+                net.minecraft.sounds.SoundEvents.ENDERMAN_TELEPORT,
+                net.minecraft.sounds.SoundSource.NEUTRAL, 1.0F, 1.0F);
+
+        if (resident.randomTeleport(end.x + 0.5D, end.y, end.z + 0.5D, false)) {
+            // 终点特效：同款粒子 + 音效
+            level.sendParticles(net.minecraft.core.particles.ParticleTypes.PORTAL,
+                    resident.getX(), resident.getY() + 0.8D, resident.getZ(),
+                    20, 0.4D, 0.8D, 0.4D, 0.3D);
+            level.playSound(null, resident.blockPosition(),
+                    net.minecraft.sounds.SoundEvents.ENDERMAN_TELEPORT,
+                    net.minecraft.sounds.SoundSource.NEUTRAL, 1.0F, 1.0F);
+            // 已在目的地：清掉旧路径，上层 Goal 的 isDone 检测自然接手下一阶段
+            navigation.stop();
+        }
+        // randomTeleport 失败：不传，老实走（enderstepLastPath 已标记，不会重试）
     }
 
     /**

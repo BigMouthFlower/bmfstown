@@ -609,6 +609,7 @@ public class Resident extends PathfinderMob {
     @Nullable
     private WorkerGoal workerGoal;
 
+
     /** 工人 Goal 是否在执行（面板状态显示用）。 */
     public boolean workerGoalRunning() {
         return this.workerGoal != null && this.workerGoal.isRunningGoal();
@@ -2071,8 +2072,23 @@ public class Resident extends PathfinderMob {
 
     static class TownBoundedStrollGoal extends WaterAvoidingRandomStrollGoal {
 
+        /** 运行标志（Goal 基类不暴露运行状态，自持）。 */
+        private boolean strolling;
+
         TownBoundedStrollGoal(Resident mob, double speedModifier) {
             super(mob, speedModifier);
+        }
+
+        @Override
+        public void start() {
+            this.strolling = true;
+            super.start();
+        }
+
+        @Override
+        public void stop() {
+            this.strolling = false;
+            super.stop();
         }
 
         @Override
