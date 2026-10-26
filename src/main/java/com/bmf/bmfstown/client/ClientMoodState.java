@@ -43,6 +43,9 @@ public final class ClientMoodState {
     /** 居民 UUID → 特性 id（空 = 无）。 */
     private static final Map<UUID, String> TRAITS = new ConcurrentHashMap<>();
 
+    /** 居民 UUID → GATTACA 模仿状态（"名字|traitId"；空 = 未模仿）。 */
+    private static final Map<UUID, String> MIMICS = new ConcurrentHashMap<>();
+
     /** 居民 UUID → 海象展示版想法（每条已换成随机咕咕；与 THOUGHTS 按下标平行）。 */
     private static final Map<UUID, java.util.List<String>> WALRUS_LINES = new ConcurrentHashMap<>();
 
@@ -52,6 +55,7 @@ public final class ClientMoodState {
             UUID id = UUID.fromString(payload.residentId());
             THOUGHTS.put(id, List.copyOf(payload.thoughts()));
             TRAITS.put(id, payload.trait() == null ? "" : payload.trait());
+            MIMICS.put(id, payload.mimic() == null ? "" : payload.mimic());
             if ("walrus".equals(payload.trait())) {
                 // 海象：同步瞬间逐条随机生成咕咕（每次打开面板都不同，无法反推原文）；
                 // 后台真实信息在服务端 NBT，客户端只留展示版
@@ -83,6 +87,11 @@ public final class ClientMoodState {
     /** 特性 id（空 = 无/未同步）。 */
     public static String traitOf(UUID residentId) {
         return TRAITS.getOrDefault(residentId, "");
+    }
+
+    /** GATTACA 模仿状态（"被模仿者名字|模仿中的特性id"；空 = 未模仿）。 */
+    public static String mimicOf(UUID residentId) {
+        return MIMICS.getOrDefault(residentId, "");
     }
 
     /** 海象展示版想法（与 thoughtsOf 下标平行；null = 该镇民不是海象）。 */
@@ -122,6 +131,7 @@ public final class ClientMoodState {
         WORKER_ORDER.clear();
         TRAITS.clear();
         WALRUS_LINES.clear();
+        MIMICS.clear();
     }
 
     private ClientMoodState() {

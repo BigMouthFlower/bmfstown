@@ -53,8 +53,10 @@ public final class ModMenus {
                             // 旧调用（右键）不带这个字段，readableBytes 判空兼容
                             boolean fromHandbook = extraData.readableBytes() >= 1
                                     && extraData.readBoolean();
-                            if (fromHandbook && playerInventory.player.level().isClientSide) {
-                                com.bmf.bmfstown.client.ResidentScreen.FROM_HANDBOOK = true;
+                            if (playerInventory.player.level().isClientSide) {
+                                com.bmf.bmfstown.client.ResidentScreen.REOPEN_TARGET =
+                                        fromHandbook && extraData.readableBytes() >= 1
+                                                ? extraData.readVarInt() : 0;
                             }
                             var entity = playerInventory.player.level().getEntity(entityId);
                             if (entity instanceof Resident r) {

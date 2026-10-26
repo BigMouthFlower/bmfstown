@@ -401,5 +401,11 @@
   "gui.bmfstown.handbook.member_name": "名字",
   "gui.bmfstown.handbook.member_prof": "职业",
   "gui.bmfstown.resident.tp_btn": "传送",
-  "msg.bmfstown.teleport.done": "§a已传送到 %s 身边"
+  "msg.bmfstown.teleport.done": "§a已传送到 %s 身边",
+  "gui.bmfstown.gattaca.title": "选择模仿对象",
+  "gui.bmfstown.gattaca.hint": "点击查看对方面板 · 表头排序 · ESC/E 退出",
+  "gui.bmfstown.resident.gattaca_btn": "伪装",
+  "gui.bmfstown.resident.disguise_btn": "伪装",
+  "gui.bmfstown.resident.gattaca_mimicking": "正在模仿 %s",
+  "msg.bmfstown.gattaca.mimic": "§a%s 已开始模仿 %s（一天后复原）"
 }

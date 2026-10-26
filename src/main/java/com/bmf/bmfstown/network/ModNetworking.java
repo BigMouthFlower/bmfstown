@@ -276,7 +276,7 @@ public final class ModNetworking {
      * 不走交互锁（用户定稿：NPC 该干啥干啥），面板照常打开；
      * fromHandbook=true → 镇民面板关闭时回跳城镇手册。
      */
-    public record OpenResidentFromHandbookPayload(int entityId)
+    public record OpenResidentFromHandbookPayload(int entityId, int reopenMode)
             implements CustomPacketPayload {
 
         public static final Type<OpenResidentFromHandbookPayload> TYPE = new Type<>(
@@ -285,7 +285,30 @@ public final class ModNetworking {
         public static final StreamCodec<ByteBuf, OpenResidentFromHandbookPayload> STREAM_CODEC =
                 StreamCodec.composite(
                         ByteBufCodecs.VAR_INT, OpenResidentFromHandbookPayload::entityId,
+                        ByteBufCodecs.VAR_INT, OpenResidentFromHandbookPayload::reopenMode,
                         OpenResidentFromHandbookPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：GATTACA 伪装确认（观察者在自己列表里查看某人 UI 后点"伪装"）。
+     * 服务端复制对方全部数据（想法保留、特性一并复制生效），一天后自动复原。
+     */
+    public record GattacaMimicPayload(int observerId, int targetId)
+            implements CustomPacketPayload {
+
+        public static final Type<GattacaMimicPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "gattaca_mimic"));
+
+        public static final StreamCodec<ByteBuf, GattacaMimicPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, GattacaMimicPayload::observerId,
+                        ByteBufCodecs.VAR_INT, GattacaMimicPayload::targetId,
+                        GattacaMimicPayload::new);
 
         @Override
         public Type<? extends CustomPacketPayload> type() {
@@ -632,10 +655,14 @@ public final class ModNetworking {
                     instanceof com.bmf.bmfstown.entity.Resident resident)) {
                 return;
             }
-            serverPlayer.openMenu(new com.bmf.bmfstown.menu.ResidentMenuProvider(resident, true),
+            boolean fromHandbook = payload.reopenMode() != 0;
+            serverPlayer.openMenu(new com.bmf.bmfstown.menu.ResidentMenuProvider(resident, fromHandbook),
                     buf -> {
                         buf.writeVarInt(resident.getId());
-                        buf.writeBoolean(true); // fromHandbook：免距离关闭 + 关闭回跳手册
+                        buf.writeBoolean(fromHandbook); // 免距离关闭
+                        if (fromHandbook) {
+                            buf.writeVarInt(payload.reopenMode()); // 关闭回跳目标
+                        }
                     });
         });
     }
@@ -660,6 +687,32 @@ public final class ModNetworking {
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.teleport.done",
                     resident.getName().getString()), false);
+        });
+    }
+
+    /** GATTACA 伪装确认：校验观察者特性后执行复制。 */
+    private static void handleGattacaMimic(GattacaMimicPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.observerId())
+                    instanceof com.bmf.bmfstown.entity.Resident observer)
+                    || !(serverPlayer.level().getEntity(payload.targetId())
+                    instanceof com.bmf.bmfstown.entity.Resident target)) {
+                return;
+            }
+            if (observer.getMoodState().trait()
+                    != com.bmf.bmfstown.entity.profile.TraitType.GATTACA
+                    || observer.getMoodState().isMimicking()) {
+                return; // 特性被换掉或已在模仿中：拒绝（客户端按钮应不可用）
+            }
+            int day = (int) (serverPlayer.serverLevel().getDayTime() / 24000L);
+            observer.getMoodState().startMimic(observer, target, day);
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.gattaca.mimic",
+                    observer.getName().getString(),
+                    target.getName().getString()), false);
         });
     }
 
@@ -1078,7 +1131,7 @@ public final class ModNetworking {
      * 没有"codec + 容量"重载，整条串比逐字段编省事也省字节。
      */
     public record MoodSyncPayload(String residentId, java.util.List<MoodThought> thoughts,
-            String prefs, String workerOrder, String trait)
+            String prefs, String workerOrder, String trait, String mimic)
             implements CustomPacketPayload {
 
         public static final Type<MoodSyncPayload> TYPE = new Type<>(
@@ -1100,6 +1153,7 @@ public final class ModNetworking {
                     ByteBufCodecs.STRING_UTF8.encode(buf, payload.prefs());
                     ByteBufCodecs.STRING_UTF8.encode(buf, payload.workerOrder());
                     ByteBufCodecs.STRING_UTF8.encode(buf, payload.trait());
+                    ByteBufCodecs.STRING_UTF8.encode(buf, payload.mimic());
                 },
                 buf -> {
                     String residentId = ByteBufCodecs.STRING_UTF8.decode(buf);
@@ -1111,8 +1165,9 @@ public final class ModNetworking {
                     String prefs = ByteBufCodecs.STRING_UTF8.decode(buf);
                     String workerOrder = ByteBufCodecs.STRING_UTF8.decode(buf);
                     String trait = ByteBufCodecs.STRING_UTF8.decode(buf);
+                    String mimic = ByteBufCodecs.STRING_UTF8.decode(buf);
                     return new MoodSyncPayload(residentId, java.util.List.copyOf(list), prefs,
-                            workerOrder, trait);
+                            workerOrder, trait, mimic);
                 });
 
         @Override
@@ -1145,11 +1200,15 @@ public final class ModNetworking {
             resident.getMoodState().ensureGenerated(resident, serverLevel);
         }
         var trait = resident.getMoodState().trait();
+        var moodState = resident.getMoodState();
+        String mimic = moodState.isMimicking()
+                ? moodState.mimicTargetName() + "|" + moodState.mimicTraitId() : "";
         player.connection.send(new MoodSyncPayload(
                 resident.getStringUUID(), java.util.List.copyOf(list),
-                resident.getMoodState().prefsString(),
-                resident.getMoodState().orderItem(),
-                trait == null ? "" : trait.id()));
+                moodState.prefsString(),
+                moodState.orderItem(),
+                trait == null ? "" : trait.id(),
+                mimic));
     }
 
     // ==========================================================
@@ -1191,6 +1250,9 @@ public final class ModNetworking {
         registrar.playToServer(TeleportToResidentPayload.TYPE,
                 TeleportToResidentPayload.STREAM_CODEC,
                 ModNetworking::handleTeleportToResident);
+        registrar.playToServer(GattacaMimicPayload.TYPE,
+                GattacaMimicPayload.STREAM_CODEC,
+                ModNetworking::handleGattacaMimic);
         registrar.playToServer(BookkeeperFindPayload.TYPE, BookkeeperFindPayload.STREAM_CODEC,
                 ModNetworking::handleBookkeeperFind);
         registrar.playToClient(CensusDataPayload.TYPE, CensusDataPayload.STREAM_CODEC,

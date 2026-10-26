@@ -220,6 +220,17 @@ public final class MoodState {
     /** 末影步：上次已传送的路径（引用比较，识别"新行程"；同一路径不重复传）。 */
     private net.minecraft.world.level.pathfinder.Path enderstepLastPath;
 
+    // ---- GATTACA 模仿状态（用户定稿：完全复制对方数据含特性生效，想法保留自己；
+    //      UI 特性行显示"对方特性（GATTACA）"；持续一天后复原）----
+    /** 被模仿者名字（空 = 未在模仿）。 */
+    private String mimicTargetName = "";
+    /** 被模仿者的特性 id（UI 括号显示用）。 */
+    private String mimicTraitId = "";
+    /** 复制到期游戏日（从复制开始的一天后）。 */
+    private int mimicExpireDay = Integer.MIN_VALUE;
+    /** 复制开始时自己 profile 的快照（复原用）。 */
+    private CompoundTag mimicSnapshot;
+
     /** 喜欢的建筑材质（0~2 种，各 1/2 概率刷出，去重）。 */
     private List<BlockMaterial> likedBlocks = List.of();
 
@@ -1024,6 +1035,14 @@ public final class MoodState {
      * 当前只挂轻浮的漂浮检定；后续特性（末影步/自毁倾向…）实装时在这里加分支。
      */
     public void tickTraits(Resident resident) {
+        // GATTACA 模仿到期检查（用户实测：跳天后不复原）。
+        // 判据必须是 isMimicking() 而不是 trait==GATTACA——模仿开始时特性
+        // 已被换成对方的，按 trait 查永远不命中，到期永不触发。
+        if (isMimicking() && this.mimicExpireDay != Integer.MIN_VALUE
+                && resident.level() instanceof net.minecraft.server.level.ServerLevel sl
+                && (int) (sl.getDayTime() / 24000L) >= this.mimicExpireDay) {
+            restoreMimic(resident);
+        }
         if (this.trait == com.bmf.bmfstown.entity.profile.TraitType.FLIGHTY) {
             // 每 30 秒检定一次 1/8 概率 → 平均约 4 分钟浮一次，3 秒（60 tick）
             if (++this.flightyTimer >= 600) {
@@ -1091,6 +1110,131 @@ public final class MoodState {
             navigation.stop();
         }
         // randomTeleport 失败：不传，老实走（enderstepLastPath 已标记，不会重试）
+    }
+
+    // ---- GATTACA 模仿（v0.8.1 用户定稿）----
+
+    /** 是否在模仿中。 */
+    public boolean isMimicking() {
+        return !this.mimicTargetName.isEmpty();
+    }
+
+    /** 被模仿者名字（未模仿返回空）。 */
+    public String mimicTargetName() {
+        return this.mimicTargetName;
+    }
+
+    /** 模仿中的特性 id（被模仿者的；UI 特性行显示它并括号注明 GATTACA）。 */
+    public String mimicTraitId() {
+        return this.mimicTraitId;
+    }
+
+    /** GATTACA：复制对方的偏好与性格（建筑/动物/颜色/音乐/天气/生物/性格），想法不动。 */
+    public void copyPrefsFrom(MoodState other) {
+        this.likedBlocks = other.likedBlocks;
+        this.likedAnimal = other.likedAnimal;
+        this.likedColor = other.likedColor;
+        this.likesMusic = other.likesMusic;
+        this.dislikedWeather = other.dislikedWeather;
+        this.dislikedMob = other.dislikedMob;
+        this.personality = other.personality;
+    }
+
+    /**
+     * 开始模仿（GATTACA，用户定稿）：
+     * <ul>
+     *   <li>复制对方 profile（技能/perk/心情/饥饿/口味/喜好职业），但
+     *       <b>归属四件套保留自己的</b>（身份不随模仿变）；</li>
+     *   <li>复制对方 MoodState 侧偏好与性格（六大喜好+性格——用户实测点名）；</li>
+     *   <li>特性复制并生效；名字也变成对方的；</li>
+     *   <li>想法保留自己的；快照（profile+MoodState+名字）供一天后复原。</li>
+     * </ul>
+     */
+    public void startMimic(Resident self, Resident target, int currentDay) {
+        CompoundTag snap = new CompoundTag();
+        snap.put("Profile", self.getProfile().save());
+        snap.put("Mood", this.save());
+        snap.putString("Name", self.getName().getString());
+        this.mimicSnapshot = snap;
+
+        String targetName = target.getName().getString();
+        // 对方 profile，但归属/住宅保留自己的
+        self.setProfile(target.getProfile().withOwnership(
+                self.getProfile().townId(), self.getProfile().homePos(),
+                self.getProfile().housingZoneId(), self.getProfile().housingAssignedAt()));
+        // 对方偏好与性格
+        this.copyPrefsFrom(target.getMoodState());
+        // 特性复制并生效
+        this.mimicTraitId = target.getMoodState().trait() == null
+                ? "" : target.getMoodState().trait().id();
+        if (target.getMoodState().trait() != null) {
+            this.trait = target.getMoodState().trait();
+        }
+        // 名字也变
+        self.setCustomName(net.minecraft.network.chat.Component.literal(targetName));
+
+        this.mimicTargetName = targetName;
+        this.mimicExpireDay = currentDay + 1;
+    }
+
+    /**
+     * 复制到期复原（用户定稿）：快照覆盖回复制前的面板（期间获取的数据一并丢弃）、
+     * 偏好/性格/特性/名字还原。想法<b>不读快照</b>——模仿期间产生的新想法保留。
+     */
+    public void restoreMimic(Resident self) {
+        CompoundTag snap = this.mimicSnapshot;
+        if (snap != null) {
+            self.setProfile(com.bmf.bmfstown.entity.profile.ResidentProfile.load(
+                    snap.getCompound("Profile")));
+            // MoodState 只挑偏好/性格/特性读回（跳过想法/状态——快照是模仿前时点）
+            CompoundTag mood = snap.getCompound("Mood");
+            if (mood.contains("LikedBlocks")) {
+                ListTag blocks = mood.getList("LikedBlocks", net.minecraft.nbt.Tag.TAG_STRING);
+                java.util.List<com.bmf.bmfstown.entity.profile.BlockMaterial> parsed = new ArrayList<>();
+                for (int i = 0; i < blocks.size(); i++) {
+                    try {
+                        var m = com.bmf.bmfstown.entity.profile.BlockMaterial.valueOf(blocks.getString(i));
+                        if (!parsed.contains(m)) {
+                            parsed.add(m);
+                        }
+                    } catch (IllegalArgumentException ignored) {
+                    }
+                }
+                this.likedBlocks = List.copyOf(parsed);
+            }
+            this.likedAnimal = getEnum(mood, "LikedAnimal", com.bmf.bmfstown.entity.profile.PrefAnimal.class, null);
+            this.likedColor = getEnum(mood, "LikedColor", com.bmf.bmfstown.entity.profile.PrefColor.class, null);
+            this.likesMusic = mood.getBoolean("LikesMusic");
+            this.dislikedWeather = getEnum(mood, "DislikedWeather",
+                    com.bmf.bmfstown.entity.profile.WeatherPref.class, null);
+            this.dislikedMob = getEnum(mood, "DislikedMob",
+                    com.bmf.bmfstown.entity.profile.MobPref.class, null);
+            this.personality = getEnum(mood, "Personality",
+                    com.bmf.bmfstown.entity.profile.PersonalityType.class,
+                    com.bmf.bmfstown.entity.profile.PersonalityType.OPTIMIST);
+            String snapTrait = mood.getString("TraitId");
+            this.trait = com.bmf.bmfstown.entity.profile.TraitType.byId(snapTrait);
+            if (snap.contains("Name")) {
+                self.setCustomName(net.minecraft.network.chat.Component.literal(snap.getString("Name")));
+            }
+        }
+        // 双保险：复原后本尊特性恒为 GATTACA
+        this.trait = com.bmf.bmfstown.entity.profile.TraitType.GATTACA;
+        this.mimicTargetName = "";
+        this.mimicTraitId = "";
+        this.mimicExpireDay = Integer.MIN_VALUE;
+        this.mimicSnapshot = null;
+    }
+
+    /** 模仿到期检查（tickTraits 内调，GATTACA 专属）。 */
+    private void tickMimicExpiry(Resident resident, int currentDay) {
+        if (this.trait != com.bmf.bmfstown.entity.profile.TraitType.GATTACA
+                || !isMimicking()) {
+            return;
+        }
+        if (this.mimicExpireDay != Integer.MIN_VALUE && currentDay >= this.mimicExpireDay) {
+            restoreMimic(resident);
+        }
     }
 
     /**
@@ -1302,6 +1446,12 @@ public final class MoodState {
             putEnum(tag, "DislikedMob", this.dislikedMob);
             putEnum(tag, "Personality", this.personality);
             tag.putString("TraitId", this.trait == null ? "" : this.trait.id());
+            tag.putString("MimicTarget", this.mimicTargetName);
+            tag.putString("MimicTraitId", this.mimicTraitId);
+            tag.putInt("MimicExpireDay", this.mimicExpireDay);
+            if (this.mimicSnapshot != null) {
+                tag.put("MimicSnapshot", this.mimicSnapshot);
+            }
             tag.putInt("LastKillDay", this.lastKillDay);
             tag.putInt("LastTimidScareDay", this.lastTimidScareDay);
             tag.putLong("LastWeatherAt", this.lastWeatherAt);
@@ -1398,6 +1548,12 @@ public final class MoodState {
             String traitId = tag.contains("TraitId") ? tag.getString("TraitId") : "";
             this.trait = traitId.isEmpty() ? null
                     : com.bmf.bmfstown.entity.profile.TraitType.byId(traitId);
+            this.mimicTargetName = tag.contains("MimicTarget") ? tag.getString("MimicTarget") : "";
+            this.mimicTraitId = tag.getString("MimicTraitId");
+            this.mimicExpireDay = tag.contains("MimicExpireDay")
+                    ? tag.getInt("MimicExpireDay") : Integer.MIN_VALUE;
+            this.mimicSnapshot = tag.contains("MimicSnapshot")
+                    ? tag.getCompound("MimicSnapshot").copy() : null;
             this.lastKillDay = tag.contains("LastKillDay") ? tag.getInt("LastKillDay") : -1;
             this.lastTimidScareDay = tag.contains("LastTimidScareDay") ? tag.getInt("LastTimidScareDay") : -1;
             this.lastWeatherAt = tag.contains("LastWeatherAt") ? tag.getLong("LastWeatherAt") : Long.MIN_VALUE;

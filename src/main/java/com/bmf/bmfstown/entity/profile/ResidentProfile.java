@@ -355,6 +355,17 @@ public record ResidentProfile(
                 housingZoneId, housingAssignedAt, this.skills, this.perks);
     }
 
+    /**
+     * GATTACA 模仿专用：替换归属四件套（城镇/住宅/分配时间）。
+     * 身份数据不随模仿改变（用户定稿：归属/住宅不复制）。
+     */
+    public ResidentProfile withOwnership(UUID townId, BlockPos homePos,
+            UUID housingZoneId, long housingAssignedAt) {
+        return new ResidentProfile(hunger, mood, profession, xp,
+                hobbyFood, likedProfession, dislikedProfession, townId, homePos,
+                housingZoneId, housingAssignedAt, this.skills, this.perks);
+    }
+
     public ResidentProfile withHobbyFood(Hobbies.Food value) {
         return new ResidentProfile(hunger, mood, profession, xp,
                 value, likedProfession, dislikedProfession, townId, homePos,

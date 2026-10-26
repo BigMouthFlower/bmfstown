@@ -217,11 +217,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      */
     @Override
     public void onClose() {
-        boolean back = FROM_HANDBOOK;
-        FROM_HANDBOOK = false;
+        int mode = REOPEN_TARGET;
+        int viewer = GATTACA_VIEWER_ID;
+        REOPEN_TARGET = 0;
+        GATTACA_VIEWER_ID = -1;
         super.onClose();
-        if (back && this.minecraft != null) {
-            this.minecraft.setScreen(new TownHandbookScreen());
+        if (this.minecraft == null) {
+            return;
+        }
+        switch (mode) {
+            case 1 -> this.minecraft.setScreen(new TownHandbookScreen());
+            case 2 -> this.minecraft.setScreen(GattacaSelectScreen.open(viewer));
+            case 3 -> ModNetworking.sendToServer(
+                    new ModNetworking.OpenResidentFromHandbookPayload(viewer, 0));
+            default -> { }
         }
     }
 
@@ -261,7 +270,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * 喜好页面板高：v0.8 偏好一览 10 行（名字/口味/工作/建材/动物/颜色/
      * 音乐/天气/生物/性格），行距 LINE，高度按 ROW_H 预留（与想法页同构）。
      */
-    private static final int HOBBY_GUI_HEIGHT = ResidentMenu.PANEL_Y + 11 * ROW_H + 6;
+    private static final int HOBBY_GUI_HEIGHT = ResidentMenu.PANEL_Y + 10 * ROW_H + 6;
 
     /** 想法日志可见条数（滚轮/滚动条翻更早的）。 */
     private static final int THOUGHTS_VISIBLE = 10;
@@ -555,7 +564,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         } else if (this.page == PAGE_WORK) {
             renderWorkPageText(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_HOBBY) {
-            renderHobbyPageText(gfx);
+            renderHobbyPageText(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_THOUGHTS) {
             renderThoughtsPageText(gfx);
         } else {
@@ -590,8 +599,15 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         gfx.fill(btnX + btnW - 1, btnY, btnX + btnW, btnY + btnH, 0xFF2E2E2E);
         gfx.drawString(this.font, RENAME_BTN_LABEL, btnX + 4, textY, 0xFFE8E8E8, false);
 
-        // ---- "传送"按钮（重命名右侧，用户定稿）：把玩家传到该镇民身边 ----
-        String tpLabel = I18n.get("gui.bmfstown.resident.tp_btn");
+        // ---- "传送"/"伪装"按钮（重命名右侧，用户定稿）----
+        // 只在手册入口（1=传送）和 GATTACA 查看入口（2=伪装）出现；
+        // 右键脸贴脸打开时没有意义，不渲染（用户实测反馈）
+        String tpLabel = REOPEN_TARGET == 2 ? I18n.get("gui.bmfstown.resident.disguise_btn")
+                : REOPEN_TARGET == 1 ? I18n.get("gui.bmfstown.resident.tp_btn")
+                : null;
+        if (tpLabel == null) {
+            this.teleportBtnRel = null;
+        } else {
         int tpX = btnX + btnW + 4;
         int tpW = this.font.width(tpLabel) + 8;
         this.teleportBtnRel = new int[]{tpX, btnY, tpW, btnH};
@@ -603,6 +619,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         gfx.fill(tpX, btnY + btnH - 1, tpX + tpW, btnY + btnH, 0xFF2E2E2E);
         gfx.fill(tpX + tpW - 1, btnY, tpX + tpW, btnY + btnH, 0xFF2E2E2E);
         gfx.drawString(this.font, tpLabel, tpX + 4, textY, 0xFFE8E8E8, false);
+        } // 传送/伪装按钮三态渲染结束
 
         textY += LINE;
         //
@@ -667,6 +684,49 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     : I18n.get("gui.bmfstown.resident.town.syncing");
         }
         drawStat(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.town"), townText, townId == null ? 0x808080 : 0x8A5A00);
+
+        // ---- 特性行（用户定稿：特性属"资料"不在"喜好"；GATTACA 伪装按钮在此）----
+        String trait = com.bmf.bmfstown.client.ClientMoodState.traitOf(resident.getUUID());
+        String mimic = com.bmf.bmfstown.client.ClientMoodState.mimicOf(resident.getUUID());
+        String traitValue;
+        boolean mimicking = !mimic.isEmpty();
+        if (mimicking) {
+            String[] parts = mimic.split("\\|", 2);
+            traitValue = I18n.get("trait.bmfstown." + parts[1]) + "（GATTACA）";
+        } else {
+            traitValue = trait.isEmpty() ? I18n.get("gui.bmfstown.resident.stat.value_none")
+                    : I18n.get("trait.bmfstown." + trait);
+        }
+        drawStat(gfx, textY + LINE * 5, I18n.get("gui.bmfstown.resident.stat.trait"),
+                traitValue, 0xB06A10);
+
+        // GATTACA 本尊（非查看模式）：特性行右侧"伪装"按钮；模仿中灰字"正在模仿 xxx"
+        if (trait.equals("gattaca") && GATTACA_VIEWER_ID < 0) {
+            int gBtnH = 11;
+            if (mimicking) {
+                String label = I18n.get("gui.bmfstown.resident.gattaca_mimicking",
+                        mimic.split("\\|", 2)[0]);
+                this.gattacaBtnRel = null; // 模仿中不可用
+                gfx.drawString(this.font, label, this.imageWidth - 6
+                        - this.font.width(label), textY + LINE * 5, 0x8A8A8A, false);
+            } else {
+                String label = I18n.get("gui.bmfstown.resident.gattaca_btn");
+                int gW = this.font.width(label) + 8;
+                int gX = this.imageWidth - 6 - gW;
+                int gY = textY + LINE * 5 - 1;
+                this.gattacaBtnRel = new int[]{gX, gY, gW, gBtnH};
+                boolean gHov = mouseX >= this.leftPos + gX && mouseX < this.leftPos + gX + gW
+                        && mouseY >= this.topPos + gY && mouseY < this.topPos + gY + gBtnH;
+                gfx.fill(gX, gY, gX + gW, gY + gBtnH, gHov ? 0xFF707070 : 0xFF5A5A5A);
+                gfx.fill(gX, gY, gX + 1, gY + gBtnH, 0xFF909090);
+                gfx.fill(gX, gY, gX + gW, gY + 1, 0xFF909090);
+                gfx.fill(gX, gY + gBtnH - 1, gX + gW, gY + gBtnH, 0xFF2E2E2E);
+                gfx.fill(gX + gW - 1, gY, gX + gW, gY + gBtnH, 0xFF2E2E2E);
+                gfx.drawString(this.font, label, gX + 4, textY + LINE * 5, 0xFFE8E8E8, false);
+            }
+        } else {
+            this.gattacaBtnRel = null;
+        }
     }
 
     /**
@@ -732,7 +792,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * <p>标签列比资料页宽（52px）："喜欢的建材"这类 5 字标签按 32px 会被
      * 值压字，所以本页走 {@link #drawPrefRow} 而不是 {@link #drawStat}。
      */
-    private void renderHobbyPageText(GuiGraphics gfx) {
+    private void renderHobbyPageText(GuiGraphics gfx, int mouseX, int mouseY) {
         Resident resident = this.menu.getResident();
         if (resident == null) {
             return;
@@ -788,12 +848,6 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             drawPrefRow(gfx, textY + LINE * 9,
                     I18n.get("gui.bmfstown.resident.stat.personality"), none, 0x808080);
         }
-
-        // 特性（v0.8.1 第三类词条；同步失败为空 → 显示"无"）
-        String trait = com.bmf.bmfstown.client.ClientMoodState.traitOf(resident.getUUID());
-        drawPrefRow(gfx, textY + LINE * 10,
-                I18n.get("gui.bmfstown.resident.stat.trait"),
-                trait.isEmpty() ? none : I18n.get("trait.bmfstown." + trait), 0xB06A10);
     }
 
     /**
@@ -1487,8 +1541,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 资料页"传送"按钮的面板相对区域（同上）。 */
     private int[] teleportBtnRel;
 
-    /** 本面板是否从城镇手册居民列表打开（关闭时回跳手册；由菜单 extraData 写入）。 */
-    public static boolean FROM_HANDBOOK;
+    /** 爱好页 GATTACA"伪装"按钮热区（渲染时更新；null = 本帧无/不可用）。 */
+    private int[] gattacaBtnRel;
+
+    /** 关闭回跳目标：0=游戏 1=城镇手册 2=GATTACA 选择列表 3=回观察者自己的 UI。 */
+    public static int REOPEN_TARGET = 0;
+    /** GATTACA 查看模式：观察者（GATTACA 本尊）实体 ID；-1 = 非查看模式。 */
+    public static int GATTACA_VIEWER_ID = -1;
 
     /**
      * 切换到非容器 Screen 前调用：显式关闭容器菜单。
@@ -1811,18 +1870,42 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 }
                 return true;
             }
-            // ---- 传送按钮 ----
-            if (this.teleportBtnRel != null) {
-                int[] tb = this.teleportBtnRel;
-                if (mouseX >= this.leftPos + tb[0] && mouseX < this.leftPos + tb[0] + tb[2]
-                        && mouseY >= this.topPos + tb[1] && mouseY < this.topPos + tb[1] + tb[3]) {
-                    Resident r = this.menu.getResident();
-                    if (r != null) {
+        }
+        // ---- 爱好页 GATTACA"伪装"按钮：打开模仿选择列表 ----
+        // （必须独立于资料页分支：之前嵌在 PAGE_INFO 块内，爱好页永远走不到，
+        //   表现为"点伪装没反应"——v0.8.1 实测教训）
+        if (this.page == PAGE_INFO && button == 0 && this.gattacaBtnRel != null) {
+            int[] gb = this.gattacaBtnRel;
+            if (mouseX >= this.leftPos + gb[0] && mouseX < this.leftPos + gb[0] + gb[2]
+                    && mouseY >= this.topPos + gb[1] && mouseY < this.topPos + gb[1] + gb[3]) {
+                Resident r = this.menu.getResident();
+                if (r != null && this.minecraft != null) {
+                    closeContainerBeforeSwitch();
+                    this.minecraft.setScreen(GattacaSelectScreen.open(r.getId()));
+                }
+                return true;
+            }
+        }
+        // ---- 传送 / GATTACA 伪装按钮 ----
+        // （只在手册/GATTACA 查看入口出现：右键脸贴脸打开时没有意义，不渲染）
+        if (button == 0 && this.teleportBtnRel != null) {
+            int[] tb = this.teleportBtnRel;
+            if (mouseX >= this.leftPos + tb[0] && mouseX < this.leftPos + tb[0] + tb[2]
+                    && mouseY >= this.topPos + tb[1] && mouseY < this.topPos + tb[1] + tb[3]) {
+                Resident r = this.menu.getResident();
+                if (r != null) {
+                    if (REOPEN_TARGET == 2 && GATTACA_VIEWER_ID >= 0) {
+                        // 伪装：复制对方数据，关当前查看回观察者自己的 UI
+                        ModNetworking.sendToServer(new ModNetworking.GattacaMimicPayload(
+                                GATTACA_VIEWER_ID, r.getId()));
+                        REOPEN_TARGET = 3;
+                        onClose();
+                    } else {
                         ModNetworking.sendToServer(new ModNetworking.TeleportToResidentPayload(
                                 r.getId()));
                     }
-                    return true;
                 }
+                return true;
             }
         }
         // ---- 工作页点击：职业行 + 工作控件区 ----

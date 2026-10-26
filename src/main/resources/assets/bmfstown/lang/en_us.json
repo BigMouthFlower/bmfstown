@@ -401,5 +401,11 @@
   "gui.bmfstown.handbook.member_name": "Name",
   "gui.bmfstown.handbook.member_prof": "Job",
   "gui.bmfstown.resident.tp_btn": "TP",
-  "msg.bmfstown.teleport.done": "§aTeleported to %s"
+  "msg.bmfstown.teleport.done": "§aTeleported to %s",
+  "gui.bmfstown.gattaca.title": "Pick a Mimic Target",
+  "gui.bmfstown.gattaca.hint": "Click to view · header to sort · ESC/E to exit",
+  "gui.bmfstown.resident.gattaca_btn": "Disguise",
+  "gui.bmfstown.resident.disguise_btn": "Disguise",
+  "gui.bmfstown.resident.gattaca_mimicking": "Mimicking %s",
+  "msg.bmfstown.gattaca.mimic": "§a%s is now mimicking %s (reverts after a day)"
 }

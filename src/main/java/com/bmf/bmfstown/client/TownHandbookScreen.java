@@ -865,7 +865,7 @@ public class TownHandbookScreen extends Screen {
                     if (idx >= 0 && idx < members.size()
                             && mouseX >= lx && mouseX < lx + TEXT_W) {
                         ModNetworking.sendToServer(new ModNetworking.OpenResidentFromHandbookPayload(
-                                members.get(idx).entityId()));
+                                members.get(idx).entityId(), 1));
                         return true;
                     }
                 }
