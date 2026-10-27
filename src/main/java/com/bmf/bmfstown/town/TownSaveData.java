@@ -214,7 +214,7 @@ public class TownSaveData extends SavedData {
                     new net.minecraft.world.phys.AABB(
                             town.min().getX(), town.min().getY(), town.min().getZ(),
                             town.max().getX() + 1, town.max().getY() + 1, town.max().getZ() + 1),
-                    r -> town.id().equals(r.getProfile().townId()))) {
+                    r -> town.id().equals(r.getIdentity().townId()))) {
                 sb.append("M|").append(town.id()).append('|').append(r.getId())
                         .append('|').append(r.getProfession().displayName().substring("profession.bmfstown.".length()))
                         .append('|').append(r.getName().getString())

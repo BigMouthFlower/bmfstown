@@ -1,5 +1,6 @@
 package com.bmf.bmfstown.entity;
 
+import com.bmf.bmfstown.entity.domain.Status;
 import com.bmf.bmfstown.town.TownZone;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -65,13 +66,13 @@ public final class HomeMaterialScanManager {
     /**
      * 委托一次"本日住宅区材质扫描"。
      *
-     * <p>每日结算时由 {@code MoodState.settleHomeMaterials} 调用。
+     * <p>每日结算时由 {@code Status.settleHomeMaterials} 调用。
      * 同镇民同日重复请求直接复用（幂等）；任务已完成则立刻用缓存结果结算。
      *
      * @return 委托是否成功（镇民无效时返回 false）
      */
     public static void request(ServerLevel level, TownZone zone,
-                               Resident resident, MoodState mood) {
+                               Resident resident, Status status) {
         int day = currentDay(level);
         List<Job> list = JOBS.computeIfAbsent(level.dimension(), k -> new ArrayList<>());
 
@@ -89,13 +90,13 @@ public final class HomeMaterialScanManager {
         }
 
         if (mine == null) {
-            mine = new Job(zone, day, resident, mood);
+            mine = new Job(zone, day, resident, status);
             list.add(mine);
             return;
         }
         if (mine.done) {
             // 同日重复请求（reroll 等边缘场景）：直接用已扫出的结果
-            mine.mood().applyHomeMaterialResult(resident, level,
+            mine.status().applyHomeMaterialResult(resident, level,
                     mine.blockHit, mine.colorHit);
         }
         // 未完成：什么都不做——结果出来时会统一结算
@@ -128,7 +129,7 @@ public final class HomeMaterialScanManager {
             if (job.done) {
                 it.remove();
                 if (!job.resident.isRemoved() && job.resident.isAlive()) {
-                    job.mood().applyHomeMaterialResult(job.resident, level,
+                    job.status().applyHomeMaterialResult(job.resident, level,
                             job.blockHit, job.colorHit);
                 }
             }
@@ -146,10 +147,10 @@ public final class HomeMaterialScanManager {
             BlockPos.MutableBlockPos pos = job.cursor;
             if (level.hasChunkAt(pos)) {
                 String name = registryName(level.getBlockState(pos).getBlock());
-                if (!job.blockHit && job.mood().likesBlock(name)) {
+                if (!job.blockHit && job.resident.getPrefs().likesBlock(name)) {
                     job.blockHit = true;
                 }
-                if (!job.colorHit && job.mood().likesColor(name)) {
+                if (!job.colorHit && job.resident.getPrefs().likesColor(name)) {
                     job.colorHit = true;
                 }
                 if (job.blockHit && job.colorHit) {
@@ -198,18 +199,18 @@ public final class HomeMaterialScanManager {
         final TownZone zone;
         final int day;
         final Resident resident;
-        final MoodState mood;
+        final Status status;
         final int minX, minY, minZ, maxX, maxY, maxZ;
         final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         boolean blockHit;
         boolean colorHit;
         boolean done;
 
-        Job(TownZone zone, int day, Resident resident, MoodState mood) {
+        Job(TownZone zone, int day, Resident resident, Status status) {
             this.zone = zone;
             this.day = day;
             this.resident = resident;
-            this.mood = mood;
+            this.status = status;
             this.minX = zone.min().getX();
             this.minY = zone.min().getY();
             this.minZ = zone.min().getZ();
@@ -219,8 +220,8 @@ public final class HomeMaterialScanManager {
             this.cursor.set(minX, minY, minZ);
         }
 
-        MoodState mood() {
-            return this.mood;
+        Status status() {
+            return this.status;
         }
     }
 }

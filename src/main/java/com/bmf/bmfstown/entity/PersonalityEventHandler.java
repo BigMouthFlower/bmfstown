@@ -51,7 +51,7 @@ public final class PersonalityEventHandler {
             if (resident == event.getEntity() || !resident.isAlive()) {
                 continue; // 死者本人 / 已死亡实体不处理
             }
-            resident.getMoodState().noteDeathNearby(resident, level);
+            resident.getStatus().noteDeathNearby(resident, level);
         }
     }
 
@@ -73,7 +73,7 @@ public final class PersonalityEventHandler {
         List<Resident> residents = level.getEntitiesOfClass(Resident.class, box);
         for (Resident resident : residents) {
             if (resident.isAlive()) {
-                resident.getMoodState().noteExplosionNearby(resident, level);
+                resident.getStatus().noteExplosionNearby(resident, level);
             }
         }
     }

@@ -2,7 +2,8 @@ package com.bmf.bmfstown.client;
 
 import com.bmf.bmfstown.BmfTown;
 import com.bmf.bmfstown.entity.Resident;
-import com.bmf.bmfstown.entity.profile.ResidentProfile;
+import com.bmf.bmfstown.entity.domain.ResidentSnapshot;
+import com.bmf.bmfstown.entity.domain.Status;
 import com.bmf.bmfstown.menu.ResidentMenu;
 import com.bmf.bmfstown.network.ModNetworking;
 import net.minecraft.ChatFormatting;
@@ -637,9 +638,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 healthHalf / 2 + " / " + (int) resident.getMaxHealth(), 0xB02020);
         // 2. 饥饿（20 点 = 10 个鸡腿，显示成 "当前/20"）
         drawStat(gfx, textY + LINE, I18n.get("gui.bmfstown.resident.stat.hunger"),
-                hunger + " / " + ResidentProfile.MAX_HUNGER, 0xA87300);
+                hunger + " / " + Status.MAX_HUNGER, 0xA87300);
         // 3. 心情（带表情符号，档位凭数值现算，阈值只有一份）
-        ResidentProfile.MoodTier moodTier = ResidentProfile.moodTierOf(mood);
+        Status.MoodTier moodTier = Status.moodTierOf(mood);
         drawStat(gfx, textY + LINE * 2, I18n.get("gui.bmfstown.resident.stat.mood"),
                 I18n.get("gui.bmfstown.resident.stat.mood_value",
                         I18n.get(moodTier.displayName()), moodTier.bubble(), mood), 0x2E7D2E);
@@ -648,7 +649,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         //    旧的全局 xp/level 已休眠，这里若还读 p.title()/p.level()，
         //    就会出现"工作页显示老练、资料页显示新手"的两套口径打架。
         //    （v0.7：原第 4 行好感度随好感度系统删除，后续行上移一位。）
-        ResidentProfile p = resident.getProfile();
+        ResidentSnapshot p = resident.getArchive();
         // 职业行 = 职业名 + 段位（如"战士 Lv.5（专家）"）。
         // 段位从该职业主技能的累计经验实时推导（SkillTiers.tierOf）。
         String profLine = I18n.get(p.profession().displayName());
@@ -797,7 +798,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (resident == null) {
             return;
         }
-        ResidentProfile p = resident.getProfile();
+        ResidentSnapshot p = resident.getArchive();
         ClientMoodState.MoodPrefs prefs = ClientMoodState.prefsOf(resident.getUUID());
         int textY = ResidentMenu.PANEL_Y;
         gfx.drawString(this.font, resident.getName(), TEXT_PAD, textY, 0x303030, false);
@@ -1122,7 +1123,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (r == null) {
             return -1;
         }
-        String choice = r.getProfile().perkChoice(perkNodeIds()[node]);
+        String choice = r.getArchive().perkChoice(currentProfession(), perkNodeIds()[node]);
         if (choice == null) {
             return -1;
         }
@@ -1147,13 +1148,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             return -1;
         }
         return com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(
-                this.menu.getResident().getProfile().skillXp(skill));
+                this.menu.getResident().getArchive().skillXp(skill));
     }
 
     /** 当前镇民的职业（客户端档案已同步；镇民不在时返回 null）。 */
     private com.bmf.bmfstown.entity.profile.ProfessionType currentProfession() {
         Resident r = this.menu.getResident();
-        return r == null ? null : r.getProfile().profession();
+        return r == null ? null : r.getArchive().profession();
     }
 
     /** 当前工作模式序号（读实体同步数据；镇民不在/数据未到时按无工作处理）。 */
@@ -1361,7 +1362,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         // 技能名对战士这种"一职业一技能"的结构是冗余信息，不显示。
         if (resident != null) {
             var skill = current.mainSkill();
-            int xp = resident.getProfile().skillXp(skill);
+            int xp = resident.getArchive().skillXp(skill);
             int tier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(xp);
             String tierName = I18n.get("gui.bmfstown.resident.tier." + tier);
             String lv = I18n.get("gui.bmfstown.resident.stat.level",
@@ -1401,7 +1402,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             //      算式与服务端 Resident.professionEfficiency 共用
             //      EfficiencyMath——面板展示的就是实际生效的数值。
             this.effParts.clear();
-            var profile = resident.getProfile();
+            var profile = resident.getArchive();
             int effY = textY + 20;
             int ex = 8;
             ex = drawSegment(gfx, ex, effY, I18n.get("gui.bmfstown.resident.work.efficiency_label"), 0x555555);
@@ -1436,7 +1437,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
                 // 工人精通分支：效率（速度 +20%）/ 节能（速度 -20%）→ 公式可见
                 ws = com.bmf.bmfstown.entity.profile.EfficiencyMath.workerSpeedMultiplier(
-                        resident.getProfile().perkChoice(
+                        resident.getArchive().perkChoice(
+                                com.bmf.bmfstown.entity.profile.ProfessionType.WORKER,
                                 com.bmf.bmfstown.entity.profile.Perks.NODE_W_ADEPT));
                 if (ws != 1.0) {
                     int wsPct = (int) Math.round(ws * 100);
@@ -1482,7 +1484,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 java.util.List<Item> unlocked = new java.util.ArrayList<>();
                 for (var entry : com.bmf.bmfstown.entity.profile.WorkshopCrafts.whitelist()) {
                     if (com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
-                            resident.getProfile(), entry.getKey())) {
+                            resident.getArchive(), entry.getKey())) {
                         unlocked.add(entry.getKey());
                     }
                 }
@@ -1676,13 +1678,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 当前归属的城镇（镇民档案里的 townId；镇民不在时 null）。 */
     private UUID currentTownId() {
         Resident r = this.menu.getResident();
-        return r == null ? null : r.getProfile().townId();
+        return r == null ? null : r.getArchive().townId();
     }
 
     /** 当前绑定的住宅区（镇民档案里的 housingZoneId；镇民不在时 null）。 */
     private UUID currentHousingId() {
         Resident r = this.menu.getResident();
-        return r == null ? null : r.getProfile().housingZoneId();
+        return r == null ? null : r.getArchive().housingZoneId();
     }
 
     /**
@@ -1934,7 +1936,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     java.util.List<Item> unlocked = new java.util.ArrayList<>();
                     for (var entry : catalog) {
                         if (com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
-                                r.getProfile(), entry.getKey())) {
+                                r.getArchive(), entry.getKey())) {
                             unlocked.add(entry.getKey());
                         }
                     }

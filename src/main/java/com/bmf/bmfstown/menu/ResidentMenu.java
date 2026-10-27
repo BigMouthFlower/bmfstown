@@ -274,12 +274,12 @@ public class ResidentMenu extends AbstractContainerMenu {
         }
 
         if (id == BTN_UNASSIGN) {
-            if (this.resident.getProfile().townId() == null) {
+            if (this.resident.getIdentity().townId() == null) {
                 return true; // 本来就自由身，别刷屏
             }
             // 城镇解绑 → 住宅绑定同时失效（住宅区隶属于城镇）
-            this.resident.setProfile(this.resident.getProfile()
-                    .withTownId(null).withHousing(null, 0L));
+            this.resident.getIdentity().clearOwnership();
+            this.resident.syncClient();
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.resident.unbound", this.resident.getName().getString()), true);
             return true;
@@ -327,7 +327,8 @@ public class ResidentMenu extends AbstractContainerMenu {
             if (this.resident.getProfession() == type) {
                 return true; // 重复点不算错
             }
-            this.resident.setProfile(this.resident.getProfile().withProfession(type));
+            this.resident.getIdentity().setProfession(type);
+            this.resident.syncClient();
             // 换成非战士职业 → 战士工作模式一并作废（岗位跟着职业走）
             if (type != ProfessionType.WARRIOR) {
                 this.resident.setWorkMode(com.bmf.bmfstown.entity.WorkMode.NONE, null, null);
@@ -354,10 +355,11 @@ public class ResidentMenu extends AbstractContainerMenu {
         }
 
         if (id == BTN_HOUSING_UNASSIGN) {
-            if (this.resident.getProfile().housingZoneId() == null) {
+            if (this.resident.getIdentity().housingZoneId() == null) {
                 return true; // 本来就没绑，别刷屏
             }
-            this.resident.setProfile(this.resident.getProfile().withHousing(null, 0L));
+            this.resident.getIdentity().setHousing(null, 0L);
+            this.resident.syncClient();
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.housing.unassigned", this.resident.getName().getString()), true);
             ModNetworking.sendHandbookSync((net.minecraft.server.level.ServerPlayer) player, false);
@@ -371,8 +373,9 @@ public class ResidentMenu extends AbstractContainerMenu {
             }
             com.bmf.bmfstown.town.Town town = towns.get(index);
             // 换城镇 → 原住宅失效（住宅区隶属于城镇），一并清掉
-            this.resident.setProfile(this.resident.getProfile()
-                    .withTownId(town.id()).withHousing(null, 0L));
+            this.resident.getIdentity().setTownId(town.id());
+            this.resident.getIdentity().setHousing(null, 0L);
+            this.resident.syncClient();
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.resident.bound",
                     this.resident.getName().getString(), town.name()), true);
@@ -390,7 +393,7 @@ public class ResidentMenu extends AbstractContainerMenu {
      */
     private java.util.List<com.bmf.bmfstown.town.TownZone> housingZonesOf(
             net.minecraft.server.level.ServerLevel level) {
-        java.util.UUID townId = this.resident.getProfile().townId();
+        java.util.UUID townId = this.resident.getIdentity().townId();
         if (townId == null) {
             return java.util.List.of();
         }
@@ -412,7 +415,7 @@ public class ResidentMenu extends AbstractContainerMenu {
     private void assignHousing(net.minecraft.world.entity.player.Player player,
                                net.minecraft.server.level.ServerLevel level,
                                com.bmf.bmfstown.town.TownZone zone) {
-        java.util.UUID current = this.resident.getProfile().housingZoneId();
+        java.util.UUID current = this.resident.getIdentity().housingZoneId();
         if (zone.id().equals(current)) {
             return; // 已经住这儿了，静默成功
         }
@@ -437,8 +440,8 @@ public class ResidentMenu extends AbstractContainerMenu {
 
         // 时间戳用真实时间而不是游戏 tick：游戏 tick 读档会重置，
         // 而"谁先住进来"必须跨存档稳定（超员踢人靠它排序）。
-        this.resident.setProfile(this.resident.getProfile()
-                .withHousing(zone.id(), System.currentTimeMillis()));
+        this.resident.getIdentity().setHousing(zone.id(), System.currentTimeMillis());
+        this.resident.syncClient();
         player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                 "msg.bmfstown.housing.assigned",
                 this.resident.getName().getString(), zone.name(),
@@ -508,8 +511,8 @@ public class ResidentMenu extends AbstractContainerMenu {
                 // 每 tick 都会被 broadcastChanges 轮询，必须读"当前值"
                 return switch (index) {
                     case DATA_HEALTH -> Mth.floor(resident.getHealth() * 2.0F);
-                    case DATA_HUNGER -> resident.getProfile().hunger();
-                    case DATA_MOOD -> resident.getProfile().mood();
+                    case DATA_HUNGER -> resident.getStatus().hunger();
+                    case DATA_MOOD -> resident.getStatus().mood();
                     case DATA_WORKMODE -> resident.getWorkMode().ordinal();
                     default -> 0;
                 };

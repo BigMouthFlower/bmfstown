@@ -1,6 +1,8 @@
 package com.bmf.bmfstown.entity.profile;
 
 import com.bmf.bmfstown.config.Config;
+import com.bmf.bmfstown.entity.Resident;
+import com.bmf.bmfstown.entity.domain.Status;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.ItemStack;
@@ -48,36 +50,36 @@ public final class HungerSystem {
     }
 
     /**
-     * 推进饥饿计时，返回是否需要更新档案。
+     * 推进饥饿计时（六域重构后直接读写 Resident 的 Status/Growth/Identity 域）。
      *
      * @param elapsedTicks 上次检查到现在经过的 tick 数
-     * @return 传入了新的档案则返回它；没变化则返回 {@code null}
      */
-    public static ResidentProfile tickHunger(ResidentProfile profile, int elapsedTicks) {
+    public static void tickHunger(Resident resident, int elapsedTicks) {
         int ticksPerPoint = Config.HUNGER_TICKS_PER_POINT.get();
         if (elapsedTicks < ticksPerPoint) {
-            return null;
+            return;
         }
         int points = elapsedTicks / ticksPerPoint;
         // 工人'效率/节能'分支的饥饿速度修正（效率饿得快 ×1.5 / 节能省粮 ×0.5）
-        points = applyWorkerHungerTrait(profile, points);
+        points = applyWorkerHungerTrait(resident, points);
+        Status status = resident.getStatus();
         // 0 是下限，已经饿到底就不再往下掉
-        int newHunger = Math.max(0, profile.hunger() - points);
-        if (newHunger == profile.hunger()) {
-            return null;
+        int newHunger = Math.max(0, status.hunger() - points);
+        if (newHunger != status.hunger()) {
+            status.setHunger(newHunger);
+            resident.syncClient();
         }
-        return profile.withHunger(newHunger);
     }
 
     /**
      * 工人精通分支的饥饿速度修正（v0.8.1）。
      * 效率：饿得快（×1.5，力量换饭量）；节能：省粮（×0.5，慢工出细活）。
      */
-    private static int applyWorkerHungerTrait(ResidentProfile profile, int points) {
-        if (profile.profession() != ProfessionType.WORKER) {
+    private static int applyWorkerHungerTrait(Resident resident, int points) {
+        if (resident.getIdentity().profession() != ProfessionType.WORKER) {
             return points;
         }
-        String choice = profile.perkChoice(Perks.NODE_W_ADEPT);
+        String choice = resident.getGrowth().perkChoice(ProfessionType.WORKER, Perks.NODE_W_ADEPT);
         if ("efficiency".equals(choice)) {
             return Math.max(1, points * 3 / 2);
         }
@@ -94,8 +96,8 @@ public final class HungerSystem {
      *
      * @return 背包槽位索引；没有能吃的就返回 {@code -1}
      */
-    public static int findFoodSlot(ResidentInventory inventory, ResidentProfile profile) {
-        return findFoodSlot(inventory, profile, false);
+    public static int findFoodSlot(ResidentInventory inventory, Resident resident) {
+        return findFoodSlot(inventory, resident, false);
     }
 
     /**
@@ -122,20 +124,21 @@ public final class HungerSystem {
      *
      * @return 背包槽位索引；没有能吃的就返回 {@code -1}
      */
-    public static int findFoodSlot(ResidentInventory inventory, ResidentProfile profile,
+    public static int findFoodSlot(ResidentInventory inventory, Resident resident,
                                    boolean allowWaste) {
-        Hobbies.Food hobby = profile.hobbyFood();
+        Hobbies.Food hobby = resident.getPrefs().hobbyFood();
+        Status status = resident.getStatus();
         // 第一轮：爱吃组里挑能吃的（组内看营养最低）
-        int favoriteSlot = scanFood(inventory, profile, hobby, true, !allowWaste);
+        int favoriteSlot = scanFood(inventory, status, hobby, true, !allowWaste);
         if (favoriteSlot >= 0) {
             return favoriteSlot;
         }
         // 背包里还有爱吃的东西（现在吃会浪费）→ 挑食，拒绝普通食物
-        if (scanFood(inventory, profile, hobby, true, false) >= 0) {
+        if (scanFood(inventory, status, hobby, true, false) >= 0) {
             return -1;
         }
         // 背包里根本没有爱吃的 → 按老规则吃普通
-        return scanFood(inventory, profile, hobby, false, !allowWaste);
+        return scanFood(inventory, status, hobby, false, !allowWaste);
     }
 
     /**
@@ -149,7 +152,7 @@ public final class HungerSystem {
      *                     以及回血优先/医疗进食）
      * @return 背包槽位索引；这一轮没有能吃的就返回 {@code -1}
      */
-    private static int scanFood(ResidentInventory inventory, ResidentProfile profile,
+    private static int scanFood(ResidentInventory inventory, Status status,
                                 Hobbies.Food hobby, boolean favoriteOnly, boolean respectGate) {
         int bestSlot = -1;
         int bestNutrition = Integer.MAX_VALUE;
@@ -169,7 +172,7 @@ public final class HungerSystem {
             }
             int nutrition = food.nutrition();
             // "不浪费"门槛（存在性检查或回血优先时关闭）
-            if (respectGate && !profile.canEatWithoutWaste(nutrition)) {
+            if (respectGate && !status.canEatWithoutWaste(nutrition)) {
                 continue;
             }
             // 组内优先营养值最低的
@@ -184,23 +187,26 @@ public final class HungerSystem {
     /**
      * 执行一次进食。调用前应先 {@link #findFoodSlot} 确认有得吃。
      *
-     * @return 进食后的档案；没能吃则返回 {@code null}
+     * @return 进食后的饥饿值；没能吃则返回 {@code -1}
      */
-    public static ResidentProfile eat(ResidentProfile profile, ResidentInventory inventory, int slot) {
+    public static int eat(Resident resident, ResidentInventory inventory, int slot) {
         ItemStack stack = inventory.getItem(slot);
         if (stack.isEmpty()) {
-            return null;
+            return -1;
         }
         FoodProperties food = stack.get(DataComponents.FOOD);
         if (food == null) {
-            return null;
+            return -1;
         }
         int nutrition = food.nutrition();
-        if (!profile.canEatWithoutWaste(nutrition)) {
-            return null;
+        Status status = resident.getStatus();
+        if (!status.canEatWithoutWaste(nutrition)) {
+            return -1;
         }
 
         inventory.extractOne(slot);
-        return profile.withHunger(profile.hunger() + nutrition);
+        status.setHunger(status.hunger() + nutrition);
+        resident.syncClient();
+        return status.hunger();
     }
 }

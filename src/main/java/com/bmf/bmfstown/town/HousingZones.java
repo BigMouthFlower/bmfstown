@@ -119,7 +119,7 @@ public final class HousingZones {
                 zone.max().getZ() + 1.0D + SCAN_MARGIN);
         int count = 0;
         for (Resident resident : level.getEntitiesOfClass(Resident.class, box)) {
-            if (zone.id().equals(resident.getProfile().housingZoneId())) {
+            if (zone.id().equals(resident.getIdentity().housingZoneId())) {
                 count++;
             }
         }

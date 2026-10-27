@@ -1,6 +1,8 @@
 package com.bmf.bmfstown.entity;
 
 import com.bmf.bmfstown.config.Config;
+import com.bmf.bmfstown.entity.domain.JobState;
+import com.bmf.bmfstown.entity.profile.ProfessionType;
 import com.bmf.bmfstown.entity.profile.SkillType;
 import com.bmf.bmfstown.entity.profile.WorkshopCraft;
 import com.bmf.bmfstown.entity.profile.WorkshopCrafts;
@@ -97,15 +99,15 @@ public class WorkerGoal extends Goal {
         if (level == null || !inWorkHours(level)) {
             return false;
         }
-        MoodState mood = this.resident.getMoodState();
-        if (mood.craftTablePos() == 0L || mood.inputChestPos() == 0L
-                || mood.outputChestPos() == 0L || !mood.workerEnabled()
-                || mood.orderItem().isEmpty()) {
+        JobState job = this.resident.getJobState();
+        if (job.craftTablePos() == 0L || job.inputChestPos() == 0L
+                || job.outputChestPos() == 0L || !job.workerEnabled()
+                || job.orderItem().isEmpty()) {
             return false;
         }
-        this.tablePos = BlockPos.of(mood.craftTablePos());
-        this.inputPos = BlockPos.of(mood.inputChestPos());
-        this.outputPos = BlockPos.of(mood.outputChestPos());
+        this.tablePos = BlockPos.of(job.craftTablePos());
+        this.inputPos = BlockPos.of(job.inputChestPos());
+        this.outputPos = BlockPos.of(job.outputChestPos());
         return true;
     }
 
@@ -116,9 +118,9 @@ public class WorkerGoal extends Goal {
                 || !inWorkHours(level)) {
             return false;
         }
-        MoodState mood = this.resident.getMoodState();
-        return mood.workerEnabled() && mood.craftTablePos() != 0L
-                && !mood.orderItem().isEmpty()
+        JobState job = this.resident.getJobState();
+        return job.workerEnabled() && job.craftTablePos() != 0L
+                && !job.orderItem().isEmpty()
                 && this.resident.getProfession()
                 == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER;
     }
@@ -135,7 +137,7 @@ public class WorkerGoal extends Goal {
         this.retryCooldown = 0;
         navigateToTable();
         LOGGER.debug("[BmfTown][工人] {} 开工（订单={}）",
-                this.resident.getName().getString(), this.resident.getMoodState().orderItem());
+                this.resident.getName().getString(), this.resident.getJobState().orderItem());
     }
 
     @Override
@@ -144,8 +146,8 @@ public class WorkerGoal extends Goal {
         this.resident.setWorkerVisual(false);
         ServerLevel level = serverLevel();
         boolean resumable = level != null && inWorkHours(level)
-                && this.resident.getMoodState().workerEnabled()
-                && this.resident.getMoodState().craftTablePos() != 0L;
+                && this.resident.getJobState().workerEnabled()
+                && this.resident.getJobState().craftTablePos() != 0L;
         if ((this.phase == Phase.CRAFT || this.phase == Phase.FETCH_TAKE
                 || this.phase == Phase.STORE_PUT) && !resumable) {
             giveBackHeldMaterials();
@@ -225,7 +227,7 @@ public class WorkerGoal extends Goal {
         }
 
         // 订单：按产物注册名从真实配方目录反查
-        String orderItem = this.resident.getMoodState().orderItem();
+        String orderItem = this.resident.getJobState().orderItem();
         WorkshopCraft order = findOrder(level, orderItem);
         if (order == null) {
             this.resident.containerFx(level, this.inputPos, false);
@@ -234,7 +236,7 @@ public class WorkerGoal extends Goal {
                     this.resident.getName().getString(), orderItem);
             return;
         }
-        if (!WorkshopCrafts.lineAllowed(this.resident.getProfile(), order.result())) {
+        if (!WorkshopCrafts.lineAllowed(this.resident.getArchive(), order.result())) {
             this.resident.containerFx(level, this.inputPos, false);
             this.retryCooldown = IDLE_RETRY_TICKS;
             return;
@@ -377,10 +379,10 @@ public class WorkerGoal extends Goal {
     private int craftTicks() {
         var skill = this.resident.getProfession().mainSkill();
         double efficiency = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
-                this.resident.getProfile().skillXp(skill),
-                this.resident.getProfile().mood(), false);
+                this.resident.getGrowth().skillXp(skill),
+                this.resident.getStatus().mood(), false);
         efficiency *= com.bmf.bmfstown.entity.profile.EfficiencyMath.workerSpeedMultiplier(
-                this.resident.getProfile().perkChoice(
+                this.resident.getGrowth().perkChoice(ProfessionType.WORKER,
                         com.bmf.bmfstown.entity.profile.Perks.NODE_W_ADEPT));
         if (efficiency < 0.1D) {
             efficiency = 0.1D;

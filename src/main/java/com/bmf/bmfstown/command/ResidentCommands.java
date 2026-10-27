@@ -1,7 +1,7 @@
 package com.bmf.bmfstown.command;
 
 import com.bmf.bmfstown.entity.Resident;
-import com.bmf.bmfstown.entity.profile.ResidentProfile;
+import com.bmf.bmfstown.entity.domain.Status;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -45,7 +45,7 @@ public final class ResidentCommands {
         // ---- /bmfstown hunger <目标> <0-20> ----
         root.then(Commands.literal("hunger")
                 .then(Commands.argument("targets", EntityArgument.entities())
-                        .then(Commands.argument("value", IntegerArgumentType.integer(0, ResidentProfile.MAX_HUNGER))
+                        .then(Commands.argument("value", IntegerArgumentType.integer(0, Status.MAX_HUNGER))
                                 .executes(ctx -> setHunger(
                                         ctx,
                                         EntityArgument.getEntities(ctx, "targets"),
@@ -54,7 +54,7 @@ public final class ResidentCommands {
         // ---- /bmfstown mood <目标> <0-100> ----
         root.then(Commands.literal("mood")
                 .then(Commands.argument("targets", EntityArgument.entities())
-                        .then(Commands.argument("value", IntegerArgumentType.integer(0, ResidentProfile.MAX_MOOD))
+                        .then(Commands.argument("value", IntegerArgumentType.integer(0, Status.MAX_MOOD))
                                 .executes(ctx -> setMood(
                                         ctx,
                                         EntityArgument.getEntities(ctx, "targets"),
@@ -117,7 +117,7 @@ public final class ResidentCommands {
                                         .toArray(String[]::new)) + "）"));
                 return 0;
             }
-            resident.getMoodState().setTraitForCommand(trait);
+            resident.getTraitState().setTraitForCommand(trait);
             changed++;
             ctx.getSource().sendSuccess(() -> Component.literal(
                     resident.getName().getString() + " 的特性 → "
@@ -139,7 +139,8 @@ public final class ResidentCommands {
             if (!(entity instanceof Resident resident)) {
                 continue;
             }
-            resident.setProfile(resident.getProfile().withHunger(value));
+            resident.getStatus().setHunger(value);
+            resident.syncClient();
             changed++;
             // 反馈：告诉执行者改成了什么（单人游戏里就是你自己看到这条）
             ctx.getSource().sendSuccess(() -> Component.translatable(
@@ -161,7 +162,8 @@ public final class ResidentCommands {
             if (!(entity instanceof Resident resident)) {
                 continue;
             }
-            resident.setProfile(resident.getProfile().withMood(value));
+            resident.getStatus().setMood(value);
+            resident.syncClient();
             changed++;
             ctx.getSource().sendSuccess(() -> Component.translatable(
                     "msg.bmfstown.command.mood_set",
@@ -186,14 +188,15 @@ public final class ResidentCommands {
             if (!(entity instanceof Resident resident)) {
                 continue;
             }
-            var profession = resident.getProfile().profession();
+            var profession = resident.getIdentity().profession();
             if (profession == null || !profession.isReal() || profession.mainSkill() == null) {
                 ctx.getSource().sendFailure(Component.translatable(
                         "msg.bmfstown.command.no_profession", resident.getName().getString()));
                 continue;
             }
             var skill = profession.mainSkill();
-            resident.setProfile(resident.getProfile().withSkillXp(skill, value));
+            resident.getGrowth().setSkillXp(skill, value);
+            resident.syncClient();
             changed++;
             ctx.getSource().sendSuccess(() -> Component.translatable(
                     "msg.bmfstown.command.skillxp_set",
@@ -227,7 +230,8 @@ public final class ResidentCommands {
             if (!(resident.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
                 continue; // 理论上命令只在服务端执行，防御姿态
             }
-            resident.getMoodState().reroll(resident, serverLevel);
+            resident.getStatus().reroll(resident, serverLevel);
+            resident.syncClient();
             changed++;
             ctx.getSource().sendSuccess(() -> Component.translatable(
                     "msg.bmfstown.command.reroll_done",

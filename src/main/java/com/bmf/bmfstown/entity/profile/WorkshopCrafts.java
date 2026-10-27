@@ -71,12 +71,13 @@ public final class WorkshopCrafts {
     }
 
     /** 该镇民当前是否被允许做该产物（基础档人人可做；布线/机关看大师分支）。 */
-    public static boolean lineAllowed(ResidentProfile profile, Item item) {
+    public static boolean lineAllowed(com.bmf.bmfstown.entity.domain.ResidentSnapshot snapshot,
+            Item item) {
         int line = LINES.getOrDefault(item, 0);
         if (line == 0) {
             return true;
         }
-        String master = profile.perkChoice(Perks.NODE_W_MASTER);
+        String master = snapshot.perkChoice(ProfessionType.WORKER, Perks.NODE_W_MASTER);
         return line == 1 ? "wiring".equals(master) : "mechanism".equals(master);
     }
 

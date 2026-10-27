@@ -528,9 +528,9 @@ public final class ModNetworking {
                     instanceof com.bmf.bmfstown.entity.Resident resident)) {
                 return; // 镇民不在了：静默丢弃
             }
-            var profile = resident.getProfile();
             if (!com.bmf.bmfstown.entity.profile.Perks.canChoose(
-                    profile, resident.getMoodState().trait(),
+                    resident.getIdentity(), resident.getGrowth(),
+                    resident.getTraitState().trait(),
                     payload.node(), payload.branch())) {
                 // 段位不够/节点或分支不认识：拒绝并提示（改包客户端会走到这）
                 serverPlayer.displayClientMessage(Component.translatable(
@@ -540,7 +540,10 @@ public final class ModNetworking {
                         resident.getName().getString(), payload.node(), payload.branch());
                 return;
             }
-            resident.setProfile(profile.withPerkChoice(payload.node(), payload.branch()));
+            resident.getGrowth().setPerkChoice(
+                    com.bmf.bmfstown.entity.profile.Perks.ownerOf(payload.node()),
+                    payload.node(), payload.branch());
+            resident.syncClient();
             com.mojang.logging.LogUtils.getLogger().info(
                     "[BmfTown][perk] {} 选定分支：{} : {}",
                     resident.getName().getString(), payload.node(), payload.branch());
@@ -637,7 +640,7 @@ public final class ModNetworking {
                         "msg.bmfstown.workshop.need_table"), true);
                 return;
             }
-            resident.getMoodState().setWorkshop(
+            resident.getJobState().setWorkshop(
                     payload.table().asLong(), payload.input().asLong(), payload.output().asLong());
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.workshop.bound", resident.getName().getString()), true);
@@ -702,13 +705,13 @@ public final class ModNetworking {
                     instanceof com.bmf.bmfstown.entity.Resident target)) {
                 return;
             }
-            if (observer.getMoodState().trait()
+            if (observer.getTraitState().trait()
                     != com.bmf.bmfstown.entity.profile.TraitType.GATTACA
-                    || observer.getMoodState().isMimicking()) {
+                    || observer.getTraitState().isMimicking()) {
                 return; // 特性被换掉或已在模仿中：拒绝（客户端按钮应不可用）
             }
             int day = (int) (serverPlayer.serverLevel().getDayTime() / 24000L);
-            observer.getMoodState().startMimic(observer, target, day);
+            observer.getTraitState().startMimic(observer, target, day);
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.gattaca.mimic",
                     observer.getName().getString(),
@@ -803,7 +806,7 @@ public final class ModNetworking {
             com.bmf.bmfstown.town.Town town,
             com.bmf.bmfstown.town.TownCensusManager.Census census) {
         int bkTier = com.bmf.bmfstown.entity.profile.SkillTiers.tierOf(
-                resident.getProfile().skillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING));
+                resident.getGrowth().skillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING));
         int precision = bkTier < 2 ? 0 : bkTier < 4 ? 1 : 2;
         java.util.List<CensusEntryPayload> entries = new java.util.ArrayList<>();
         for (var e : census.totals().entrySet()) {
@@ -886,8 +889,8 @@ public final class ModNetworking {
                         "msg.bmfstown.work.need_worker"), true);
                 return;
             }
-            boolean nowEnabled = !resident.getMoodState().workerEnabled();
-            resident.getMoodState().setWorkerEnabled(nowEnabled);
+            boolean nowEnabled = !resident.getJobState().workerEnabled();
+            resident.getJobState().setWorkerEnabled(nowEnabled);
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     nowEnabled ? "msg.bmfstown.workshop.enabled" : "msg.bmfstown.workshop.disabled",
                     resident.getName().getString()), false);
@@ -918,7 +921,7 @@ public final class ModNetworking {
                 return; // 非白名单产物：静默丢弃
             }
             if (!com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
-                    resident.getProfile(), product)) {
+                    resident.getArchive(), product)) {
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.workshop.locked"), true);
                 return;
@@ -931,7 +934,7 @@ public final class ModNetworking {
                         "msg.bmfstown.workshop.locked"), true);
                 return; // 白名单里但没有对应配方（异常数据）：拒绝
             }
-            resident.getMoodState().setOrderItem(payload.product());
+            resident.getJobState().setOrderItem(payload.product());
             // 双通道反馈：主聊天栏（醒目、不消失）+ actionbar（轻提示）
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.workshop.order_set",
@@ -1190,23 +1193,24 @@ public final class ModNetworking {
     public static void playMoodSync(ServerPlayer player,
             com.bmf.bmfstown.entity.Resident resident) {
         java.util.List<MoodThought> list = new java.util.ArrayList<>();
-        for (var t : resident.getMoodState().thoughts()) {
+        for (var t : resident.getStatus().thoughts()) {
             list.add(new MoodThought(t.day(), t.tone(), t.key(), t.marker()));
         }
         // 偏好懒生成：面板打开这一下正好是最合适的触发点——
         // 保证发出去的 prefs 串一定不是"未生成"的空壳。
         // （服务端 level() 必然是 ServerLevel，instanceof 只是防御姿态）
         if (resident.level() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
-            resident.getMoodState().ensureGenerated(resident, serverLevel);
+            resident.getStatus().ensureGenerated(resident, serverLevel);
+            resident.syncClient();
         }
-        var trait = resident.getMoodState().trait();
-        var moodState = resident.getMoodState();
-        String mimic = moodState.isMimicking()
-                ? moodState.mimicTargetName() + "|" + moodState.mimicTraitId() : "";
+        var trait = resident.getTraitState().trait();
+        var traitState = resident.getTraitState();
+        String mimic = traitState.isMimicking()
+                ? traitState.mimicTargetName() + "|" + traitState.mimicTraitId() : "";
         player.connection.send(new MoodSyncPayload(
                 resident.getStringUUID(), java.util.List.copyOf(list),
-                moodState.prefsString(),
-                moodState.orderItem(),
+                resident.getPrefs().prefsString(),
+                resident.getJobState().orderItem(),
                 trait == null ? "" : trait.id(),
                 mimic));
     }

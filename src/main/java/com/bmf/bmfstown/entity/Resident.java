@@ -1,11 +1,18 @@
 package com.bmf.bmfstown.entity;
 
 import com.bmf.bmfstown.config.Config;
+import com.bmf.bmfstown.entity.domain.Growth;
+import com.bmf.bmfstown.entity.domain.Identity;
+import com.bmf.bmfstown.entity.domain.JobState;
+import com.bmf.bmfstown.entity.domain.Prefs;
+import com.bmf.bmfstown.entity.domain.ResidentSnapshot;
+import com.bmf.bmfstown.entity.domain.Status;
+import com.bmf.bmfstown.entity.domain.TraitState;
 import com.bmf.bmfstown.entity.profile.HungerSystem;
 import com.bmf.bmfstown.entity.profile.ModDataSerializers;
+import com.bmf.bmfstown.entity.profile.Perks;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
 import com.bmf.bmfstown.entity.profile.ResidentInventory;
-import com.bmf.bmfstown.entity.profile.ResidentProfile;
 import com.bmf.bmfstown.menu.ResidentMenuProvider;
 import com.bmf.bmfstown.town.Town;
 import com.bmf.bmfstown.town.TownZone;
@@ -84,20 +91,14 @@ public class Resident extends PathfinderMob {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     /**
-     * 同步数据：镇民档案。
+     * 同步数据：档案同步包（Identity+Growth+Prefs+Status 四域快照）。
      *
-     * <p>这是 v0.3 的核心改动：把饥饿、心情、好感度、爱好、专长、经验、归属
-     * 全部打包进 {@link ResidentProfile}，用<b>一个</b> accessor 同步。
-     *
-     * <p>为什么不再用 {@code DATA_LEVEL}：
-     * <ul>
-     *   <li>等级是经验的函数，存两份就有"不一致"的可能</li>
-     *   <li>爱好是结构化数据，塞不进 INT</li>
-     * </ul>
-     *
-     * <p>初始化由 {@code defineSynchedData} 提供（那时序列化器一定已注册）。
+     * <p>六域重构（v0.8.2）：服务端的真身是 {@link #identity}/{@link #growth}/
+     * {@link #prefs}/{@link #status} 四个域对象；每次变更后 {@link #syncClient()}
+     * 构建一份只读快照推进这里，客户端面板从这读。
+     * TraitState/JobState 不在此同步（走 MoodSyncPayload 与位打包通道）。
      */
-    private static final EntityDataAccessor<ResidentProfile> DATA_PROFILE =
+    private static final EntityDataAccessor<ResidentSnapshot> DATA_ARCHIVE =
             SynchedEntityData.defineId(Resident.class, ModDataSerializers.PROFILE.get());
 
     /**
@@ -153,12 +154,16 @@ public class Resident extends PathfinderMob {
     private int eatCooldown = 0;
 
     /**
-     * 心情状态机（v0.7）：事件限流、每日结算、想法日志全在这。
-     * 心情值本体在档案里（走 DATA_PROFILE 同步），这里存的是周边状态。
-     * 每个 NPC 实例一份，随实体 NBT 落档——所有字段必须成对读写，
-     * 缺一个就会出现"读档重复结算/限流重置"的刷心情漏洞。
+     * 六域持久数据（v0.8.2 重构）：身份 / 成长 / 偏好 / 状态 / 特性 / 岗位。
+     * 各域自带 save/load，挂在 NBT 的 "Domains" 子标签下。
+     * 客户端实例的域对象是空壳——客户端一律读 {@link #getArchive()} 快照。
      */
-    private final MoodState moodState = new MoodState();
+    private final Identity identity = new Identity();
+    private final Growth growth = new Growth();
+    private final Prefs prefs = new Prefs();
+    private final Status status = new Status();
+    private final TraitState traitState = new TraitState();
+    private final JobState jobState = new JobState();
 
     // ---- 觅食状态（就餐区箱子补给，v0.6） ----
     // 状态机：NONE（空闲）→ GO_ZONE（去就餐区）→ GO_CHEST（去箱子）
@@ -220,15 +225,10 @@ public class Resident extends PathfinderMob {
      */
     private int sleepKickCooldown = 0;
 
-    // ---- 战士工作状态（跟随 / 站岗） ----
-    // 模式值存在实体同步数据 DATA_WORK 上（见 getWorkMode）；
+    // ---- 战士工作状态 ----
+    // 模式与锚点（岗哨方块/跟随目标）在 JobState 域（v0.8.2 六域重构）；
+    // 同步值存在实体同步数据 DATA_WORK 上（见 getWorkMode）；
     // 互斥由 setWorkMode 保证：设置一种时另一种（连同旧数据）一并清除。
-    /** 站岗模式的岗哨方块（GUARD_POST 模式的锚点）。 */
-    @Nullable
-    private BlockPos guardPost = null;
-    /** 跟随模式的目标玩家 UUID（FOLLOW 模式的锚点）。 */
-    @Nullable
-    private UUID followPlayerId = null;
 
     /**
      * 距离上一次回血累积的 tick 数。
@@ -348,6 +348,8 @@ public class Resident extends PathfinderMob {
         this.setPersistenceRequired();
         // 名字常显（配合下面的 shouldShowName）
         this.setCustomNameVisible(true);
+        // 首份同步快照（/summon 的镇民不走 finalizeSpawn/readAdditionalSaveData）
+        this.syncClient();
     }
 
     // ==========================================================
@@ -448,11 +450,24 @@ public class Resident extends PathfinderMob {
     @Override
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
         super.defineSynchedData(builder);
-        // 默认档案：先给一份"满饥饿满心情"的，finalizeSpawn 里会替换成随机的
-        builder.define(DATA_PROFILE, ResidentProfile.createRandom(this.random));
+        // 默认档案快照：先给一份"满饥饿中性心情"的，finalizeSpawn/读档后 syncClient 替换
+        builder.define(DATA_ARCHIVE, ResidentSnapshot.defaults());
         builder.define(DATA_WORK, WorkMode.NONE.ordinal());
         builder.define(DATA_WORKER_VISUAL, false);
         builder.define(DATA_WORKER_STATUS, 0);
+    }
+
+    /**
+     * 把四域（Identity/Growth/Prefs/Status）的当前值打包推进同步通道。
+     * 服务端在任何域数据变更后调用；SynchedEntityData.set 内部比较新旧值，
+     * 不同才发包，同值调用无流量。客户端调用是空操作（域对象在客户端是空壳）。
+     */
+    public void syncClient() {
+        if (this.level() != null && this.level().isClientSide()) {
+            return;
+        }
+        this.entityData.set(DATA_ARCHIVE, ResidentSnapshot.of(
+                this.identity, this.growth, this.prefs, this.status));
     }
 
     /** 工人"工作中"可视化标记（气泡渲染读客户端同步值）。 */
@@ -468,7 +483,7 @@ public class Resident extends PathfinderMob {
     private void refreshWorkerStatus() {
         int phase = !workerEnabledSynced() ? -2
                 : workerGoalRunning() ? workerGoalPhase() : -1;
-        boolean hasOrder = !getMoodState().orderItem().isEmpty();
+        boolean hasOrder = !this.jobState.orderItem().isEmpty();
         int value = (hasOrder ? 64 : 0)
                 | (workerEnabledSynced() ? 32 : 0)
                 | (workerBound() ? 16 : 0)
@@ -478,9 +493,8 @@ public class Resident extends PathfinderMob {
 
     /** 客户端读：开工开关（bit 32；true = 开工中）。 */
     public boolean workerEnabledSynced() {
-        var m = getMoodState();
         if (this.level() instanceof net.minecraft.server.level.ServerLevel) {
-            return m.workerEnabled();
+            return this.jobState.workerEnabled();
         }
         return (this.entityData.get(DATA_WORKER_STATUS) & 32) != 0;
     }
@@ -501,42 +515,47 @@ public class Resident extends PathfinderMob {
     }
 
     // ==========================================================
-    //  档案读写（v0.3 核心）
+    //  六域访问与档案快照（v0.8.2 核心）
     // ==========================================================
 
-    /** 读取当前档案。客户端与服务端都有值。 */
-    public ResidentProfile getProfile() {
-        return this.entityData.get(DATA_PROFILE);
+    /** 档案同步快照（四域只读视图）。客户端面板读这个；服务端读域对象本身。 */
+    public ResidentSnapshot getArchive() {
+        return this.entityData.get(DATA_ARCHIVE);
     }
 
-    /**
-     * 写入档案。
-     *
-     * <p>只在服务端调用。{@code SynchedEntityData.set} 内部会比较新旧值，
-     * 不同才发包，所以这里不需要自己判断。
-     */
-    public void setProfile(ResidentProfile profile) {
-        this.entityData.set(DATA_PROFILE, profile);
+    public Identity getIdentity() {
+        return this.identity;
     }
 
-    /** 便捷方法：返回修改后的新档案并写回。public：MoodState 也要走这个入口改心情。 */
-    public void updateProfile(java.util.function.UnaryOperator<ResidentProfile> mutation) {
-        this.setProfile(mutation.apply(this.getProfile()));
+    public Growth getGrowth() {
+        return this.growth;
     }
 
-    // ---- 便捷访问器（UI 与 AI 常用） ----
+    public Prefs getPrefs() {
+        return this.prefs;
+    }
+
+    /** 状态域（hunger/mood + 心情引擎）。 */
+    public Status getStatus() {
+        return this.status;
+    }
+
+    public TraitState getTraitState() {
+        return this.traitState;
+    }
+
+    public JobState getJobState() {
+        return this.jobState;
+    }
+
+    // ---- 便捷访问器（UI 与 AI 常用；服务端读域，客户端读快照） ----
 
     public int getHunger() {
-        return this.getProfile().hunger();
+        return this.getArchive().hunger();
     }
 
     public int getMood() {
-        return this.getProfile().mood();
-    }
-
-    /** 心情状态机（事件入口、每日结算、想法日志都在这）。 */
-    public MoodState getMoodState() {
-        return this.moodState;
+        return this.getArchive().mood();
     }
 
     /**
@@ -548,15 +567,15 @@ public class Resident extends PathfinderMob {
      */
     public boolean onStrike() {
         int threshold = com.bmf.bmfstown.config.Config.MOOD_STRIKE_THRESHOLD.get();
-        return threshold > 0 && this.getProfile().mood() < threshold;
+        return threshold > 0 && this.getArchive().mood() < threshold;
     }
 
     public ProfessionType getProfession() {
-        return this.getProfile().profession();
+        return this.getArchive().profession();
     }
 
     public int getLevel() {
-        return this.getProfile().level();
+        return this.getArchive().level();
     }
 
     // ---- 战士工作状态 ----
@@ -576,13 +595,13 @@ public class Resident extends PathfinderMob {
     /** 站岗模式的岗哨方块（其他模式为 null）。 */
     @Nullable
     public BlockPos getGuardPost() {
-        return this.guardPost;
+        return this.jobState.guardPost();
     }
 
     /** 跟随模式的目标玩家 UUID（其他模式为 null）。 */
     @Nullable
     public UUID getGuardFollowPlayerId() {
-        return this.followPlayerId;
+        return this.jobState.followPlayerId();
     }
 
     /**
@@ -598,8 +617,9 @@ public class Resident extends PathfinderMob {
      */
     public void setWorkMode(WorkMode mode, @Nullable UUID followPlayerId, @Nullable BlockPos post) {
         this.setWorkModeRaw(mode);
-        this.followPlayerId = followPlayerId;
-        this.guardPost = post;
+        this.jobState.setWorkMode(mode);
+        this.jobState.setFollowPlayerId(followPlayerId);
+        this.jobState.setGuardPost(post);
         // 旧流程全部作废
         this.setTarget(null);
         this.getNavigation().stop();
@@ -635,8 +655,8 @@ public class Resident extends PathfinderMob {
 
     /** 工人三件套是否齐备（面板状态显示用）。 */
     public boolean workerBound() {
-        var m = getMoodState();
-        return m.craftTablePos() != 0 && m.inputChestPos() != 0 && m.outputChestPos() != 0;
+        var j = this.jobState;
+        return j.craftTablePos() != 0 && j.inputChestPos() != 0 && j.outputChestPos() != 0;
     }
 
     /** 是否正在觅食（工人 Goal 据此让位：饿了先吃饭，吃完回来接着干活）。 */
@@ -667,7 +687,8 @@ public class Resident extends PathfinderMob {
         if (this.level().isClientSide()) {
             return;
         }
-        this.updateProfile(p -> p.addSkillXp(type, amount));
+        this.growth.addSkillXp(type, amount);
+        this.syncClient();
     }
 
     /**
@@ -680,7 +701,7 @@ public class Resident extends PathfinderMob {
      */
     private boolean wantsMedicalEat() {
         return this.getHealth() < this.getMaxHealth()
-                && this.getProfile().hunger() < Config.REGEN_HUNGER_THRESHOLD.get();
+                && this.getArchive().hunger() < Config.REGEN_HUNGER_THRESHOLD.get();
     }
 
     /** 背包（仅服务端有意义）。 */
@@ -832,23 +853,18 @@ public class Resident extends PathfinderMob {
 
     /**
      * 档案的一行文字摘要。调试与 UI 共用。
-     *
-     * <p>为什么写在这里而不是 {@link ResidentProfile#toString()}：
-     * {@code toString()} 是 record 自动生成的，改不了；
-     * 而摘要需要"名字 + 档案"两边的信息，只能放在实体这一层。
      */
     public String debugSummary() {
-        ResidentProfile p = this.getProfile();
-        MoodState mood = this.getMoodState();
+        ResidentSnapshot p = this.getArchive();
         // String.format 的 %s 一律走 toString()，这里显式取中文名，避免输出 SWEET 这种英文枚举名
         return String.format(
-                "%s | 饥饿=%d 心情=%d | 专长:%s 称号:%s Lv%d xp=%d | 口味:%s | 喜欢的工作:%s | 性格:%s",
+                "%s | 饥饿=%d 心情=%d | 专长:%s 称号:%s Lv%d | 口味:%s | 喜欢的工作:%s | 性格:%s",
                 this.getName().getString(),
                 p.hunger(), p.mood(),
-                p.profession().zhName(), p.title(), p.level(), p.xp(),
+                p.profession().zhName(), p.title(), p.level(),
                 p.hobbyFood().zhName(),
                 p.likedProfession().zhName(),
-                mood.personality().zhName());
+                p.personality().zhName());
     }
 
     /**
@@ -889,13 +905,13 @@ public class Resident extends PathfinderMob {
             this.setCustomName(Component.literal(ResidentNames.random(level.getRandom())));
         }
 
-        // 生成一份随机的镇民档案（饥饿满、心情满、爱好随机、无专长）
-        this.setProfile(ResidentProfile.createRandom(level.getRandom()));
+        // 生成一份全新的镇民数据：饥饿满、心情初值、偏好懒生成（首 tick 补抽）、无专长
+        this.status.setHunger(Status.MAX_HUNGER);
+        this.status.setMood(com.bmf.bmfstown.config.Config.INITIAL_MOOD.get());
+        this.syncClient();
 
-        LOGGER.debug("[BmfTown] 生成镇民：{}，口味 {}，喜欢的工作 {}（偏好与性格在首次 tick 懒生成，见 MoodState）",
-                this.getName().getString(),
-                this.getProfile().hobbyFood().zhName(),
-                this.getProfile().likedProfession().zhName());
+        LOGGER.debug("[BmfTown] 生成镇民：{}（偏好与性格在首次 tick 懒生成，见 Prefs 域）",
+                this.getName().getString());
         return data;
     }
 
@@ -917,62 +933,93 @@ public class Resident extends PathfinderMob {
         if (this.eatingSlot >= 0) {
             this.settleBite();
         }
-        // 档案整体存成一个子 Compound，字段增加时这里不用改
-        tag.put("ResidentProfile", this.getProfile().save());
-        // 心情状态机（v0.7）：结算日/相位/限流计数/想法日志，必须与档案成对存取
-        tag.put("MoodState", this.moodState.save());
+        // 六域整体存成一个子 Compound，各域字段增加时这里不用改
+        CompoundTag domains = new CompoundTag();
+        domains.put("Identity", this.identity.save());
+        domains.put("Growth", this.growth.save());
+        domains.put("Prefs", this.prefs.save());
+        domains.put("Status", this.status.save());
+        domains.put("Trait", this.traitState.save());
+        domains.put("Job", this.jobState.save());
+        tag.put("Domains", domains);
         // 背包（需要注册表来保存物品的数据组件）
         tag.put("ResidentInventory", this.inventory.save(this.registryAccess()));
-        // 战士工作状态（跨存档保留；NONE 时不用写）
-        if (this.getWorkMode() != WorkMode.NONE) {
-            tag.putString("WorkMode", this.getWorkMode().name());
-        }
-        if (this.guardPost != null) {
-            tag.putLong("GuardPost", this.guardPost.asLong());
-        }
-        if (this.followPlayerId != null) {
-            tag.putUUID("FollowPlayer", this.followPlayerId);
-        }
     }
 
     @Override
     public void readAdditionalSaveData(CompoundTag tag) {
         super.readAdditionalSaveData(tag);
 
-        if (tag.contains("ResidentProfile", Tag.TAG_COMPOUND)) {
-            this.setProfile(ResidentProfile.load(tag.getCompound("ResidentProfile")));
+        if (tag.contains("Domains", Tag.TAG_COMPOUND)) {
+            // 新格式：六域各读各的
+            CompoundTag domains = tag.getCompound("Domains");
+            this.identity.loadFrom(domains.getCompound("Identity"));
+            this.growth.loadFrom(domains.getCompound("Growth"));
+            this.prefs.loadFrom(domains.getCompound("Prefs"));
+            CompoundTag statusTag = domains.getCompound("Status");
+            this.status.loadFrom(statusTag);
+            this.traitState.loadFrom(domains.getCompound("Trait"));
+            this.jobState.loadFrom(domains.getCompound("Job"), null, false);
         } else {
-            // 老存档（S1 时代）没有档案，给一份随机的
-            this.setProfile(ResidentProfile.createRandom(this.getRandom()));
-        }
-        // 心情状态机：没有 MoodState key 的是老存档/新镇民，MoodState.load 自己兜底
-        if (tag.contains("MoodState", Tag.TAG_COMPOUND)) {
-            this.moodState.load(tag.getCompound("MoodState"));
+            // 老存档（六域重构前）：从 ResidentProfile/MoodState 旧键迁移
+            CompoundTag profileTag = tag.contains("ResidentProfile", Tag.TAG_COMPOUND)
+                    ? tag.getCompound("ResidentProfile") : null;
+            CompoundTag moodTag = tag.contains("MoodState", Tag.TAG_COMPOUND)
+                    ? tag.getCompound("MoodState") : null;
+            if (profileTag != null) {
+                loadLegacyDomains(profileTag, moodTag);
+            }
+            // 老顶层键：战士工作状态
+            CompoundTag legacyJob = new CompoundTag();
+            if (tag.contains("WorkMode", Tag.TAG_STRING)) {
+                legacyJob.putString("WorkMode", tag.getString("WorkMode"));
+            }
+            if (tag.contains("GuardPost", Tag.TAG_ANY_NUMERIC)) {
+                legacyJob.putLong("GuardPost", tag.getLong("GuardPost"));
+            }
+            if (tag.hasUUID("FollowPlayer")) {
+                legacyJob.putUUID("FollowPlayer", tag.getUUID("FollowPlayer"));
+            }
+            this.jobState.loadFrom(legacyJob, moodTag, true);
         }
 
         if (tag.contains("ResidentInventory", Tag.TAG_COMPOUND)) {
             this.inventory.load(tag.getCompound("ResidentInventory"), this.registryAccess());
         }
 
-        // 战士工作状态（老存档没有这些键，保持默认 NONE）
-        WorkMode savedMode = WorkMode.NONE;
-        if (tag.contains("WorkMode", Tag.TAG_STRING)) {
-            try {
-                savedMode = WorkMode.valueOf(tag.getString("WorkMode"));
-            } catch (IllegalArgumentException ignored) {
-                // 未知模式名：当作无工作
-            }
-        }
-        this.setWorkModeRaw(savedMode);
-        this.guardPost = tag.contains("GuardPost", Tag.TAG_LONG)
-                ? BlockPos.of(tag.getLong("GuardPost")) : null;
-        this.followPlayerId = tag.hasUUID("FollowPlayer")
-                ? tag.getUUID("FollowPlayer") : null;
+        // 同步通道初值：读档后立刻推一份快照 + 工作模式位
+        this.syncClient();
+        this.entityData.set(DATA_WORK, this.jobState.workMode().ordinal());
 
         // 兜底：老存档 / summon 出来的镇民没有名字，补一个
         if (!this.hasCustomName()) {
             this.setCustomName(Component.literal(ResidentNames.random(this.getRandom())));
         }
+    }
+
+    /**
+     * 老存档迁移（六域重构前格式）：旧 ResidentProfile 子标签 + 旧 MoodState 子标签
+     * → 拆进 Identity/Growth/Prefs/Status/Trait 五域。
+     * （Job 域的旧键在 readAdditionalSaveData 里单独处理。）
+     */
+    private void loadLegacyDomains(CompoundTag profileTag, CompoundTag moodTag) {
+        // Identity：旧 C 组 + 职业
+        this.identity.loadFrom(profileTag);
+        // Growth：Skills 原样；Perks 平铺 List 按前缀分拣
+        this.growth.loadFrom(profileTag);
+        // Prefs：口味/喜欢职业在 profileTag，其余在 moodTag——拼一份合并标签再读
+        CompoundTag mergedPrefs = (moodTag != null) ? moodTag.copy() : new CompoundTag();
+        for (String key : new String[]{"HobbyFood", "LikedProfession"}) {
+            if (profileTag.contains(key)) {
+                mergedPrefs.putString(key, profileTag.getString(key));
+            }
+        }
+        this.prefs.loadFrom(mergedPrefs);
+        // Status：hunger/mood 在 profileTag，游标/想法在 moodTag
+        this.status.loadFrom(Status.load(
+                moodTag != null ? moodTag : new CompoundTag(), profileTag, true));
+        // Trait：TraitId/Mimic* 在 moodTag
+        this.traitState.loadFrom(moodTag != null ? moodTag : new CompoundTag());
     }
 
     // ==========================================================
@@ -994,8 +1041,8 @@ public class Resident extends PathfinderMob {
         // ---- 0. 工人状态打包同步（面板状态行用；set 同值不发包） ----
         this.refreshWorkerStatus();
         // ---- 0.4 特性逐 tick 行为（轻浮漂浮等；内部含 null 补抽，老档兼容） ----
-        this.getMoodState().ensureTrait(this.getRandom());
-        this.getMoodState().tickTraits(this);
+        this.traitState.ensureTrait(this.getRandom());
+        this.traitState.tickTraits(this);
         // ---- 0.5 簿记员在职成长（用户定稿：在职每 5 秒 +1 簿记经验） ----
         if (this.getProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER
                 && this.isAlive()) {
@@ -1010,11 +1057,7 @@ public class Resident extends PathfinderMob {
         int ticksPerPoint = Config.HUNGER_TICKS_PER_POINT.get();
         if (this.hungerTickAccumulator >= ticksPerPoint) {
             this.hungerTickAccumulator = 0;
-            ResidentProfile before = this.getProfile();
-            ResidentProfile after = HungerSystem.tickHunger(before, ticksPerPoint);
-            if (after != null) {
-                this.setProfile(after);
-            }
+            HungerSystem.tickHunger(this, ticksPerPoint);
         }
 
         // ---- 2. 进食 ----
@@ -1025,11 +1068,11 @@ public class Resident extends PathfinderMob {
 
         // ---- 2.6 心情：每日结算 + 感知扫描（v0.7/v0.8）----
         // 每 tick 一次"换天了吗"的整数比较（绝大多数 tick 直接返回）；
-        // 真正的结算一天一次，且相位随机摊开，见 MoodState.tickDaily。
+        // 真正的结算一天一次，且相位随机摊开，见 Status.tickDaily。
         // tickSenses 内部 100 tick 一轮（动物/唱片机/怪物/天气），同样自挡。
         if (this.level() instanceof net.minecraft.server.level.ServerLevel moodLevel) {
-            this.moodState.tickDaily(this, moodLevel);
-            this.moodState.tickSenses(this, moodLevel);
+            this.status.tickDaily(this, moodLevel);
+            this.status.tickSenses(this, moodLevel);
             // 住宅区建材/颜色扫描的推进（内部按 gameTime 去重，一 tick 只跑一次）
             HomeMaterialScanManager.tick(moodLevel);
             // 簿记员城镇物资统计的推进（同为摊派式，一 tick 只跑一次）
@@ -1096,7 +1139,7 @@ public class Resident extends PathfinderMob {
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
             return;
         }
-        UUID townId = this.getProfile().townId();
+        UUID townId = this.identity.townId();
         if (townId == null) {
             return;
         }
@@ -1108,7 +1151,8 @@ public class Resident extends PathfinderMob {
             LOGGER.debug("[BmfTown] {} 的城镇 {} 已不存在，自动解除归属",
                     this.getName().getString(), townId);
             // 住宅区属于某个城镇，城镇没了住宅绑定也就失效了，一并清掉
-            this.setProfile(this.getProfile().withTownId(null).withHousing(null, 0L));
+            this.identity.clearOwnership();
+            this.syncClient();
             return;
         }
 
@@ -1139,7 +1183,7 @@ public class Resident extends PathfinderMob {
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
             return null;
         }
-        UUID townId = this.getProfile().townId();
+        UUID townId = this.identity.townId();
         if (townId == null) {
             return null;
         }
@@ -1207,7 +1251,7 @@ public class Resident extends PathfinderMob {
         if (this.forageRetryCooldown > 0) {
             return;
         }
-        if (this.getProfile().hunger() >= ResidentProfile.MAX_HUNGER) {
+        if (this.status.hunger() >= Status.MAX_HUNGER) {
             return; // 不饿
         }
         if (this.hasAnyFood()) {
@@ -1558,7 +1602,7 @@ public class Resident extends PathfinderMob {
     private int takeFromContainer(net.minecraft.world.Container container, int want,
             boolean favoriteOnly) {
         int taken = 0;
-        var hobbyFood = this.getProfile().hobbyFood();
+        var hobbyFood = this.prefs.hobbyFood();
         for (int i = 0; i < container.getContainerSize() && taken < want; i++) {
             ItemStack stack = container.getItem(i);
             if (stack.isEmpty() || stack.get(DataComponents.FOOD) == null) {
@@ -1661,7 +1705,7 @@ public class Resident extends PathfinderMob {
         // 挨饿限流（每半天 1 次 + 按连续天数递增幅度）在 MoodState 内部做，
         // 这里只管上报——觅食失败会反复发生，不挡的话想法列表会被刷屏。
         if (this.level() instanceof net.minecraft.server.level.ServerLevel starveLevel) {
-            this.moodState.starving(this, starveLevel);
+            this.status.starving(this, starveLevel);
         }
     }
 
@@ -1785,7 +1829,7 @@ public class Resident extends PathfinderMob {
     /** 档案里绑定的住宅区（仅当前维度有效时返回，否则 null）。 */
     @Nullable
     public TownZone housingZone() {
-        UUID housingId = this.getProfile().housingZoneId();
+        UUID housingId = this.identity.housingZoneId();
         if (housingId == null) {
             return null;
         }
@@ -1951,11 +1995,12 @@ public class Resident extends PathfinderMob {
             // 扫 9×5×9"，而 homePos 此前没有任何赋值点（永远是 null，
             // 结算直接跳过）——建材/颜色喜好因此从未生效过。现在躺下
             // 即登记住址；换床也会在下次躺下时自动更新。
-            if (!bed.equals(this.getProfile().homePos())) {
-                this.setProfile(this.getProfile().withHomePos(bed));
+            if (!bed.equals(this.identity.homePos())) {
+                this.identity.setHomePos(bed);
+                this.syncClient();
             }
             // 睡眠结算登记（v0.8.1）：记录"今晚睡过了"，防止每日结算扣"没睡好"
-            this.moodState.noteSlept(level);
+            this.status.noteSlept(level);
             LOGGER.debug("[BmfTown][睡眠] {} 上床睡觉 {}",
                     this.getName().getString(), bed.toShortString());
         } else {
@@ -2184,7 +2229,7 @@ public class Resident extends PathfinderMob {
         // 没吃饱：清零计时器，一点都不攒。
         // 清零而不是"暂停"是有意的：饥饿跌破 18 → 再喂回 18，
         // 必须重新等满一个完整间隔，不能立刻跳出一颗心。
-        if (this.getProfile().hunger() < Config.REGEN_HUNGER_THRESHOLD.get()) {
+        if (this.status.hunger() < Config.REGEN_HUNGER_THRESHOLD.get()) {
             this.regenTickAccumulator = 0;
             return;
         }
@@ -2208,7 +2253,7 @@ public class Resident extends PathfinderMob {
         this.heal(amount);
         LOGGER.debug("[BmfTown] {} 自然回血 0.5 心，血量 {} → {}，饥饿 {}",
                 this.getName().getString(), before, this.getHealth(),
-                this.getProfile().hunger());
+                this.status.hunger());
     }
 
     // ==========================================================
@@ -2456,11 +2501,10 @@ public class Resident extends PathfinderMob {
      * {@link #rollbackBite()}，把对调撤销回去。不存在"做了一半"的状态。
      */
     private void startBite() {
-        ResidentProfile profile = this.getProfile();
         // "回血优先"：血没满且饥饿够不到回血线时，溢出也吃（浪费换回血）。
         // 否则饥饿 16 拿着牛排(8)会因为"吃了溢出"永远不开口，卡死在回血线下。
         boolean allowWaste = this.wantsMedicalEat();
-        int slot = HungerSystem.findFoodSlot(this.inventory, profile, allowWaste);
+        int slot = HungerSystem.findFoodSlot(this.inventory, this, allowWaste);
         if (slot < 0) {
             return;
         }
@@ -2557,7 +2601,7 @@ public class Resident extends PathfinderMob {
      * 这里再吃一次就会"一个曲奇掉两个"。
      */
     private void finishBite() {
-        ResidentProfile before = this.getProfile();
+        int beforeHunger = this.status.hunger();
 
         // 1. 用 startBite 存好的营养值，不从（已被消耗的）栈上读
         int nutrition = this.eatingNutrition;
@@ -2586,11 +2630,12 @@ public class Resident extends PathfinderMob {
         this.eatingFood = this.getItemBySlot(EquipmentSlot.MAINHAND);
 
         // 3. 涨饱食度。nutrition 与玩家吃同一份食物得到的完全一致。
-        this.setProfile(before.withHunger(before.hunger() + nutrition));
+        this.status.setHunger(beforeHunger + nutrition);
+        this.syncClient();
 
         LOGGER.debug("[BmfTown] {} 吃掉一口（+{}），饥饿 {} → {}，主手还剩 {}",
                 this.getName().getString(), nutrition,
-                before.hunger(), this.getProfile().hunger(),
+                beforeHunger, this.status.hunger(),
                 this.eatingFood.isEmpty() ? 0 : this.eatingFood.getCount());
 
         // 4. 决定"这一堆继续吃"还是"收工"
@@ -2604,13 +2649,13 @@ public class Resident extends PathfinderMob {
         //    于是同一堆继续来一口 → 又夹回 20。玩家看到的就是
         //    "明明吃饱了还在吃"，而且背包里的食物比应有的少。
         //    现在有"下一口会不会浪费"这一条卡着，吃饱当口就停。
-        ResidentProfile now = this.getProfile();
-        boolean stillHungry = now.hunger() < ResidentProfile.MAX_HUNGER;
+        int nowHunger = this.status.hunger();
+        boolean stillHungry = nowHunger < Status.MAX_HUNGER;
         boolean hasMore = !this.eatingFood.isEmpty() && this.eatingFood.getCount() > 0;
         // 续吃判据与挑食物一致：不浪费就吃；或者"回血优先"（血没满且
         // 够不到回血线时，溢出也吃——见 startBite 的 wantsMedicalEat）
         boolean nextBiteWanted = hasMore
-                && (now.canEatWithoutWaste(nutrition) || this.wantsMedicalEat());
+                && (this.status.canEatWithoutWaste(nutrition) || this.wantsMedicalEat());
 
         if (nextBiteWanted) {
             // 同一堆继续：主手不动、背包不动，直接再来一口。
@@ -2625,8 +2670,8 @@ public class Resident extends PathfinderMob {
         // 若还饿且背包里还有别的食物，冷却结束后 tickEating 会重新挑一堆。
         if (stillHungry) {
             LOGGER.debug("[BmfTown] {} 这一口会让饥饿溢出（{} + {} > {}），停下不再吃",
-                    this.getName().getString(), now.hunger(), nutrition,
-                    ResidentProfile.MAX_HUNGER);
+                    this.getName().getString(), nowHunger, nutrition,
+                    Status.MAX_HUNGER);
         }
         this.settleBite();
     }
@@ -2705,10 +2750,10 @@ public class Resident extends PathfinderMob {
         ItemStack eaten = this.eatingFood;
         if (!eaten.isEmpty() && this.level() instanceof net.minecraft.server.level.ServerLevel moodLevel) {
             // noteFed 顺带处理贪吃性格（任何进食 +3，每天 1 次），见 MoodState.noteFed
-            this.moodState.noteFed(this, moodLevel);
+            this.status.noteFed(this, moodLevel);
             if (com.bmf.bmfstown.entity.profile.FoodTraits.matches(
-                    this.getProfile().hobbyFood(), eaten)) {
-                this.moodState.ateFavored(this, moodLevel);
+                    this.prefs.hobbyFood(), eaten)) {
+                this.status.ateFavored(this, moodLevel);
             }
         }
 
@@ -2764,7 +2809,7 @@ public class Resident extends PathfinderMob {
     @Override
     public boolean hurt(DamageSource source, float amount) {
         // 鼓手主唱：免疫溺水与窒息伤害（原版伤害类型直判）
-        if (this.getMoodState().trait() == com.bmf.bmfstown.entity.profile.TraitType.DRUMMER
+        if (this.traitState.trait() == com.bmf.bmfstown.entity.profile.TraitType.DRUMMER
                 && (source.is(net.minecraft.world.damagesource.DamageTypes.DROWN)
                 || source.is(net.minecraft.world.damagesource.DamageTypes.IN_WALL))) {
             return false;
@@ -2815,14 +2860,14 @@ public class Resident extends PathfinderMob {
      * 无业不吃减益也不吃增益。强壮 perk 与心情打折的语义见 EfficiencyMath。
      */
     private double professionEfficiency() {
-        var profession = this.getProfile().profession();
+        var profession = this.identity.profession();
         var skill = profession == null ? null : profession.mainSkill();
         if (skill == null) {
             return 1.0;
         }
         return com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
-                this.getProfile().skillXp(skill),
-                this.getProfile().mood(),
+                this.growth.skillXp(skill),
+                this.status.mood(),
                 hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong"));
     }
 
@@ -2830,7 +2875,7 @@ public class Resident extends PathfinderMob {
      * 是否选定了某个 perk 分支（数据层查询：{@code perks} 列表存 "节点:分支"）。
      */
     public boolean hasPerk(String node, String branch) {
-        String choice = this.getProfile().perkChoice(node);
+        String choice = this.growth.perkChoice(Perks.ownerOf(node), node);
         return branch.equals(choice);
     }
 
@@ -2876,7 +2921,7 @@ public class Resident extends PathfinderMob {
                     String.format("%.1f", before), killed);
             // 好战性格：击杀记心情（每天 2 次上限，见 MoodState.noteKill）
             if (killed && this.level() instanceof net.minecraft.server.level.ServerLevel killLevel) {
-                this.moodState.noteKill(this, killLevel);
+                this.status.noteKill(this, killLevel);
             }
             return killed;
         }
@@ -2897,7 +2942,7 @@ public class Resident extends PathfinderMob {
             if (hit && target instanceof net.minecraft.world.entity.LivingEntity living
                     && living.getHealth() <= 0
                     && this.level() instanceof net.minecraft.server.level.ServerLevel killLevel) {
-                this.moodState.noteKill(this, killLevel);
+                this.status.noteKill(this, killLevel);
             }
             if (target instanceof net.minecraft.world.entity.LivingEntity living) {
                 // 观察期用 INFO（用户要肉眼对比不同等级战士的伤害系数）

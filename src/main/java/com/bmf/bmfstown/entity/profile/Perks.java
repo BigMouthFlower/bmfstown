@@ -59,6 +59,12 @@ public final class Perks {
     /** 节点解锁所需段位（与 {@code SkillTiers.PERK_TIERS} 对齐：精通/大师/传奇）。 */
     public static final int[] UNLOCK_TIER = {3, 6, 9};
 
+    /** 节点 id 前缀 → 归属职业（六域重构：perk 按职业分格后，从节点反查格子）。 */
+    public static ProfessionType ownerOf(String node) {
+        return node != null && node.startsWith("worker.")
+                ? ProfessionType.WORKER : ProfessionType.WARRIOR;
+    }
+
     /**
      * 服务端校验：该镇民是否有权选择此节点的分支。
      *
@@ -70,9 +76,10 @@ public final class Perks {
      *
      * @return true = 允许落档
      */
-    public static boolean canChoose(ResidentProfile profile,
-            com.bmf.bmfstown.entity.profile.TraitType trait, String node, String branch) {
-        var profession = profile.profession();
+    public static boolean canChoose(com.bmf.bmfstown.entity.domain.Identity identity,
+            com.bmf.bmfstown.entity.domain.Growth growth, TraitType trait,
+            String node, String branch) {
+        var profession = identity.profession();
         boolean workerTree = node.startsWith("worker.");
         // 节点树前缀必须与职业匹配
         if (workerTree && profession != ProfessionType.WORKER) {
@@ -92,11 +99,11 @@ public final class Perks {
                 return false;
             }
             // 大智若愚：满级前一个 perk 都解锁不了；满级（传奇）跳过段位门槛全解锁
-            if (trait == com.bmf.bmfstown.entity.profile.TraitType.FOOL_SAGE) {
-                return SkillTiers.tierOf(profile.skillXp(skill)) >= SkillTiers.MAX_TIER;
+            if (trait == TraitType.FOOL_SAGE) {
+                return SkillTiers.tierOf(growth.skillXp(skill)) >= SkillTiers.MAX_TIER;
             }
             // 段位必须达标（按当前职业主技能实时推导，不是按存档记录）
-            if (SkillTiers.tierOf(profile.skillXp(skill)) < UNLOCK_TIER[n]) {
+            if (SkillTiers.tierOf(growth.skillXp(skill)) < UNLOCK_TIER[n]) {
                 return false;
             }
             for (String b : branches[n]) {

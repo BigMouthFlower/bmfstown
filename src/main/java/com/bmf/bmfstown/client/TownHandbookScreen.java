@@ -87,6 +87,12 @@ public class TownHandbookScreen extends Screen {
     private static final int MEMBER_COL_W = 46;
     /** 列表首行 y（渲染时更新，点击判定用）。 */
     private int memberListY;
+
+    // ---- 居民列表滚动条（v0.8.2：右侧可视滑条，可拖拽；实例态，关屏即清） ----
+    /** 正在拖动滚动条滑块。 */
+    private boolean memberScrollbarDragging;
+    /** 按下点相对滑块顶端的偏移（拖动时保持抓取点不跳）。 */
+    private double memberDragGrabOffset;
     /** 当前显示第几个城镇。 */
     private int pageIndex = 0;
 
@@ -590,6 +596,76 @@ public class TownHandbookScreen extends Screen {
                             MEMBER_COL_W - 5),
                     lx + MEMBER_COL_W + 1, ry + 2, INK_FADED, false);
         }
+
+        drawMemberScrollbar(graphics, list.size(), max, mouseX, mouseY);
+    }
+
+    // ---- 居民列表滚动条 ----
+
+    /** 滚动条轨道 x（列表右缘外 2px）与宽度。 */
+    private int memberScrollbarX() {
+        return lx + TEXT_W + 2;
+    }
+
+    private static final int MEMBER_SCROLLBAR_W = 3;
+    /** 滑块最小高度（内容很多时不至于捏不住）。 */
+    private static final int MEMBER_THUMB_MIN_H = 8;
+
+    /**
+     * 绘制滚动条：轨道 + 按内容比例的滑块。内容不超一屏（max==0）时整条隐藏。
+     *
+     * <p>几何：轨道高 = 可见行区高；滑块高 = 轨道高 × 可见/总行数（有下限）；
+     * 滑块 y 按当前滚动量在 (轨道高-滑块高) 内线性映射。
+     */
+    private void drawMemberScrollbar(GuiGraphics graphics, int totalRows, int max,
+                                     int mouseX, int mouseY) {
+        if (max <= 0) {
+            return; // 不需要滚动：整条藏掉
+        }
+        int trackX = memberScrollbarX();
+        int trackY = this.memberListY;
+        int trackH = MEMBER_VISIBLE * MEMBER_ROW_H;
+
+        int thumbH = Math.max(MEMBER_THUMB_MIN_H, trackH * MEMBER_VISIBLE / totalRows);
+        int thumbY = trackY + (trackH - thumbH) * this.memberScroll / max;
+
+        // 轨道：半透明深色，融进纸面但能看出来是个槽
+        graphics.fill(trackX, trackY, trackX + MEMBER_SCROLLBAR_W, trackY + trackH, 0x30201508);
+        // 滑块：与页眉描边同族的颜色，悬停/拖动时加深反馈
+        boolean hov = mouseX >= trackX - 2 && mouseX < trackX + MEMBER_SCROLLBAR_W + 2
+                && mouseY >= trackY && mouseY < trackY + trackH;
+        int thumbColor = this.memberScrollbarDragging ? 0xFF6A5A38
+                : hov ? 0xFF9A8A5E : 0xFF8A7A55;
+        graphics.fill(trackX, thumbY, trackX + MEMBER_SCROLLBAR_W, thumbY + thumbH, thumbColor);
+    }
+
+    /** 居民列表当前可滚动的最大格数（0 = 不需要滚动）。 */
+    private int memberScrollMax(TownHandbookClient.TownView town) {
+        return town == null ? 0 : Math.max(0, sortedMembers(town).size() - MEMBER_VISIBLE);
+    }
+
+    /**
+     * 由鼠标 y 反推滚动量（点击轨道跳转 / 拖动滑块共用）。
+     * 把鼠标点当滑块中心：滑块顶 = mouseY - grabOffset，再线性映射回 scroll。
+     */
+    private void scrollMemberTo(double mouseY, double grabOffset, int max) {
+        int trackY = this.memberListY;
+        int trackH = MEMBER_VISIBLE * MEMBER_ROW_H;
+        int totalRows = max + MEMBER_VISIBLE;
+        int thumbH = Math.max(MEMBER_THUMB_MIN_H, trackH * MEMBER_VISIBLE / totalRows);
+        double thumbTop = mouseY - grabOffset - trackY;
+        double span = trackH - thumbH;
+        int scroll = span <= 0 ? 0 : (int) Math.round(thumbTop * max / span);
+        this.memberScroll = Mth.clamp(scroll, 0, max);
+    }
+
+    /** 滑块当前 y（拖动起始时算抓取偏移用）。 */
+    private int memberThumbY(int max) {
+        int trackY = this.memberListY;
+        int trackH = MEMBER_VISIBLE * MEMBER_ROW_H;
+        int totalRows = max + MEMBER_VISIBLE;
+        int thumbH = Math.max(MEMBER_THUMB_MIN_H, trackH * MEMBER_VISIBLE / totalRows);
+        return trackY + (trackH - thumbH) * Mth.clamp(this.memberScroll, 0, max) / max;
     }
 
     /**
@@ -839,6 +915,31 @@ public class TownHandbookScreen extends Screen {
             }
             // 城镇页：居民列表（表头排序 / 行打开镇民面板，用户定稿）
             if (zonePage < 0 && !renameMode && !confirmDelete) {
+                // 滚动条：点轨道跳转 / 点滑块开始拖动（用户定稿：右侧可视滑条可拖）
+                var townForBar = currentTown();
+                int scrollMax = memberScrollMax(townForBar);
+                if (scrollMax > 0) {
+                    int trackX = memberScrollbarX();
+                    int trackY = this.memberListY;
+                    int trackH = MEMBER_VISIBLE * MEMBER_ROW_H;
+                    if (mouseX >= trackX - 2 && mouseX < trackX + MEMBER_SCROLLBAR_W + 2
+                            && mouseY >= trackY && mouseY < trackY + trackH) {
+                        int thumbH = Math.max(MEMBER_THUMB_MIN_H,
+                                trackH * MEMBER_VISIBLE / (scrollMax + MEMBER_VISIBLE));
+                        int thumbY = memberThumbY(scrollMax);
+                        if (mouseY >= thumbY && mouseY < thumbY + thumbH) {
+                            // 抓住滑块：记录抓取点，进入拖动
+                            this.memberScrollbarDragging = true;
+                            this.memberDragGrabOffset = mouseY - thumbY;
+                        } else {
+                            // 点轨道空白：滑块中心跳到点击处
+                            scrollMemberTo(mouseY, thumbH / 2.0D, scrollMax);
+                            this.memberScrollbarDragging = true;
+                            this.memberDragGrabOffset = thumbH / 2.0D;
+                        }
+                        return true;
+                    }
+                }
                 int headerY = bookY + 64;
                 if (mouseY >= headerY && mouseY < headerY + MEMBER_HEADER_H) {
                     for (int col = 0; col < 2; col++) {
@@ -895,12 +996,35 @@ public class TownHandbookScreen extends Screen {
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
+    /** 滚动条拖动：跟随鼠标更新滚动量（点击轨道/滑块后每帧调）。 */
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double dx, double dy) {
-        // 居民列表区域内滚轮：滚居民行（不抢城镇翻页/列表滚动）
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (this.memberScrollbarDragging && button == 0) {
+            int max = memberScrollMax(currentTown());
+            if (max <= 0) {
+                this.memberScrollbarDragging = false; // 列表缩水了：拖动自然终止
+            } else {
+                scrollMemberTo(mouseY, this.memberDragGrabOffset, max);
+            }
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && this.memberScrollbarDragging) {
+            this.memberScrollbarDragging = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double dx, double dy) {        // 居民列表区域内滚轮：滚居民行（不抢城镇翻页/列表滚动）
         if (this.zonePage < 0 && !renameMode && mouseY >= this.memberListY
                 && mouseY < this.memberListY + MEMBER_VISIBLE * MEMBER_ROW_H
-                && mouseX >= lx && mouseX < lx + TEXT_W) {
+                && mouseX >= lx && mouseX < memberScrollbarX() + MEMBER_SCROLLBAR_W) {
             this.memberScroll -= (int) Math.signum(dy);
             return true;
         }

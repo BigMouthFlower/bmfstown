@@ -1,6 +1,8 @@
 package com.bmf.bmfstown.entity.profile;
 
 import com.bmf.bmfstown.BmfTown;
+import com.bmf.bmfstown.entity.domain.ResidentSnapshot;
+import com.bmf.bmfstown.entity.domain.ResidentSnapshotSerializer;
 import net.minecraft.network.syncher.EntityDataSerializer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -37,10 +39,11 @@ public final class ModDataSerializers {
             DeferredRegister.create(NeoForgeRegistries.ENTITY_DATA_SERIALIZERS, BmfTown.MOD_ID);
 
     /**
-     * 镇民档案的序列化器。
+     * 镇民档案同步包（Identity+Growth+Prefs+Status 四域快照）的序列化器。
+     * 注册名沿用 "resident_profile"（注册表改名无收益）。
      */
-    public static final DeferredHolder<EntityDataSerializer<?>, EntityDataSerializer<ResidentProfile>> PROFILE =
-            SERIALIZERS.register("resident_profile", ResidentProfileSerializer::create);
+    public static final DeferredHolder<EntityDataSerializer<?>, EntityDataSerializer<ResidentSnapshot>> PROFILE =
+            SERIALIZERS.register("resident_profile", ResidentSnapshotSerializer::create);
 
     private ModDataSerializers() {
     }
