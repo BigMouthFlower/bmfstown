@@ -180,7 +180,7 @@ public final class TownCensusManager {
         }
     }
 
-    /** 游标三重循环推进（与建材扫描同款：x 快 z 次 y 慢）。 */
+    /** 游标三重循环推进（与建材扫描同款：x 快 z 次 y 慢）；一块扫完接下一块。 */
     private static void stepCursor(Job job) {
         BlockPos.MutableBlockPos cursor = job.cursor;
         cursor.setX(cursor.getX() + 1);
@@ -191,17 +191,25 @@ public final class TownCensusManager {
                 cursor.setZ(job.minZ);
                 cursor.setY(cursor.getY() + 1);
                 if (cursor.getY() > job.maxY) {
-                    job.done = true;
+                    if (job.boxIndex + 1 < job.boxes.size()) {
+                        enterBoxJob(job, job.boxIndex + 1);
+                    } else {
+                        job.done = true;
+                    }
                 }
             }
         }
+    }
+
+    private static void enterBoxJob(Job job, int index) {
+        job.enterBox(index);
     }
 
     private static int currentDay(ServerLevel level) {
         return (int) (level.getDayTime() / 24000L);
     }
 
-    /** 单个扫描任务：扫一个城镇的外框。 */
+    /** 单个扫描任务：扫一个城镇的**全部区块**（0 号外框 + 追加区块，v0.9.1）。 */
     private static final class Job {
         final UUID townId;
         final String townName;
@@ -209,7 +217,10 @@ public final class TownCensusManager {
         final com.bmf.bmfstown.entity.Resident bookkeeper;
         final net.minecraft.server.level.ServerPlayer requester;
         final Town town;
-        final int minX, minY, minZ, maxX, maxY, maxZ;
+        /** 扫描盒子序列：[0] = 0 号外框，[1..] = 追加区块。 */
+        final List<int[]> boxes = new ArrayList<>();
+        int boxIndex;
+        int minX, minY, minZ, maxX, maxY, maxZ;
         final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         final Map<Item, Integer> totals = new LinkedHashMap<>();
         final Map<Item, List<BlockPos>> where = new LinkedHashMap<>();
@@ -223,12 +234,26 @@ public final class TownCensusManager {
             this.town = town;
             this.bookkeeper = bookkeeper;
             this.requester = requester;
-            this.minX = town.min().getX();
-            this.minY = town.min().getY();
-            this.minZ = town.min().getZ();
-            this.maxX = town.max().getX();
-            this.maxY = town.max().getY();
-            this.maxZ = town.max().getZ();
+            this.boxes.add(new int[]{
+                    town.min().getX(), town.min().getY(), town.min().getZ(),
+                    town.max().getX(), town.max().getY(), town.max().getZ()});
+            for (TownZone block : town.townBlocks()) {
+                this.boxes.add(new int[]{
+                        block.min().getX(), block.min().getY(), block.min().getZ(),
+                        block.max().getX(), block.max().getY(), block.max().getZ()});
+            }
+            enterBox(0);
+        }
+
+        private void enterBox(int index) {
+            this.boxIndex = index;
+            int[] b = this.boxes.get(index);
+            this.minX = b[0];
+            this.minY = b[1];
+            this.minZ = b[2];
+            this.maxX = b[3];
+            this.maxY = b[4];
+            this.maxZ = b[5];
             this.cursor.set(minX, minY, minZ);
         }
 

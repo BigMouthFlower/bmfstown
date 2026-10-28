@@ -32,6 +32,12 @@ public class TownHandbookItem extends Item {
 
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        // 选区会话进行中：手册是选区工具，右键选点而非打开屏幕（双端都拦，
+        // 客户端拦"本地开屏预测"，服务端拦"发同步"——事件层已经把
+        // 指向方块的右键吃掉了，这里兜的是指向空气/实体的右键）
+        if (ZoneSelectSessions.active(player.getUUID())) {
+            return InteractionResultHolder.pass(player.getItemInHand(hand));
+        }
         if (level.isClientSide) {
             TownHandbookClient.open();
         }

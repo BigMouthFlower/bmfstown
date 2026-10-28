@@ -17,7 +17,13 @@ import java.util.UUID;
  * （选点时两个对角方块都在区域内），与魔杖预览画的白盒一致：
  * 盒子从 min 画到 max + 1（+1 是因为方块占 [n, n+1) 的空间）。
  */
-public record TownZone(UUID id, String name, BlockPos min, BlockPos max) {
+public record TownZone(UUID id, String name, BlockPos min, BlockPos max,
+                       UUID parentBlock) {
+
+    /** 旧签名兼容构造：功能区归 0 号主区块（parentBlock = null）。 */
+    public TownZone(UUID id, String name, BlockPos min, BlockPos max) {
+        this(id, name, min, max, null);
+    }
 
     public TownZone {
         // record 的紧凑构造器：保证 min ≤ max，存档和创建两侧统一。
@@ -67,6 +73,10 @@ public record TownZone(UUID id, String name, BlockPos min, BlockPos max) {
         tag.putString("Name", name);
         tag.putLong("Min", min.asLong());
         tag.putLong("Max", max.asLong());
+        // 归属区块（v0.9.1）：null = 0 号主区块（老存档无此键，自动归主区块）
+        if (parentBlock != null) {
+            tag.putUUID("ParentBlock", parentBlock);
+        }
         return tag;
     }
 
@@ -75,6 +85,7 @@ public record TownZone(UUID id, String name, BlockPos min, BlockPos max) {
                 tag.getUUID("Id"),
                 tag.getString("Name"),
                 BlockPos.of(tag.getLong("Min")),
-                BlockPos.of(tag.getLong("Max")));
+                BlockPos.of(tag.getLong("Max")),
+                tag.hasUUID("ParentBlock") ? tag.getUUID("ParentBlock") : null);
     }
 }

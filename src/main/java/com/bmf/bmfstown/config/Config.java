@@ -525,6 +525,23 @@ public final class Config {
                     "Day time when the worker stops working")
             .defineInRange("craft.workEndTick", 10000, 1, 24000);
 
+    // ---- v0.9.1 特性权重 ----
+
+    /**
+     * 特性抽取的权重覆盖表（条目格式 {@code "特性id:权重"}，如 {@code "gattaca:3"}）。
+     *
+     * <p><b>未列出的特性默认权重 1</b>——所以默认（空表）= 14 条等概率，与旧版行为完全一致；
+     * 将来词条扩到 50 条时，只想调谁就写谁，不用把全表搬进配置。
+     * 权重 0 = 该特性禁用（永不抽出）；全部为 0 时兜底回等概率。
+     */
+    public static final ModConfigSpec.ConfigValue<java.util.List<? extends String>> TRAITS_WEIGHT_OVERRIDES =
+            BUILDER.comment("特性抽取权重覆盖表，条目格式 \"特性id:权重\"（如 \"gattaca:3\"）",
+                    "未列出的特性默认权重 1（默认空表 = 全部等概率）；权重 0 = 该特性禁用",
+                    "Trait pick weight overrides, entries like \"gattaca:3\"",
+                    "Unlisted traits default to weight 1 (empty list = uniform); weight 0 disables a trait")
+            .defineList("traits.weightOverrides", java.util.List.of(),
+                    o -> o instanceof String str && str.contains(":"));
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     // ==========================================================

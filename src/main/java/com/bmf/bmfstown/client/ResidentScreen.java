@@ -624,14 +624,15 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
         textY += LINE;
         //
-        // 数值一律从 menu 的数据槽读，不从实体档案读。
-        // 数据槽由服务端 broadcastChanges 每 tick 比对推送，是实时的；
-        // 实体档案（SynchedEntityData）虽然也会同步，但那是"变了就发"，
-        // 而数据槽是"面板开着才轮询"，两者时序不同——面板要的是前者。
-        // 专长/喜好/归属三行是低频信息，从档案读没有实时性问题。
-        int healthHalf = this.menu.getStat(ResidentMenu.DATA_HEALTH);
-        int hunger = this.menu.getStat(ResidentMenu.DATA_HUNGER);
-        int mood = this.menu.getStat(ResidentMenu.DATA_MOOD);
+        // 数值通道（v0.9.1 实测纠正）：菜单数据槽（ContainerData）实测客户端
+        // 收不到增量更新——工作模式按钮卡死、工人状态行不刷新是同一坑
+        // （项目纪律两次踩坑），心情"永远 50"是第三次。改走已验证可靠通道：
+        //   血量 = 原版 LivingEntity 客户端同步（vanilla 自带）；
+        //   饥饿/心情 = 六域快照（DATA_ARCHIVE，服务端每次变更 syncClient() 推送，
+        //   applyRaw/setHunger 的每个写入点都带）。
+        int healthHalf = (int) (resident.getHealth() * 2);
+        int hunger = resident.getArchive().hunger();
+        int mood = resident.getArchive().mood();
 
         // 1. 血量（数据槽存的是半颗心数，÷2 还原）。浅灰底配色：原版聊天色的深变体
         drawStat(gfx, textY, I18n.get("gui.bmfstown.resident.stat.health"),

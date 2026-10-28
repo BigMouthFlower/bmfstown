@@ -33,13 +33,14 @@ public final class TownHandbookClient {
      * @param occupants 住宅区专用：已入住村民数；其他类型恒为 0
      */
     public record ZoneView(int kind, UUID id, String name, BlockPos min, BlockPos max,
+                           String parentBlock,
                            int beds, int occupants) {
     }
 
     /** 一个城镇的展示数据（含它下面的子区域）。 */
     public record TownView(UUID id, String name, String dimension, String owner,
                            BlockPos min, BlockPos max, List<ZoneView> zones,
-                           List<MemberView> members) {
+                           List<ZoneView> blocks, List<MemberView> members) {
     }
 
     /** 一条居民展示数据（手册"居民列表"用）。 */
@@ -48,6 +49,19 @@ public final class TownHandbookClient {
 
     private static volatile List<TownView> towns = List.of();
     private static TownHandbookScreen openScreen;
+    /** 空手→手册选区会话进行中（服务端 ZoneSelectSync 同步；手册右键选点时不打开手册）。 */
+    private static volatile boolean zoneSelecting;
+    private static long zoneSelectingAt;
+
+    /** 选区会话标志（客户端镜像；60 秒自动过期，与服务端会话一致）。 */
+    public static boolean isZoneSelecting() {
+        return zoneSelecting && System.currentTimeMillis() - zoneSelectingAt < 60_000L;
+    }
+
+    public static void setZoneSelecting(boolean value) {
+        zoneSelecting = value;
+        zoneSelectingAt = System.currentTimeMillis();
+    }
 
     private TownHandbookClient() {
     }
@@ -77,6 +91,8 @@ public final class TownHandbookClient {
 
     public static void handleSync(com.bmf.bmfstown.network.ModNetworking.HandbookSyncPayload payload) {
         List<TownView> oldTowns = towns;
+        // 手册同步到达 = 选区会话已结束（确认/取消后服务端都会重开手册）
+        setZoneSelecting(false);
         List<TownView> newTowns = parseBlob(payload.blob());
         towns = newTowns;
         Minecraft mc = Minecraft.getInstance();
@@ -130,15 +146,26 @@ public final class TownHandbookClient {
                         b.members.add(new MemberView(Integer.parseInt(limited[2]),
                                 limited[4], limited[3]));
                     }
-                } else if (f[0].equals("Z") && (f.length == 7 || f.length == 9)) {
+                } else if (f[0].equals("B") && f.length == 6) {
+                    // 追加城镇区块（v0.9.1）：B|城镇ID|区块ID|名字|min|max
+                    // 下标：f[2]=区块ID、f[3]=名字、f[4]=min、f[5]=max
                     Builder b = byId.get(UUID.fromString(f[1]));
                     if (b != null) {
-                        // 末尾两个数字是住宅区的床数/入住数；老格式（7 字段）补 0
+                        b.blocks.add(new ZoneView(-1,
+                                UUID.fromString(f[2]), f[3],
+                                parsePos(f[4]), parsePos(f[5]), "", 0, 0));
+                    }
+                } else if (f[0].equals("Z") && (f.length == 7 || f.length == 9 || f.length == 10)) {
+                    Builder b = byId.get(UUID.fromString(f[1]));
+                    if (b != null) {
+                        // 末尾两个数字是住宅区的床数/入住数；老格式（7 字段）补 0；
+                        // v0.9.1 再追加区块归属段（空段 = 0 号主区块）
                         int beds = f.length >= 9 ? Integer.parseInt(f[7]) : 0;
                         int occ = f.length >= 9 ? Integer.parseInt(f[8]) : 0;
+                        String parent = f.length >= 10 ? f[9] : "";
                         b.zones.add(new ZoneView(Integer.parseInt(f[2]),
                                 UUID.fromString(f[3]), f[4],
-                                parsePos(f[5]), parsePos(f[6]), beds, occ));
+                                parsePos(f[5]), parsePos(f[6]), parent, beds, occ));
                     }
                 }
             } catch (RuntimeException e) {
@@ -167,6 +194,7 @@ public final class TownHandbookClient {
         final BlockPos min;
         final BlockPos max;
         final List<ZoneView> zones = new ArrayList<>();
+        final List<ZoneView> blocks = new ArrayList<>();
         final List<MemberView> members = new ArrayList<>();
 
         Builder(UUID id, String name, String dimension, String owner,
@@ -181,7 +209,7 @@ public final class TownHandbookClient {
 
         TownView build() {
             return new TownView(id, name, dimension, owner, min, max,
-                    List.copyOf(zones), List.copyOf(members));
+                    List.copyOf(zones), List.copyOf(blocks), List.copyOf(members));
         }
     }
 

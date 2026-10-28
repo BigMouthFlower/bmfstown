@@ -36,6 +36,11 @@ public class Town {
     private final BlockPos max;
     /** 三类子区域。 */
     private final Map<TownWandMode, List<TownZone>> zones = new EnumMap<>(TownWandMode.class);
+    /**
+     * 追加的城镇区块（v0.9.1 不连续选区）：min/max 外框是 0 号区块本体，
+     * 这里存第 2 块起的不连续区块。镇民"在城镇中" = 在外框或任一追加区块内。
+     */
+    private final List<TownZone> townBlocks = new ArrayList<>();
     /** 创建时间戳——手册里"新的排在后面"就靠它排序。 */
     private final long createdAt;
 
@@ -113,18 +118,83 @@ public class Town {
         return createdAt;
     }
 
-    /** 方块（含整格）是否在外框内。 */
+    /** 方块（含整格）是否在城镇内：0 号外框或任一追加区块（v0.9.1 并集）。 */
     public boolean contains(BlockPos pos) {
-        return pos.getX() >= min.getX() && pos.getX() <= max.getX()
+        if (pos.getX() >= min.getX() && pos.getX() <= max.getX()
                 && pos.getY() >= min.getY() && pos.getY() <= max.getY()
-                && pos.getZ() >= min.getZ() && pos.getZ() <= max.getZ();
+                && pos.getZ() >= min.getZ() && pos.getZ() <= max.getZ()) {
+            return true;
+        }
+        for (TownZone block : this.townBlocks) {
+            if (block.contains(pos)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    /** 外框（两城镇不能重叠的判定）——与另一个城镇的外框在 AABB 上相交。 */
+    /** 追加的城镇区块（第 2 块起；0 号是外框本体，不在列表里）。 */
+    public List<TownZone> townBlocks() {
+        return List.copyOf(this.townBlocks);
+    }
+
+    /** 追加一个城镇区块（调用方负责重叠校验与标脏）。 */
+    public void addTownBlock(TownZone block) {
+        this.townBlocks.add(block);
+    }
+
+    /** 可写的追加区块列表（区块改名用）。 */
+    public List<TownZone> townBlocksForWrite() {
+        return this.townBlocks;
+    }
+
+    /** 某区块（含 0 号外框，blockId = null）名下的功能区数量。 */
+    public int countZonesInBlock(UUID blockId) {
+        int count = 0;
+        for (TownWandMode mode : TownWandMode.values()) {
+            for (TownZone zone : zones(mode)) {
+                if (blockId == null ? zone.parentBlock() == null : blockId.equals(zone.parentBlock())) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    /** 两城镇不能重叠：**任一**区块（含 0 号外框与追加区块）与对方任一区块相交即算。 */
     public boolean overlaps(Town other) {
-        return min.getX() <= other.max.getX() && max.getX() >= other.min.getX()
-                && min.getY() <= other.max.getY() && max.getY() >= other.min.getY()
-                && min.getZ() <= other.max.getZ() && max.getZ() >= other.min.getZ();
+        if (boxOverlaps(min, max, other.min, other.max)) {
+            return true;
+        }
+        for (TownZone block : this.townBlocks) {
+            if (boxOverlaps(block.min(), block.max(), other.min, other.max)) {
+                return true;
+            }
+        }
+        for (TownZone otherBlock : other.townBlocks) {
+            if (boxOverlaps(min, max, otherBlock.min(), otherBlock.max())) {
+                return true;
+            }
+            for (TownZone block : this.townBlocks) {
+                if (boxOverlaps(block.min(), block.max(),
+                        otherBlock.min(), otherBlock.max())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 供 findOverlapping 用的单盒子重叠判定（新建城镇还没有追加区块，只查外框）。 */
+    boolean boxOverlaps(BlockPos otherMin, BlockPos otherMax) {
+        return boxOverlaps(min, max, otherMin, otherMax);
+    }
+
+    private static boolean boxOverlaps(BlockPos aMin, BlockPos aMax,
+                                       BlockPos bMin, BlockPos bMax) {
+        return aMin.getX() <= bMax.getX() && aMax.getX() >= bMin.getX()
+                && aMin.getY() <= bMax.getY() && aMax.getY() >= bMin.getY()
+                && aMin.getZ() <= bMax.getZ() && aMax.getZ() >= bMin.getZ();
     }
 
     /** 添加子区域（调用方负责归属校验）。 */
@@ -157,6 +227,11 @@ public class Town {
             zoneList.add(z);
         }
         tag.put("Zones", zoneList);
+        ListTag blockList = new ListTag();
+        for (TownZone block : this.townBlocks) {
+            blockList.add(block.save());
+        }
+        tag.put("TownBlocks", blockList);
         return tag;
     }
 
@@ -185,6 +260,31 @@ public class Town {
             TownZone zone = TownZone.load(z);
             TownWandMode kind = TownWandMode.byIndex(z.getInt("Kind"));
             town.addZone(kind, zone);
+        }
+        ListTag blockList = tag.getList("TownBlocks", Tag.TAG_COMPOUND);
+        for (int i = 0; i < blockList.size(); i++) {
+            town.townBlocks.add(TownZone.load(blockList.getCompound(i)));
+        }
+        // 老档自动归块（v0.9.1）：归属为空（区块功能实装前画的功能区）且
+        // 几何上完整落在某个追加区块内 → 自动归到那个区块。主外框内的保持主区块。
+        if (!town.townBlocks.isEmpty()) {
+            for (java.util.Map.Entry<TownWandMode, java.util.List<TownZone>> entry
+                    : town.zones.entrySet()) {
+                java.util.List<TownZone> list = entry.getValue();
+                for (int i = 0; i < list.size(); i++) {
+                    TownZone zone = list.get(i);
+                    if (zone.parentBlock() != null || zone.inside(town.min, town.max)) {
+                        continue; // 已有归属，或本来就在主外框内
+                    }
+                    for (TownZone block : town.townBlocks) {
+                        if (zone.inside(block.min(), block.max())) {
+                            list.set(i, new TownZone(zone.id(), zone.name(),
+                                    zone.min(), zone.max(), block.id()));
+                            break;
+                        }
+                    }
+                }
+            }
         }
         return town;
     }

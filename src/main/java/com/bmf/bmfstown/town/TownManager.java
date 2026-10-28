@@ -70,7 +70,8 @@ public final class TownManager {
 
     /**
      * 魔杖确认创建子区域（就餐区/住宅/工作区）。
-     * 规则：整个选区必须完整落在同维度某个城镇的外框内。
+     * 规则：整个选区必须完整落在同维度某城镇的**某个区块**（0 号外框或追加区块）内，
+     * 功能区归属于该区块（v0.9.1 不连续选区）。
      */
     public static void tryCreateZone(ServerPlayer player, TownWandMode mode, BlockPos a, BlockPos b) {
         ServerLevel level = player.serverLevel();
@@ -84,13 +85,24 @@ public final class TownManager {
                     Component.translatable(mode.displayName())), false);
             return;
         }
+        // 判定归属区块：0 号外框优先，其次追加区块
+        TownZone probe = new TownZone(UUID.randomUUID(), "", a, b);
+        UUID parentBlock = null;
+        if (!probe.inside(town.min(), town.max())) {
+            for (TownZone block : town.townBlocks()) {
+                if (probe.inside(block.min(), block.max())) {
+                    parentBlock = block.id();
+                    break;
+                }
+            }
+        }
 
         // 默认名是"数据"不是"文案"——定下来就存进存档了，
         // 所以在服务端取译文定稿（单人 = 客户端语言；专用服 = 服务端语言）
         String kindName = Component.translatable(mode.displayName()).getString();
         String name = Component.translatable("name.bmfstown.zone.default",
                 kindName, town.zones(mode).size() + 1).getString();
-        TownZone created = new TownZone(UUID.randomUUID(), name, a, b);
+        TownZone created = new TownZone(UUID.randomUUID(), name, a, b, parentBlock);
         town.addZone(mode, created);
         data.setDirty();
         // 排障好帮手：范围对不对，一眼从日志看出（历史上 1x1x1 的锅不止一次）
@@ -109,6 +121,102 @@ public final class TownManager {
                 "msg.bmfstown.zone.created", town.name(),
                 Component.translatable(mode.displayName()), name), false);
         ModNetworking.sendHandbookSync(player, true);
+    }
+
+    // ==========================================================
+    //  追加城镇区块（v0.9.1 不连续选区）
+    // ==========================================================
+
+    /**
+     * 手册"增加选区"按钮：开启空手选区会话；**会话已激活时再点 = 取消**（可靠的取消通道，
+     * 不依赖潜行竞速）。之后空手右键两个角 → {@link #confirmAppendBlock}；Shift+右键方块也可取消。
+     */
+    public static void startAppendBlock(ServerPlayer player, String townIdText) {
+        if (ZoneSelectSessions.cancel(player.getUUID())) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.zoneblock.canceled"), true);
+            return;
+        }
+        Town town = TownSaveData.get(player.serverLevel()).findTown(townIdText);
+        if (town == null) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.town.gone"), true);
+            return;
+        }
+        if (!town.dimension().equals(player.serverLevel().dimension().location().toString())) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.zoneblock.wrong_dim"), true);
+            return;
+        }
+        ZoneSelectSessions.start(player.getUUID(), town.id());
+        ModNetworking.sendZoneSelectSync(player, true);
+        player.displayClientMessage(Component.translatable(
+                "msg.bmfstown.zoneblock.started", town.name()), false);
+        player.displayClientMessage(Component.translatable(
+                "msg.bmfstown.zoneblock.hint"), false);
+    }
+
+    /**
+     * 空手选满两个角后创建追加区块。
+     * 规则：同维度；与**任何**城镇的**任何**区块（含自己的）不重叠。
+     * 成功后会话结束、推手册数据（open=true 让手册自动弹回）。
+     */
+    public static void confirmAppendBlock(ServerPlayer player, java.util.UUID townId,
+                                          BlockPos a, BlockPos b) {
+        ServerLevel level = player.serverLevel();
+        TownSaveData data = TownSaveData.get(level);
+        Town town = data.findTown(townId.toString());
+        if (town == null) {
+            ZoneSelectSessions.cancel(player.getUUID());
+            ModNetworking.sendZoneSelectSync(player, false);
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.town.gone"), true);
+            return;
+        }
+
+        Town overlap = data.findOverlapping(level.dimension().location().toString(), a, b);
+        if (overlap != null && !overlap.id().equals(town.id())) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.town.overlap", overlap.name()), false);
+            return;
+        }
+        // 与自己已有区块重叠也拒绝（区块相叠没有语义）
+        if (boxesTouchSelf(town, a, b)) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.zoneblock.self_overlap"), true);
+            return;
+        }
+
+        String name = Component.translatable("name.bmfstown.townblock.default",
+                town.townBlocks().size() + 2).getString();
+        TownZone created = new TownZone(java.util.UUID.randomUUID(), name, a, b);
+        town.addTownBlock(created);
+        data.setDirty();
+        ZoneSelectSessions.cancel(player.getUUID());
+        ModNetworking.sendZoneSelectSync(player, false);
+        LOGGER.info("[BmfTown] {} 为城镇「{}」追加区块「{}」范围 {}~{}",
+                player.getName().getString(), town.name(), name,
+                created.min().toShortString(), created.max().toShortString());
+        player.displayClientMessage(Component.translatable(
+                "msg.bmfstown.zoneblock.created", town.name(), name,
+                TownWandItem.fmt(created.min()), TownWandItem.fmt(created.max())), false);
+        if (created.min().getY() == created.max().getY()) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.zone.flat_hint"), false);
+        }
+        ModNetworking.sendHandbookSync(player, true);
+    }
+
+    /** 新选区是否与已有追加区块重叠。 */
+    private static boolean boxesTouchSelf(Town town, BlockPos a, BlockPos b) {
+        Town probe = new Town(java.util.UUID.randomUUID(), "检查用", "",
+                town.dimension(), a, b);
+        for (TownZone block : town.townBlocks()) {
+            if (probe.boxOverlaps(block.min(), block.max())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ==========================================================
@@ -136,6 +244,11 @@ public final class TownManager {
             if (!data.rename("-", targetId.substring(2), clean)) {
                 return;
             }
+        } else if (targetId.startsWith("B:")) {
+            // 改城镇区块名（v0.9.1）：townId 不参与查找，全域按区块 id 找
+            if (!data.renameBlockAny(targetId.substring(2), clean)) {
+                return;
+            }
         } else {
             return;
         }
@@ -144,11 +257,26 @@ public final class TownManager {
 
     public static void delete(ServerPlayer player, String targetId) {
         TownSaveData data = TownSaveData.get(player.serverLevel());
-        boolean ok;
+        boolean ok = false;
         if (targetId.startsWith("T:")) {
             ok = data.remove(targetId.substring(2), null);
         } else if (targetId.startsWith("Z:")) {
             ok = data.remove("-", targetId.substring(2));
+        } else if (targetId.startsWith("B:")) {
+            // 删城镇区块：区块下还挂着功能区时拒绝并提示
+            for (Town town : data.allTowns()) {
+                for (TownZone block : town.townBlocks()) {
+                    if (targetId.substring(2).equals(block.id().toString())) {
+                        if (town.countZonesInBlock(block.id()) > 0) {
+                            player.displayClientMessage(Component.translatable(
+                                    "msg.bmfstown.zoneblock.has_children"), false);
+                            return;
+                        }
+                        ok = data.removeBlock(town.id(), block.id());
+                        break;
+                    }
+                }
+            }
         } else {
             return;
         }

@@ -502,6 +502,7 @@ public final class Status {
         }
         this.lastSettledDay = today;
         this.eventCountToday.clear();
+        this.dailyDelta = 0; // 每日限幅配额的零点（漏了它配额只减不增，心情会冻死）
         ensureGenerated(resident, level);
 
         settleProfession(resident, level);

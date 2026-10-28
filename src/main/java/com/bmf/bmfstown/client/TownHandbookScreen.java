@@ -81,12 +81,22 @@ public class TownHandbookScreen extends Screen {
     /** 排序方向：0=升序 1=降序。 */
     private static int memberSortDir = 0;
     private static int memberScroll;
+    /** 右页区块列表滚动量（v0.9.1：列表限高可滚，修溢出）。 */
+    private static int blockScroll;
     private static final int MEMBER_HEADER_H = 10;
     private static final int MEMBER_ROW_H = 12;
     private static final int MEMBER_VISIBLE = 6;
     private static final int MEMBER_COL_W = 46;
+    /** 右页区块列表可见行数（列表区 bookY+100~+148，行高 12，v0.9.1）。 */
+    private static final int BLOCK_VISIBLE = 4;
     /** 列表首行 y（渲染时更新，点击判定用）。 */
     private int memberListY;
+
+    // ---- 区块详情页（v0.9.1 不连续选区三级导航：城镇 → 区块 → 功能区） ----
+    /** null = 城镇页；"main" = 主区块（0 号外框）；其他 = 追加区块的 UUID 字符串。 */
+    private String selectedBlockId;
+    /** true = 正在看区块详情页（压在城镇页上的子页，同 zonePage 模式）。 */
+    private boolean blockPage;
 
     // ---- 居民列表滚动条（v0.8.2：右侧可视滑条，可拖拽；实例态，关屏即清） ----
     /** 正在拖动滚动条滑块。 */
@@ -150,6 +160,31 @@ public class TownHandbookScreen extends Screen {
         closeY = bookY + 16;
 
         buttons.clear();
+        if (blockPage && zonePage < 0) {
+            // ---- 区块详情页：左上角返回（回城镇页）----
+            buttons.add(new InkButton(lx, bookY + 14,
+                    I18n.get("gui.bmfstown.handbook.back"), this::closeBlockPage));
+            if (renameMode) {
+                nameBox = new EditBox(this.font, rx, bookY + 100, TEXT_W, 14,
+                        Component.translatable("gui.bmfstown.handbook.name_label"));
+                String current = selectedTargetName();
+                nameBox.setValue(current == null ? "" : current);
+                nameBox.setMaxLength(24);
+                nameBox.setHint(Component.translatable("gui.bmfstown.handbook.name_hint"));
+                addRenderableWidget(nameBox);
+                buttons.add(new InkButton(rx, bookY + 124, I18n.get("gui.bmfstown.handbook.ok"), this::confirmRename));
+                buttons.add(new InkButton(rx + 52, bookY + 124, I18n.get("gui.bmfstown.handbook.cancel"), this::endRename));
+            } else if (confirmDelete) {
+                buttons.add(InkButton.danger(bookX + 58, bookY + 148, I18n.get("gui.bmfstown.handbook.delete_forever"), this::deleteConfirmed));
+                buttons.add(new InkButton(bookX + 152, bookY + 148, I18n.get("gui.bmfstown.handbook.delete_cancel"), this::cancelDelete));
+            } else if (selectedBlockId != null && !selectedBlockId.equals("main")) {
+                // 主区块（0 号外框）不可改名/删除——它就是城镇本体
+                buttons.add(new InkButton(bookX + 58, bookY + 148, I18n.get("gui.bmfstown.handbook.rename"), this::beginRename));
+                buttons.add(new InkButton(bookX + 152, bookY + 148, I18n.get("gui.bmfstown.handbook.delete"), this::beginDelete));
+            }
+            rebuildRows();
+            return;
+        }
         if (zonePage >= 0) {
             // ---- 区域管理子页：左上角返回按钮（压在城镇页上的"后退"） ----
             buttons.add(new InkButton(lx, bookY + 14,
@@ -230,20 +265,35 @@ public class TownHandbookScreen extends Screen {
         return towns.get(pageIndex);
     }
 
+    /** 功能区是否属于当前选中的区块（"main" = 0 号主区块，归属为 null）。 */
+    private boolean parentMatches(TownHandbookClient.ZoneView zone) {
+        if ("main".equals(selectedBlockId)) {
+            return zone.parentBlock() == null || zone.parentBlock().isEmpty();
+        }
+        return selectedBlockId != null && selectedBlockId.equals(zone.parentBlock());
+    }
+
     private void rebuildRows() {
         List<Row> list = new ArrayList<>();
         TownHandbookClient.TownView town = currentTown();
         if (town != null && zonePage >= 0) {
-            // 子页：只列当前城镇、当前类型的区域，名字不带类型前缀。
-            // 城镇页（zonePage < 0）不再铺区域列表——子区域的浏览/编辑
-            // 统一走右侧"区域管理"入口，避免两页混在一起。
+            // 功能区子页：只列**当前区块**、当前类型的功能区
             for (TownHandbookClient.ZoneView zone : town.zones()) {
-                if (zone.kind() != zonePage) {
+                if (zone.kind() != zonePage || !parentMatches(zone)) {
                     continue;
                 }
                 list.add(new Row(zone.name(),
                         fmt(zone.min()) + "~" + fmt(zone.max()),
                         "Z:" + zone.id(), false, zone.kind()));
+            }
+        } else if (town != null && blockPage) {
+            // 区块详情：行 = 区块列表（主区域 + 追加区块）
+            list.add(new Row(I18n.get("gui.bmfstown.handbook.block_main"),
+                    fmt(town.min()) + "~" + fmt(town.max()), "B:main", false, -1));
+            for (TownHandbookClient.ZoneView block : town.blocks()) {
+                list.add(new Row(block.name(),
+                        fmt(block.min()) + "~" + fmt(block.max()),
+                        "B:" + block.id(), false, -1));
             }
         }
         this.rows = list;
@@ -253,7 +303,13 @@ public class TownHandbookScreen extends Screen {
         clampScroll();
     }
 
-    /** 当前操作目标：选中了子区域就是它；没选中就是城镇本身。 */
+    /**
+     * 当前操作目标：选中了子区域就是它；否则按页面层级回退——
+     * 区块详情页回退到当前区块（B:），城镇页才回退到城镇本身（T:）。
+     *
+     * <p>⚠ 层级隔离是铁律（用户定稿）：区块页的删除/改名<b>绝不</b>落回城镇目标，
+     * 否则"删区块"会变成"删整个城镇"（v0.9.1 实测事故）。
+     */
     private Row currentTarget() {
         TownHandbookClient.TownView town = currentTown();
         if (town == null) {
@@ -261,6 +317,19 @@ public class TownHandbookScreen extends Screen {
         }
         if (selected >= 0 && selected < rows.size()) {
             return rows.get(selected);
+        }
+        if (blockPage) {
+            // 主区块（0 号外框）= 城镇本体，不可改名/删除：不返回任何目标
+            if (selectedBlockId == null || "main".equals(selectedBlockId)) {
+                return null;
+            }
+            for (TownHandbookClient.ZoneView b : town.blocks()) {
+                if (b.id().toString().equals(selectedBlockId)) {
+                    return new Row(b.name(), fmt(b.min()) + "~" + fmt(b.max()),
+                            "B:" + selectedBlockId, false, -1);
+                }
+            }
+            return null; // 区块刚被删：无目标
         }
         return new Row(town.name(), fmt(town.min()) + "~" + fmt(town.max()),
                 "T:" + town.id(), true, 0);
@@ -320,7 +389,9 @@ public class TownHandbookScreen extends Screen {
     private void flip(int delta) {
         pageIndex = Math.max(0, Math.min(TownHandbookClient.towns().size() - 1,
                 pageIndex + delta));
-        zonePage = -1; // 换城镇 = 整页翻过去，子页跟着合上
+        zonePage = -1; // 换城镇 = 整页翻过去，子页与区块页跟着合上
+        blockPage = false;
+        selectedBlockId = null;
         selected = -1;
         scroll = 0;
         renameMode = false;
@@ -345,8 +416,21 @@ public class TownHandbookScreen extends Screen {
         this.init();
     }
 
-    /** 返回城镇页。选中态清掉——回去看的是城镇信息，不是刚才那条区域。 */
+    /** 返回上一层：功能区子页回区块详情，区块详情回城镇页。 */
     private void closeZonePage() {
+        this.zonePage = -1;
+        this.selected = -1;
+        this.scroll = 0;
+        this.confirmDelete = false;
+        this.renameMode = false;
+        this.clearWidgets();
+        this.init();
+    }
+
+    /** 从区块详情返回城镇页。 */
+    private void closeBlockPage() {
+        this.blockPage = false;
+        this.selectedBlockId = null;
         this.zonePage = -1;
         this.selected = -1;
         this.scroll = 0;
@@ -407,13 +491,21 @@ public class TownHandbookScreen extends Screen {
         this.init();
     }
 
-    /** 第二次确认：真的删了。 */
+    /** 第二次确认：真的删了。删区块则回上一级（城镇页，用户定稿）。 */
     private void deleteConfirmed() {
         String id = selectedTargetId();
         confirmDelete = false;
         if (id != null) {
             ModNetworking.sendToServer(new ModNetworking.HandbookDeletePayload(id));
             selected = -1;
+            if (id.startsWith("B:")) {
+                // 删的是区块：无论服务端结果如何都退回城镇页
+                // （失败场景 = 区块下还有功能区，服务端会提示，列表不变）
+                this.blockPage = false;
+                this.selectedBlockId = null;
+            }
+            this.clearWidgets();
+            this.init();
         }
     }
 
@@ -431,6 +523,8 @@ public class TownHandbookScreen extends Screen {
         if (town != null) {
             if (zonePage >= 0) {
                 renderZonePage(graphics, town, mouseX, mouseY);
+            } else if (blockPage) {
+                renderBlockPage(graphics, town, mouseX, mouseY);
             } else {
                 renderTownPage(graphics, town, mouseX, mouseY);
             }
@@ -478,7 +572,7 @@ public class TownHandbookScreen extends Screen {
                         fmt(town.min()), fmt(town.max()))),
                 lx, bookY + 50, TEXT_W, INK_FADED);
 
-        // ---- 左页居民列表（红框区域，用户定稿）----
+        // ---- 左页居民列表（用户定稿：城镇页左页只放居民列表）----
         if (!confirmDelete && !renameMode) {
             drawMemberList(graphics, town, mouseX, mouseY);
         }
@@ -500,12 +594,11 @@ public class TownHandbookScreen extends Screen {
             graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.no_preview"), rx, bookY + 20, INK_FADED, false);
         }
 
-        // ---- 右页：区域管理入口（三类区域的跳转列表） ----
-        // 风格学镇民面板的归属列表：整块深色底，悬停提亮。
-        // 每行显示类型名 + 数量，点击开对应的管理子页。
-        // 注意：删除确认/改名模式下不画（右页被警告/输入框占用）。
+        // ---- 右页：区块列表（v0.9.1 三级导航——点击进区块详情） ----
+        // 原来的"区域管理"入口挪进区块详情页：功能区现在归属于区块。
+        // 最后一行是"＋增加选区"：发 payload 并关手册进世界选点。
         if (!confirmDelete && !renameMode) {
-            drawManageList(graphics, mouseX, mouseY);
+            drawBlockListPage(graphics, mouseX, mouseY);
         }
 
         // ---- 右页：删除确认警告（红色，仿原版删存档的口气）----
@@ -600,6 +693,113 @@ public class TownHandbookScreen extends Screen {
         drawMemberScrollbar(graphics, list.size(), max, mouseX, mouseY);
     }
 
+    // ---- 城镇页右页：区块列表（v0.9.1 三级导航）----
+
+    /** 区块列表行：[0]=主区域，[1..]=追加区块，[-1]=增加选区行。 */
+    private int blockListTop;
+
+    /** 右页区块列表：主区域 + 追加区块 + "＋增加选区"行（点击进详情/发起选点）。 */
+    private void drawBlockListPage(GuiGraphics graphics, int mouseX, int mouseY) {
+        TownHandbookClient.TownView town = currentTown();
+        if (town == null) {
+            return;
+        }
+        // 表头：左"区块列表"，右"＋增加选区"按钮（用户定稿：按钮固定在表头旁，
+        // 不随列表滚动；单个加号）
+        int headerY = bookY + 88;
+        graphics.fill(rx - 4, headerY - 2, rx + TEXT_W + 2, headerY + 10, 0xFFEDE2C2);
+        graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.block_header"),
+                rx, headerY, INK_HEADER, false);
+        String addLabel = I18n.get("gui.bmfstown.handbook.block_add");
+        int addW = this.font.width(addLabel) + 6;
+        boolean addHover = mouseX >= rx + TEXT_W - addW && mouseX < rx + TEXT_W
+                && mouseY >= headerY - 2 && mouseY < headerY + 10;
+        graphics.fill(rx + TEXT_W - addW, headerY - 2, rx + TEXT_W, headerY + 10,
+                addHover ? 0xFFD0C096 : 0xFFEDE2C2);
+        graphics.drawString(this.font, addLabel, rx + TEXT_W - addW + 3, headerY,
+                addHover ? 0x8A5A00 : INK_HEADER, false);
+
+        // 行数据：主区域 + 追加区块（无"增加选区"行了）
+        java.util.List<String[]> rows = new java.util.ArrayList<>();
+        rows.add(new String[]{I18n.get("gui.bmfstown.handbook.block_main"),
+                sizeText(town.min(), town.max())});
+        for (TownHandbookClient.ZoneView block : town.blocks()) {
+            rows.add(new String[]{block.name(), sizeText(block.min(), block.max())});
+        }
+        int maxScroll = Math.max(0, rows.size() - BLOCK_VISIBLE);
+        blockScroll = Mth.clamp(blockScroll, 0, maxScroll);
+
+        // 行区：限高 BLOCK_VISIBLE 行（12px 行高），超出滚动——不再溢出纸页
+        blockListTop = bookY + 104;
+        int listBottom = blockListTop + BLOCK_VISIBLE * 12;
+        graphics.fill(rx - 4, blockListTop - 2, rx + TEXT_W + 2, listBottom, 0x28201508);
+        for (int v = 0; v < BLOCK_VISIBLE; v++) {
+            int idx = blockScroll + v;
+            if (idx >= rows.size()) {
+                break;
+            }
+            String[] row = rows.get(idx);
+            int y = blockListTop + v * 12;
+            boolean hover = mouseX >= rx - 4 && mouseX < rx + TEXT_W + 2
+                    && mouseY >= y && mouseY < y + 12;
+            if (hover) {
+                graphics.fill(rx - 4, y - 1, rx + TEXT_W + 2, y + 11, 0x40201508);
+            }
+            graphics.drawString(this.font, fit("· " + row[0]), rx, y,
+                    hover ? INK : INK_FADED, false);
+            if (!row[1].isEmpty()) {
+                int w = this.font.width(row[1]);
+                graphics.drawString(this.font, row[1], rx + TEXT_W - w, y,
+                        hover ? INK : INK_FADED, false);
+            }
+        }
+        // 滑条：轨道右缘外 2px，比例滑块（与居民列表同款风格）
+        if (maxScroll > 0) {
+            int trackX = rx + TEXT_W + 2;
+            int trackH = BLOCK_VISIBLE * 12;
+            int thumbH = Math.max(8, trackH * BLOCK_VISIBLE / rows.size());
+            int thumbY = blockListTop + (trackH - thumbH) * blockScroll / maxScroll;
+            graphics.fill(trackX, blockListTop, trackX + 3, blockListTop + trackH, 0x30201508);
+            graphics.fill(trackX, thumbY, trackX + 3, thumbY + thumbH, 0xFF8A7A55);
+        }
+    }
+
+    private int blockListClick(double mouseX, double mouseY) {
+        TownHandbookClient.TownView town = currentTown();
+        if (town == null) {
+            return -2;
+        }
+        // 表头右格"＋增加选区"按钮
+        int headerY = bookY + 88;
+        String addLabel = I18n.get("gui.bmfstown.handbook.block_add");
+        int addW = this.font.width(addLabel) + 6;
+        if (mouseX >= rx + TEXT_W - addW && mouseX < rx + TEXT_W
+                && mouseY >= headerY - 2 && mouseY < headerY + 10) {
+            return -1;
+        }
+        // 行区（含滚动偏移）
+        if (mouseX < rx - 4 || mouseX > rx + TEXT_W + 2 || blockListTop <= 0) {
+            return -2;
+        }
+        int total = 1 + town.blocks().size();
+        int row = (int) ((mouseY - blockListTop) / 12);
+        if (row < 0 || row >= BLOCK_VISIBLE || mouseY < blockListTop
+                || mouseY >= blockListTop + BLOCK_VISIBLE * 12) {
+            return -2;
+        }
+        int idx = blockScroll + row;
+        if (idx >= total) {
+            return -2;
+        }
+        return idx;
+    }
+
+    /** 选区尺寸的紧凑写法 "WxHxD"。 */
+    private String sizeText(net.minecraft.core.BlockPos min, net.minecraft.core.BlockPos max) {
+        return (max.getX() - min.getX() + 1) + "x" + (max.getY() - min.getY() + 1)
+                + "x" + (max.getZ() - min.getZ() + 1);
+    }
+
     // ---- 居民列表滚动条 ----
 
     /** 滚动条轨道 x（列表右缘外 2px）与宽度。 */
@@ -689,46 +889,116 @@ public class TownHandbookScreen extends Screen {
      * <p>深灰底块 + 悬停提亮（借鉴镇民面板归属列表的层级语言，
      * 但配色压暗以融进书页）。行 = 区域类型 + 该城镇内数量。
      */
-    private void drawManageList(GuiGraphics graphics, int mouseX, int mouseY) {
-        TownHandbookClient.TownView town = currentTown();
-        if (town == null) {
-            return;
+    /**
+     * 区块详情页：三级导航的中间层。
+     *
+     * <p>左页 = 该区块名下的"区域管理"（就餐/住宅/工作入口，点击开对应子页）；
+     * 右页 = 区块信息（主区块只有信息；追加区块底部有改名/删除按钮，
+     * 由 init() 装配）。返回按钮同 zonePage 模式。
+     */
+    private void renderBlockPage(GuiGraphics graphics, TownHandbookClient.TownView town,
+                                 int mouseX, int mouseY) {
+        boolean isMain = "main".equals(selectedBlockId);
+        String name;
+        net.minecraft.core.BlockPos bMin, bMax;
+        if (isMain) {
+            name = I18n.get("gui.bmfstown.handbook.block_main");
+            bMin = town.min();
+            bMax = town.max();
+        } else {
+            TownHandbookClient.ZoneView block = null;
+            for (TownHandbookClient.ZoneView b : town.blocks()) {
+                if (b.id().toString().equals(selectedBlockId)) {
+                    block = b;
+                    break;
+                }
+            }
+            if (block == null) {
+                return; // 区块刚被删：等下一次同步
+            }
+            name = block.name();
+            bMin = block.min();
+            bMax = block.max();
         }
+
+        // ---- 左页：区块信息 + 该区块的区域管理 ----
+        // 标题从 +34 起：+14 行是返回按钮（zonePage 同款布局，v0.9.1 修重叠）
+        graphics.drawString(this.font, fit("■ " + name), lx, bookY + 34, INK, false);
+        graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.block_type",
+                        I18n.get(isMain ? "gui.bmfstown.handbook.block_type_main"
+                                : "gui.bmfstown.handbook.block_type_append")),
+                lx, bookY + 46, INK_FADED, false);
+        graphics.drawWordWrap(this.font, Component.literal(I18n.get(
+                        "gui.bmfstown.handbook.range", fmt(bMin), fmt(bMax))),
+                lx, bookY + 56, TEXT_W, INK_FADED);
+
         graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.manage_header"),
-                rx, bookY + 88, INK_HEADER, false);
+                lx, bookY + 76, INK_HEADER, false);
 
         java.util.List<TownWandMode> kinds = manageKinds();
-        manageTop = bookY + 100;
-        // 深色底块：包住所有行，和周围纸面区分开
-        graphics.fill(rx - 4, manageTop - 2, rx + TEXT_W + 2,
+        manageTop = bookY + 88;
+        graphics.fill(lx - 4, manageTop - 2, lx + TEXT_W + 2,
                 manageTop + kinds.size() * ROW_H + 2, 0x28201508);
         for (int i = 0; i < kinds.size(); i++) {
             TownWandMode mode = kinds.get(i);
             int kind = mode.ordinal();
             int count = 0;
             for (TownHandbookClient.ZoneView zone : town.zones()) {
-                if (zone.kind() == kind) {
+                if (zone.kind() == kind && parentMatches(zone)) {
                     count++;
                 }
             }
             int y = manageTop + i * ROW_H;
-            boolean hover = mouseX >= rx - 4 && mouseX < rx + TEXT_W + 2
+            boolean hover = mouseX >= lx - 4 && mouseX < lx + TEXT_W + 2
                     && mouseY >= y && mouseY < y + ROW_H;
             if (hover) {
-                graphics.fill(rx - 4, y - 1, rx + TEXT_W + 2, y + ROW_H - 2, 0x40201508);
+                graphics.fill(lx - 4, y - 1, lx + TEXT_W + 2, y + ROW_H - 2, 0x40201508);
             }
-            String label = fit(I18n.get(mode.displayName()) + " ×" + count);
-            graphics.drawString(this.font, label, rx, y,
-                    hover ? INK : INK_FADED, false);
+            graphics.drawString(this.font, fit(I18n.get(mode.displayName()) + " ×" + count),
+                    lx, y, hover ? INK : INK_FADED, false);
+        }
+
+        // ---- 右页：改名 / 删除确认的文案（按钮由 init() 装配） ----
+        if (confirmDelete) {
+            String target = selectedTargetName();
+            graphics.drawWordWrap(this.font, Component.literal(
+                            I18n.get("gui.bmfstown.handbook.delete_warn1",
+                                    target == null ? "?" : target)),
+                    rx, bookY + 88, TEXT_W, 0xFFC03020);
+            graphics.drawWordWrap(this.font, Component.literal(
+                            I18n.get("gui.bmfstown.handbook.delete_warn2")),
+                    rx, bookY + 106, TEXT_W, 0xFFC03020);
+            graphics.drawWordWrap(this.font, Component.literal(
+                            I18n.get("gui.bmfstown.handbook.delete_warn3")),
+                    rx, bookY + 124, TEXT_W, INK_FADED);
+            return;
+        }
+        if (renameMode) {
+            graphics.drawString(this.font, I18n.get("gui.bmfstown.handbook.rename_header"),
+                    rx, bookY + 84, INK_HEADER, false);
+            if (currentTarget() != null) {
+                graphics.drawString(this.font, fit(I18n.get("gui.bmfstown.handbook.rename_original",
+                                selectedTargetName())),
+                        rx, bookY + 96, INK_FADED, false);
+            }
+            return; // EditBox 由 super.render() 画
+        }
+        // 右页常规信息
+        if (isMain) {
+            graphics.drawWordWrap(this.font, Component.translatable(
+                    "gui.bmfstown.handbook.block_main_hint"), rx, bookY + 84, TEXT_W, INK_FADED);
+        } else {
+            graphics.drawWordWrap(this.font, Component.translatable(
+                    "gui.bmfstown.handbook.block_append_hint"), rx, bookY + 84, TEXT_W, INK_FADED);
         }
     }
 
-    /** 入口列表的命中判定（城镇页鼠标点击用）。返回点中的 kind，没点中返回 -1。 */
-    private int manageListClick(double mouseX, double mouseY) {
-        if (zonePage >= 0 || manageTop <= 0) {
+    /** 区块详情页"区域管理"入口的命中判定。返回 kind，没点中返回 -1。 */
+    private int blockManageClick(double mouseX, double mouseY) {
+        if (!blockPage || zonePage >= 0 || manageTop <= 0) {
             return -1;
         }
-        if (mouseX < rx - 4 || mouseX > rx + TEXT_W + 2) {
+        if (mouseX < lx - 4 || mouseX > lx + TEXT_W + 2) {
             return -1;
         }
         java.util.List<TownWandMode> kinds = manageKinds();
@@ -913,11 +1183,10 @@ public class TownHandbookScreen extends Screen {
                     return true;
                 }
             }
-            // 城镇页：居民列表（表头排序 / 行打开镇民面板，用户定稿）
-            if (zonePage < 0 && !renameMode && !confirmDelete) {
-                // 滚动条：点轨道跳转 / 点滑块开始拖动（用户定稿：右侧可视滑条可拖）
-                var townForBar = currentTown();
-                int scrollMax = memberScrollMax(townForBar);
+            // 城镇页：左页居民列表（滚动条/表头排序/行打开镇民面板）
+            if (zonePage < 0 && !blockPage && !renameMode && !confirmDelete) {
+                var townLeft = currentTown();
+                int scrollMax = memberScrollMax(townLeft);
                 if (scrollMax > 0) {
                     int trackX = memberScrollbarX();
                     int trackY = this.memberListY;
@@ -928,11 +1197,9 @@ public class TownHandbookScreen extends Screen {
                                 trackH * MEMBER_VISIBLE / (scrollMax + MEMBER_VISIBLE));
                         int thumbY = memberThumbY(scrollMax);
                         if (mouseY >= thumbY && mouseY < thumbY + thumbH) {
-                            // 抓住滑块：记录抓取点，进入拖动
                             this.memberScrollbarDragging = true;
                             this.memberDragGrabOffset = mouseY - thumbY;
                         } else {
-                            // 点轨道空白：滑块中心跳到点击处
                             scrollMemberTo(mouseY, thumbH / 2.0D, scrollMax);
                             this.memberScrollbarDragging = true;
                             this.memberDragGrabOffset = thumbH / 2.0D;
@@ -955,10 +1222,9 @@ public class TownHandbookScreen extends Screen {
                         }
                     }
                 }
-                var town = currentTown();
-                if (town != null && mouseY >= this.memberListY
+                if (townLeft != null && mouseY >= this.memberListY
                         && mouseY < this.memberListY + MEMBER_VISIBLE * MEMBER_ROW_H) {
-                    var members = sortedMembers(town);
+                    var members = sortedMembers(townLeft);
                     int max = Math.max(0, members.size() - MEMBER_VISIBLE);
                     int sc = Mth.clamp(this.memberScroll, 0, max);
                     int v = (int) ((mouseY - this.memberListY) / MEMBER_ROW_H);
@@ -970,10 +1236,30 @@ public class TownHandbookScreen extends Screen {
                         return true;
                     }
                 }
+                // 右页区块列表：点区块进详情，点"增加选区"发起选点
+                if (!renameMode) {
+                    int hit = blockListClick(mouseX, mouseY);
+                    if (hit >= 0) {
+                        selectedBlockId = hit == 0 ? "main"
+                                : townLeft.blocks().get(hit - 1).id().toString();
+                        selected = -1;
+                        scroll = 0;
+                        blockPage = true;
+                        this.clearWidgets();
+                        this.init();
+                        return true;
+                    }
+                    if (hit == -1) {
+                        ModNetworking.sendToServer(new ModNetworking.HandbookAppendZonePayload(
+                                townLeft.id().toString()));
+                        onClose();
+                        return true;
+                    }
+                }
             }
-            // 城镇页：点"区域管理"入口行 → 开对应子页
-            if (zonePage < 0 && !renameMode) {
-                int kind = manageListClick(mouseX, mouseY);
+            // 区块详情页：点"区域管理"某类功能区 → 开对应子页
+            if (blockPage && zonePage < 0 && !renameMode) {
+                int kind = blockManageClick(mouseX, mouseY);
                 if (kind >= 0) {
                     openZonePage(kind);
                     return true;
@@ -1021,11 +1307,20 @@ public class TownHandbookScreen extends Screen {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double dx, double dy) {        // 居民列表区域内滚轮：滚居民行（不抢城镇翻页/列表滚动）
-        if (this.zonePage < 0 && !renameMode && mouseY >= this.memberListY
+    public boolean mouseScrolled(double mouseX, double mouseY, double dx, double dy) {        // 城镇页左页居民列表滚轮
+        if (this.zonePage < 0 && !blockPage && !renameMode && mouseY >= this.memberListY
                 && mouseY < this.memberListY + MEMBER_VISIBLE * MEMBER_ROW_H
                 && mouseX >= lx && mouseX < memberScrollbarX() + MEMBER_SCROLLBAR_W) {
             this.memberScroll -= (int) Math.signum(dy);
+            return true;
+        }
+        // 右页区块列表滚轮（v0.9.1：列表限高后跟滚轮）
+        if (this.zonePage < 0 && !blockPage && !renameMode
+                && mouseX >= rx - 4 && mouseX < rx + TEXT_W + 5
+                && mouseY >= bookY + 100 && mouseY < bookY + 152
+                && currentTown() != null
+                && 1 + currentTown().blocks().size() > BLOCK_VISIBLE) {
+            this.blockScroll -= (int) Math.signum(dy);
             return true;
         }
         if (!renameMode) {

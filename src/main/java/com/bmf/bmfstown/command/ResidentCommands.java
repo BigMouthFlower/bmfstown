@@ -106,7 +106,7 @@ public final class ResidentCommands {
                 continue;
             }
             com.bmf.bmfstown.entity.profile.TraitType trait = "random".equalsIgnoreCase(traitArg)
-                    ? com.bmf.bmfstown.entity.profile.TraitType.random(resident.getRandom())
+                    ? com.bmf.bmfstown.entity.profile.TraitType.weightedRandom(resident.getRandom())
                     : com.bmf.bmfstown.entity.profile.TraitType.byId(traitArg.toLowerCase());
             if (trait == null) {
                 ctx.getSource().sendFailure(Component.literal(

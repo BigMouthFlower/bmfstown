@@ -78,6 +78,65 @@ public class TownSaveData extends SavedData {
         return false;
     }
 
+    /**
+     * 删除城镇区块（v0.9.1 不连续选区；"B:" 目标用）。
+     * 区块下还挂着功能区时拒绝（返回 false），先删功能区。
+     */
+    public boolean removeBlock(UUID townId, UUID blockId) {
+        Town town = towns.get(townId);
+        if (town == null) {
+            return false;
+        }
+        for (TownWandMode mode : TownWandMode.values()) {
+            for (TownZone zone : town.zones(mode)) {
+                if (blockId.equals(zone.parentBlock())) {
+                    return false; // 区块内还有功能区
+                }
+            }
+        }
+        // ⚠ 必须用可写列表：townBlocks() 返回不可变副本，removeIf 直接抛异常
+        if (town.townBlocksForWrite().removeIf(b -> b.id().equals(blockId))) {
+            setDirty();
+            return true;
+        }
+        return false;
+    }
+
+    /** 改区块名（不依赖城镇 id，全域按区块 id 找——手册可能只传区块 ID）。 */
+    public boolean renameBlockAny(String blockIdText, String newName) {
+        UUID blockId = UUID.fromString(blockIdText);
+        for (Town town : towns.values()) {
+            List<TownZone> blocks = town.townBlocksForWrite();
+            for (int i = 0; i < blocks.size(); i++) {
+                TownZone b = blocks.get(i);
+                if (b.id().equals(blockId)) {
+                    blocks.set(i, new TownZone(b.id(), newName, b.min(), b.max(), b.parentBlock()));
+                    setDirty();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 改城镇区块名（"B:" 目标用）。 */
+    public boolean renameBlock(UUID townId, UUID blockId, String newName) {
+        Town town = towns.get(townId);
+        if (town == null) {
+            return false;
+        }
+        List<TownZone> blocks = town.townBlocksForWrite();
+        for (int i = 0; i < blocks.size(); i++) {
+            TownZone b = blocks.get(i);
+            if (b.id().equals(blockId)) {
+                blocks.set(i, new TownZone(b.id(), newName, b.min(), b.max(), b.parentBlock()));
+                setDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 改名（城镇或子区域）。返回 false = 找不到目标。 */
     public boolean rename(String townIdText, String zoneIdText, String newName) {
         if (zoneIdText == null) {
@@ -97,7 +156,7 @@ public class TownSaveData extends SavedData {
                     TownZone zone = list.get(i);
                     if (zone.id().equals(zoneId)) {
                         // record 不可变：原位替换实现"改名"
-                        list.set(i, new TownZone(zone.id(), newName, zone.min(), zone.max()));
+                        list.set(i, new TownZone(zone.id(), newName, zone.min(), zone.max(), zone.parentBlock()));
                         setDirty();
                         return true;
                     }
@@ -131,18 +190,28 @@ public class TownSaveData extends SavedData {
         }
     }
 
-    /** 与外框重叠的已存在城镇（同维度才算——跨维度天然不重叠）。 */
+    /** 与任一区块重叠的已存在城镇（同维度才算——跨维度天然不重叠）。 */
     public Town findOverlapping(String dimension, BlockPos min, BlockPos max) {
-        Town candidate = new Town(UUID.randomUUID(), "检查用", "", dimension, min, max);
         for (Town town : towns.values()) {
-            if (town.dimension().equals(dimension) && town.overlaps(candidate)) {
+            if (town.dimension().equals(dimension) && town.boxOverlaps(min, max)) {
                 return town;
+            }
+            for (TownZone block : town.townBlocks()) {
+                if (town.dimension().equals(dimension) && boxesOverlap(min, max, block)) {
+                    return town;
+                }
             }
         }
         return null;
     }
 
-    /** 包含此方块（同维度）的城镇——子区域归属校验用。 */
+    private static boolean boxesOverlap(BlockPos min, BlockPos max, TownZone zone) {
+        return min.getX() <= zone.max().getX() && max.getX() >= zone.min().getX()
+                && min.getY() <= zone.max().getY() && max.getY() >= zone.min().getY()
+                && min.getZ() <= zone.max().getZ() && max.getZ() >= zone.min().getZ();
+    }
+
+    /** 包含此方块（同维度）的城镇——子区域归属校验用；"城镇内"= 完整落在**任一**区块内。 */
     public Town findContaining(String dimension, BlockPos min, BlockPos max) {
         for (Town town : towns.values()) {
             if (!town.dimension().equals(dimension)) {
@@ -151,6 +220,11 @@ public class TownSaveData extends SavedData {
             TownZone probe = new TownZone(UUID.randomUUID(), "", min, max);
             if (probe.inside(town.min(), town.max())) {
                 return town;
+            }
+            for (TownZone block : town.townBlocks()) {
+                if (probe.inside(block.min(), block.max())) {
+                    return town;
+                }
             }
         }
         return null;
@@ -207,18 +281,40 @@ public class TownSaveData extends SavedData {
                     .append('|').append(TownWandItem.fmt(town.min()))
                     .append('|').append(TownWandItem.fmt(town.max()))
                     .append('\n');
+            // 追加区块行（v0.9.1 不连续选区）：B|城镇ID|区块ID|名字|min|max
+            // 0 号主区块就是 T 行的 min/max 本体，不重复发
+            for (TownZone block : town.townBlocks()) {
+                sb.append("B|").append(town.id()).append('|').append(block.id())
+                        .append('|').append(block.name())
+                        .append('|').append(block.minText())
+                        .append('|').append(block.maxText())
+                        .append('\n');
+            }
             // 居民行（手册"居民列表"用，v0.8.1）：M|城镇ID|实体ID|职业id|名字
             // 名字放最后（split 限段数），玩家重命名可能带 | 不至于炸解析
-            for (com.bmf.bmfstown.entity.Resident r : level.getEntitiesOfClass(
-                    com.bmf.bmfstown.entity.Resident.class,
-                    new net.minecraft.world.phys.AABB(
-                            town.min().getX(), town.min().getY(), town.min().getZ(),
-                            town.max().getX() + 1, town.max().getY() + 1, town.max().getZ() + 1),
-                    r -> town.id().equals(r.getIdentity().townId()))) {
-                sb.append("M|").append(town.id()).append('|').append(r.getId())
-                        .append('|').append(r.getProfession().displayName().substring("profession.bmfstown.".length()))
-                        .append('|').append(r.getName().getString())
-                        .append('\n');
+            // v0.9.1：扫描范围扩展到所有区块（追加区块里的镇民也要进列表）
+            java.util.Set<Integer> seenResidents = new java.util.HashSet<>();
+            java.util.List<net.minecraft.world.phys.AABB> blocks = new java.util.ArrayList<>();
+            blocks.add(new net.minecraft.world.phys.AABB(
+                    town.min().getX(), town.min().getY(), town.min().getZ(),
+                    town.max().getX() + 1, town.max().getY() + 1, town.max().getZ() + 1));
+            for (TownZone block : town.townBlocks()) {
+                blocks.add(new net.minecraft.world.phys.AABB(
+                        block.min().getX(), block.min().getY(), block.min().getZ(),
+                        block.max().getX() + 1, block.max().getY() + 1, block.max().getZ() + 1));
+            }
+            for (net.minecraft.world.phys.AABB box : blocks) {
+                for (com.bmf.bmfstown.entity.Resident r : level.getEntitiesOfClass(
+                        com.bmf.bmfstown.entity.Resident.class, box,
+                        r -> town.id().equals(r.getIdentity().townId()))) {
+                    if (!seenResidents.add(r.getId())) {
+                        continue; // 区块重叠时同一个人可能被扫到两次
+                    }
+                    sb.append("M|").append(town.id()).append('|').append(r.getId())
+                            .append('|').append(r.getProfession().displayName().substring("profession.bmfstown.".length()))
+                            .append('|').append(r.getName().getString())
+                            .append('\n');
+                }
             }
             for (TownWandMode mode : TownWandMode.values()) {
                 if (mode == TownWandMode.TOWN) {
@@ -237,6 +333,8 @@ public class TownSaveData extends SavedData {
                     } else {
                         sb.append("|0|0");
                     }
+                    // 归属区块（v0.9.1）：null = 0 号主区块，发空段
+                    sb.append('|').append(zone.parentBlock() == null ? "" : zone.parentBlock());
                     sb.append('\n');
                 }
             }

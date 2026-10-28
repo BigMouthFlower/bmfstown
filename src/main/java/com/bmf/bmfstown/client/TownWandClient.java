@@ -286,6 +286,14 @@ public final class TownWandClient {
                     town.max().getX() + 1.008, town.max().getY() + 1.008, town.max().getZ() + 1.008,
                     cam.x, cam.y, cam.z,
                     255, 255, 255, TOWN_FILL_ALPHA);
+            // 追加区块（v0.9.1）：与主外框同款白色填充
+            for (TownHandbookClient.ZoneView block : town.blocks()) {
+                boxFaces(fill, mat,
+                        block.min().getX() - 0.008, block.min().getY() - 0.008, block.min().getZ() - 0.008,
+                        block.max().getX() + 1.008, block.max().getY() + 1.008, block.max().getZ() + 1.008,
+                        cam.x, cam.y, cam.z,
+                        255, 255, 255, TOWN_FILL_ALPHA);
+            }
             for (TownHandbookClient.ZoneView zone : town.zones()) {
                 boxFaces(fill, mat,
                         zone.min().getX() - 0.008, zone.min().getY() - 0.008, zone.min().getZ() - 0.008,
@@ -299,8 +307,11 @@ public final class TownWandClient {
         // ---- 线框（白=城镇，彩=子区域，颜色与手册一致） ----
         VertexConsumer line = mc.renderBuffers().bufferSource().getBuffer(RenderType.lines());
         for (TownHandbookClient.TownView town : towns) {
-            // 城镇外框：白
+            // 城镇外框：白（追加区块与主外框同色）
             lineBox(line, pose, town.min(), town.max(), 1.0F, 1.0F, 1.0F);
+            for (TownHandbookClient.ZoneView block : town.blocks()) {
+                lineBox(line, pose, block.min(), block.max(), 1.0F, 1.0F, 1.0F);
+            }
             for (TownHandbookClient.ZoneView zone : town.zones()) {
                 float[] c = zoneLineColor(zone.kind());
                 lineBox(line, pose, zone.min(), zone.max(), c[0], c[1], c[2]);

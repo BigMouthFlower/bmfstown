@@ -1014,7 +1014,9 @@ public class Resident extends PathfinderMob {
                 mergedPrefs.putString(key, profileTag.getString(key));
             }
         }
-        this.prefs.loadFrom(mergedPrefs);
+        // ⚠ legacy=true：老档的生成标志键是 "PrefsGenerated"，
+        // 走 loadFrom(新格式) 会读 "Generated" 落空 → 原始偏好全丢
+        this.prefs.copyFrom(Prefs.load(mergedPrefs, true));
         // Status：hunger/mood 在 profileTag，游标/想法在 moodTag
         this.status.loadFrom(Status.load(
                 moodTag != null ? moodTag : new CompoundTag(), profileTag, true));
@@ -1157,15 +1159,53 @@ public class Resident extends PathfinderMob {
         }
 
         if (town.contains(this.blockPosition())) {
-            return; // 人在城里，一切正常
+            return; // 人在城里（任一区块，v0.9.1 并集），一切正常
         }
 
-        // 越界了：走向城镇中心（y 夹回城镇的 y 范围，防止中心点悬空/埋地）
-        BlockPos center = townCenter(town);
+        // 跨区行程放行（v0.9.1 不连续选区）：当前导航目的地落在城镇并集内
+        // = Goal 驱动的合法跨区（上班/回家/觅食——目的地在另一块区块），
+        // 让他把路走完，别把人往回拽。此前这里无条件回主区中心，与
+        // WorkerGoal 抢同一个导航器，工人一出主区就被拉回、永远到不了工坊。
+        // 1.21.1 PathNavigation 没有 getTarget()——用当前路径终点当目的地
+        net.minecraft.world.level.pathfinder.Path navPath = this.getNavigation().getPath();
+        BlockPos navTarget = navPath == null ? null : navPath.getEndNode().asBlockPos();
+        if (navTarget != null && town.contains(navTarget)) {
+            return;
+        }
+
+        // 真乱跑出来了（无目标/目标也在城外）：就近回**最近**的区块中心
+        // （跨区行走定稿：不回"出发点"、不回固定主区——就近收容）
+        BlockPos center = nearestBlockCenter(town, this.blockPosition());
         this.getNavigation().moveTo(
                 center.getX() + 0.5D, center.getY(), center.getZ() + 0.5D, Config.RETURN_HOME_SPEED.get());
-        LOGGER.debug("[BmfTown] {} 跑出了城镇「{}」，正在返回 ({})",
+        LOGGER.debug("[BmfTown] {} 跑出了城镇「{}」，就近返回 ({})",
                 this.getName().getString(), town.name(), center.toShortString());
+    }
+
+    /** 距 {@code from} 最近的区块（0 号外框或追加区块）几何中心，y 夹进该区块范围。 */
+    private static BlockPos nearestBlockCenter(Town town, BlockPos from) {
+        BlockPos best = townCenter(town);
+        double bestDist = distSqr(best, from);
+        for (TownZone block : town.townBlocks()) {
+            BlockPos c = new BlockPos(
+                    (block.min().getX() + block.max().getX()) / 2,
+                    Mth.clamp((block.min().getY() + block.max().getY()) / 2,
+                            block.min().getY(), block.max().getY()),
+                    (block.min().getZ() + block.max().getZ()) / 2);
+            double d = distSqr(c, from);
+            if (d < bestDist) {
+                bestDist = d;
+                best = c;
+            }
+        }
+        return best;
+    }
+
+    private static double distSqr(BlockPos a, BlockPos b) {
+        double dx = a.getX() - b.getX();
+        double dy = a.getY() - b.getY();
+        double dz = a.getZ() - b.getZ();
+        return dx * dx + dy * dy + dz * dz;
     }
 
     /** 城镇外框的几何中心，y 夹进外框范围（中心点必须落在实体能站的空间语义内）。 */

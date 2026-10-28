@@ -86,7 +86,7 @@ public final class TraitState {
      */
     public void ensureTrait(RandomSource random) {
         if (this.trait == null) {
-            this.trait = TraitType.random(random);
+            this.trait = TraitType.weightedRandom(random);
         }
     }
 

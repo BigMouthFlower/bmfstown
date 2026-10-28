@@ -427,6 +427,12 @@ public final class Prefs {
             p.personality = getEnum(tag, "Personality", PersonalityType.class,
                     PersonalityType.OPTIMIST);
         }
+        // 自愈（v0.9.1 实测事故）：generated=true 但偏好仓全空 = 中间版本把
+        // 空壳档写了回去。这种档若不处理，懒生成永远跳过、全员卡在
+        // "甜食/无喜好/乐观" 的兜底值上。打回未生成，下次 tick 重抽随机值。
+        if (p.generated && p.values.isEmpty()) {
+            p.generated = false;
+        }
         return p;
     }
 }

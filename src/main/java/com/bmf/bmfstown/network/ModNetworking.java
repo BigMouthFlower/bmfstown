@@ -173,6 +173,40 @@ public final class ModNetworking {
         }
     }
 
+    /** C → S：手册城镇页"增加选区"按钮——开启（或重开）空手选区会话。 */
+    public record HandbookAppendZonePayload(String townId) implements CustomPacketPayload {
+
+        public static final Type<HandbookAppendZonePayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "handbook_append_zone"));
+
+        public static final StreamCodec<ByteBuf, HandbookAppendZonePayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.STRING_UTF8, HandbookAppendZonePayload::townId,
+                        HandbookAppendZonePayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /** S → C：空手选区会话状态（客户端据此拦截手册右键的"打开屏幕"）。 */
+    public record ZoneSelectSyncPayload(boolean active) implements CustomPacketPayload {
+
+        public static final Type<ZoneSelectSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "zone_select_sync"));
+
+        public static final StreamCodec<ByteBuf, ZoneSelectSyncPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.BOOL, ZoneSelectSyncPayload::active,
+                        ZoneSelectSyncPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     // ==========================================================
     //  S → C：手册数据同步
     // ==========================================================
@@ -1031,6 +1065,25 @@ public final class ModNetworking {
         });
     }
 
+    /** 手册"增加选区"：开启空手选区会话（客户端自行关闭手册进世界选点）。 */
+    private static void handleHandbookAppendZone(HandbookAppendZonePayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer serverPlayer) {
+                TownManager.startAppendBlock(serverPlayer, payload.townId());
+            }
+        });
+    }
+
+    private static void handleZoneSelectSync(ZoneSelectSyncPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() ->
+                com.bmf.bmfstown.client.TownHandbookClient.setZoneSelecting(payload.active()));
+    }
+
+    /** 选区会话状态推送给客户端（会话开始/结束时调）。 */
+    public static void sendZoneSelectSync(ServerPlayer player, boolean active) {
+        PacketDistributor.sendToPlayer(player, new ZoneSelectSyncPayload(active));
+    }
+
     private static void handleHandbookDelete(HandbookDeletePayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             if (ctx.player() instanceof ServerPlayer serverPlayer) {
@@ -1263,6 +1316,10 @@ public final class ModNetworking {
                 ModNetworking::handleCensusData);
         registrar.playToServer(PerkChoosePayload.TYPE, PerkChoosePayload.STREAM_CODEC,
                 ModNetworking::handlePerkChoose);
+        registrar.playToServer(HandbookAppendZonePayload.TYPE, HandbookAppendZonePayload.STREAM_CODEC,
+                ModNetworking::handleHandbookAppendZone);
+        registrar.playToClient(ZoneSelectSyncPayload.TYPE, ZoneSelectSyncPayload.STREAM_CODEC,
+                ModNetworking::handleZoneSelectSync);
         registrar.playToClient(HandbookSyncPayload.TYPE, HandbookSyncPayload.STREAM_CODEC,
                 ModNetworking::handleHandbookSync);
         registrar.playToClient(TauntSyncPayload.TYPE, TauntSyncPayload.STREAM_CODEC,
