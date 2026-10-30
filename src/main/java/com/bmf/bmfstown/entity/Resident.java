@@ -296,6 +296,9 @@ public class Resident extends PathfinderMob {
      */
     private int eatingSlot = -1;
 
+    /** 饱食度归零的起始时刻（gameTime；MIN = 当前不饿）——真·挨饿宽限计时用。 */
+    private long hungerZeroSince = Long.MIN_VALUE;
+
     /**
      * 这一口正在吃的食物（主手上那份，也就是整个食物堆）。
      *
@@ -1108,6 +1111,28 @@ public class Resident extends PathfinderMob {
             this.tickForaging();
         }
 
+        // ---- 5.5 真·挨饿判定（v0.9.3，窗口式——用户定稿）----
+        // 挨饿 = 饱食度归零**连续持续**超过宽限期（hunger.starveGraceTicks，
+        // 默认 1200t = 60s = 一轮觅食的最坏超时上限）。归零即开始计时，
+        // 中间吃上一口（饱食度回升）立即清零——所以：
+        //  · 正在觅食/正在吃/等 CD 的：宽限期内吃上就清零，永不误判；
+        //  · 真解决不了的（被困/挑食/跟随战士/没有就餐区）：60 秒后开始判。
+        // 计时统一走 **dayTime**（与半日节流同钟）：/time add 快进会同时
+        // 解锁宽限与节流——整条挨饿管线单钟驱动，测试行为可预测；
+        // /time set 往回拨时计时重置（防止 starved 为负数卡死）。
+        if (this.status.hunger() <= 0
+                && this.level() instanceof net.minecraft.server.level.ServerLevel starveLevel) {
+            long now = starveLevel.getDayTime();
+            if (this.hungerZeroSince == Long.MIN_VALUE || now < this.hungerZeroSince) {
+                this.hungerZeroSince = now;
+            }
+            if (now - this.hungerZeroSince >= Config.HUNGER_STARVE_GRACE_TICKS.get()) {
+                this.status.starving(this, starveLevel); // 内部半日节流
+            }
+        } else {
+            this.hungerZeroSince = Long.MIN_VALUE; // 吃上了：计时清零
+        }
+
         // ---- 6. 睡眠（夜晚回住宅区躺床；战士工作中不睡觉——
         //      跟随时贴身守夜，站岗时守岗到天亮；饮食区照常去）----
         if (this.getWorkMode() == WorkMode.NONE) {
@@ -1834,12 +1859,10 @@ public class Resident extends PathfinderMob {
         LOGGER.warn("[BmfTown][觅食] {} 本轮失败（{}，位置 {}），{} tick 后重试",
                 this.getName().getString(), reason, this.blockPosition().toShortString(),
                 this.forageRetryCooldown);
-        // 挨饿心情事件（v0.7）：本轮觅食失败 = 没拿到吃的。
-        // 挨饿限流（每半天 1 次 + 按连续天数递增幅度）在 MoodState 内部做，
-        // 这里只管上报——觅食失败会反复发生，不挡的话想法列表会被刷屏。
-        if (this.level() instanceof net.minecraft.server.level.ServerLevel starveLevel) {
-            this.status.starving(this, starveLevel);
-        }
+        // 挨饿心情事件不再在这里触发（v0.9.3 修订，用户定稿）：
+        // 觅食失败 ≠ 挨饿——饱食度还有 15 的"没拿到吃的"不该扣心情。
+        // 真·挨饿判定挪到 tick 主循环：饱食度归零 且 不在觅食/进食中。
+        // 觅食失败后 forageState 归位 NONE，下一 tick 自然落到那条判定上。
     }
 
     /** 结束本轮觅食（成功或中性收场），不设冷却。 */

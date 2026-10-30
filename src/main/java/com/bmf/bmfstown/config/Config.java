@@ -88,6 +88,11 @@ public final class Config {
             .comment("每次自然回血量", "Health restored per regeneration tick")
             .defineInRange("hunger.regenAmount", 1.0D, 0.5D, 20.0D);
 
+    public static final ModConfigSpec.IntValue HUNGER_STARVE_GRACE_TICKS = BUILDER
+            .comment("挨饿宽限期（tick）：饱食度归零持续超过此时长才算挨饿（开始心情/记忆判定）。", "默认 1200 = 60 秒 = 一轮觅食的最坏超时上限——给正在觅食/进食/等 CD 的人留足解决时间；", "真正解决不了的人（被困/挑食/跟随战士/没有就餐区）60 秒后开始被判挨饿。",
+                    "Grace period (ticks) after hunger reaches 0 before starvation is judged. Default 1200 = 60s = worst-case foraging round, giving hungry-but-solving residents time to eat.")
+            .defineInRange("hunger.starveGraceTicks", 1200, 20, 24000);
+
     // ==========================================================
     //  成长与社交
     // ==========================================================
@@ -266,6 +271,11 @@ public final class Config {
             .comment("昨晚没睡的每日心情减量（连续没睡逐夜叠加不封顶；战士守夜豁免）；0 = 关闭",
                     "Daily mood loss for not sleeping (stacks per missed night, uncapped; warriors on duty exempt); 0 = disabled")
             .defineInRange("mood.noSleep", 3, 0, 100);
+
+    public static final ModConfigSpec.IntValue MOOD_MEMORY_PENALTY = BUILDER
+            .comment("已有同类永久记忆时，挨饿/缺觉心情事件的额外扣减（叠加在原减量上）",
+                    "Extra mood loss for starving/sleep events when the matching firm memory exists")
+            .defineInRange("mood.memoryPenalty", 10, 0, 100);
 
     /** 心情低于此值时干活效率打折。 */
     public static final ModConfigSpec.IntValue MOOD_SLOW_THRESHOLD = BUILDER
@@ -561,6 +571,28 @@ public final class Config {
             .comment("天气变化时只有 1/N 的镇民开口（按个人相位筛选），避免全员齐喊",
                     "Only 1 in N villagers speak on a weather change")
             .defineInRange("dialog.weatherOneInN", 3, 1, 20);
+
+    public static final ModConfigSpec.IntValue DIALOG_SUFFER_COOLDOWN = BUILDER
+            .comment("受苦台词（挨饿/没睡）的冷却（秒），按人按类各记各的",
+                    "Cooldown of suffering lines (starving/sleepless, per resident per type, seconds)")
+            .defineInRange("dialog.sufferCooldownSeconds", 600, 30, 7200);
+
+    // ---- 记忆（v0.9.3 铭记）----
+
+    public static final ModConfigSpec.IntValue MEMORY_THRESHOLD = BUILDER
+            .comment("铭记阈值：进度积满即固化为永久记忆（想法日志宣布，不说话）",
+                    "Threshold: progress reaching it firms a permanent memory (announced in thought log only)")
+            .defineInRange("memory.threshold", 100, 10, 10000);
+
+    public static final ModConfigSpec.IntValue MEMORY_GAIN = BUILDER
+            .comment("每次受苦事件（挨饿一次/一夜没睡）的进度增量",
+                    "Progress gain per suffering event (one starving tick / one missed night)")
+            .defineInRange("memory.gain", 15, 1, 1000);
+
+    public static final ModConfigSpec.IntValue MEMORY_DECAY = BUILDER
+            .comment("不再受苦时铭记进度的每日衰减量（归零清空；已固化的不受影响）",
+                    "Daily decay of unfirmed memory progress when the suffering stops; firm memories unaffected")
+            .defineInRange("memory.decay", 5, 0, 1000);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 

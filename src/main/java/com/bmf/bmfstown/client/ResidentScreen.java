@@ -900,10 +900,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 性格滤镜标记（乐观"+" / 悲观"−"）已按用户 2026-10-25 决定不再显示；
             // Thought.marker 字段保留（同步协议与存档兼容），将来要恢复只改这里。
             // 深底上用原版聊天的亮绿/亮红/灰，暗色调在 0xFF373737 上看不清；
-            // 中性事件（如金护甲）用灰色，不误导玩家往好坏两边猜
+            // 中性事件（如金护甲）用灰色，不误导玩家往好坏两边猜；
+            // 记忆专用色（v0.9.3）：坏记忆淡紫 / 好记忆淡青，与普通好坏分开
             int color = switch (t.tone()) {
                 case 1 -> 0x55FF55;
                 case 2 -> 0xFF5555;
+                case 3 -> 0xD087FF;
+                case 4 -> 0x7FDDFF;
                 default -> 0xB0B0B0;
             };
             gfx.drawString(this.font, line, TEXT_PAD, rowY, color, false);

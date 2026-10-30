@@ -445,5 +445,11 @@
   "calendar.bmfstown.moon.4": "新月",
   "calendar.bmfstown.moon.5": "娥眉月",
   "calendar.bmfstown.moon.6": "上弦月",
-  "calendar.bmfstown.moon.7": "盈凸月"
+  "calendar.bmfstown.moon.7": "盈凸月",
+  "dialog.bmfstown.starving": "好饿……有什么能吃的吗……",
+  "dialog.bmfstown.starving_memory": "又饿了……这种滋味，一辈子忘不掉。",
+  "dialog.bmfstown.sleepless": "好困……昨晚没睡好……",
+  "dialog.bmfstown.sleepless_memory": "又没睡好……那些不眠的夜晚，记得清清楚楚。",
+  "mood.bmfstown.thought.memory_starving": "他记住了挨饿的滋味。",
+  "mood.bmfstown.thought.memory_sleepless": "他记住了困的感觉。"
 }

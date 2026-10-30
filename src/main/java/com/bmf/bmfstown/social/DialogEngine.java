@@ -114,6 +114,15 @@ public final class DialogEngine {
                             Config.DIALOG_EAT_COOLDOWN.get() * 20L);
                 }
             }
+            case STARVING, SLEEPLESS -> {
+                // 即时：受苦线（挨饿/没睡——与记忆无关谁都喊，变体由 condition 区分）
+                if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())
+                        && cooldownOk(event.subject, line.group(), level.getGameTime())) {
+                    say(level, event.subject, line, event.item);
+                    markCooldown(event.subject, line.group(), level.getGameTime(),
+                            Config.DIALOG_SUFFER_COOLDOWN.get() * 20L);
+                }
+            }
             case WEATHER_CHANGED -> {
                 // 相位筛选：只有 1/N 的镇民开口（N 可配，默认 3）
                 int oneIn = Math.max(1, Config.DIALOG_WEATHER_ONE_IN_N.get());

@@ -34,4 +34,12 @@ public final class TownEvent {
     public static TownEvent weatherChanged(Resident observer, WeatherPref newWeather) {
         return new TownEvent(TownEventType.WEATHER_CHANGED, observer, ItemStack.EMPTY, newWeather);
     }
+
+    public static TownEvent starving(Resident subject) {
+        return new TownEvent(TownEventType.STARVING, subject, ItemStack.EMPTY, null);
+    }
+
+    public static TownEvent sleepless(Resident subject) {
+        return new TownEvent(TownEventType.SLEEPLESS, subject, ItemStack.EMPTY, null);
+    }
 }

@@ -445,5 +445,11 @@
   "calendar.bmfstown.moon.4": "New Moon",
   "calendar.bmfstown.moon.5": "Waxing Crescent",
   "calendar.bmfstown.moon.6": "First Quarter",
-  "calendar.bmfstown.moon.7": "Waxing Gibbous"
+  "calendar.bmfstown.moon.7": "Waxing Gibbous",
+  "dialog.bmfstown.starving": "So hungry... anything to eat...?",
+  "dialog.bmfstown.starving_memory": "Hungry again... I'll never forget this feeling.",
+  "dialog.bmfstown.sleepless": "So tired... barely slept last night...",
+  "dialog.bmfstown.sleepless_memory": "Sleepless again... those restless nights are carved in memory.",
+  "mood.bmfstown.thought.memory_starving": "He will never forget the taste of hunger.",
+  "mood.bmfstown.thought.memory_sleepless": "He will never forget the feeling of exhaustion."
 }

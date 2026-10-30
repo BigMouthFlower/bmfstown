@@ -98,6 +98,10 @@ public final class Status {
     public static final int TONE_POSITIVE = 1;
     /** 色调：负面（红系）。 */
     public static final int TONE_NEGATIVE = 2;
+    /** 色调：坏记忆（淡紫）——记忆专用色，与普通好坏分开（用户 2026-10-31 定稿）。 */
+    public static final int TONE_MEMORY_BAD = 3;
+    /** 色调：好记忆（淡青）——预留给将来的正面铭记（如纪念日）。 */
+    public static final int TONE_MEMORY_GOOD = 4;
 
     /** 心情事件类型。每个事件自带：色调（正/负/中性）、语言文件 key 前缀。 */
     public enum EventType {
@@ -244,6 +248,9 @@ public final class Status {
 
     /** 上次触发挨饿事件的 dayTime 绝对值——挨饿按间隔限流用。 */
     private long lastStarvingAt = Long.MIN_VALUE;
+
+    /** 昨晚结算是否罚了缺觉分（供 tickDaily 的记忆进度衰减判定，每日重置）。 */
+    private boolean sleptBadToday = false;
 
     /** 想法日志，队尾最新。 */
     private final ArrayDeque<Thought> thoughts = new ArrayDeque<>();
@@ -430,8 +437,23 @@ public final class Status {
         if (resident.getPrefs().personality() == PersonalityType.GLUTTON) {
             delta = delta * Config.MOOD_TRAIT_GLUTTON_STARVE_PERCENT.get() / 100;
         }
+        // 铭记修正：身上有"挨饿"的永久记忆，旧病复发额外更痛（用户定稿 +10）
+        if (resident.getMemoryState().hasFirmMemory(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING)) {
+            delta += Config.MOOD_MEMORY_PENALTY.get();
+        }
         this.applyRaw(resident, -delta); // 例外：绕过每日 clamp
         addThought(level, EventType.STARVING.tone, key, Thought.MARK_NONE);
+        // 记忆累计：每挨饿事件 +15（事件 = 饱食度归零且不在觅食/进食中，
+        // 半日节流）；积满固化 → 想法日志宣布（紫色，不说话——用户定稿）
+        if (resident.getMemoryState().addProgress(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING,
+                (int) (level.getDayTime() / 24000L),
+                Config.MEMORY_GAIN.get(), Config.MEMORY_THRESHOLD.get())) {
+            addThought(level, TONE_MEMORY_BAD,
+                    "mood.bmfstown.thought.memory_starving", Thought.MARK_NONE);
+        }
+        // 台词：挨饿即时线（有没有记忆都喊饿，变体由台词注册表的 condition 区分）
+        com.bmf.bmfstown.social.TownEventBus.dispatch(
+                com.bmf.bmfstown.social.TownEvent.starving(resident));
     }
 
     /**
@@ -513,6 +535,7 @@ public final class Status {
         settleDisposition(resident, level);
         settleHomeMaterials(resident, level);
         settleSleep(resident, level);
+        settleMemory(resident, level);
         resident.getMemoryState().dailyDecay(); // 印象每日衰减：归零即遗忘（v0.9.2 接上钩子）
     }
 
@@ -670,6 +693,15 @@ public final class Status {
         boolean daytime = Math.floorMod(now, 24000L) < 12000L;
         int kLastComplete = daytime ? kNow : kNow - 1;
 
+        // 回拨保护（v0.9.3）：/time set 往回拨后夜序号游标会停在"未来"，
+        // missed 恒为负 → 缺觉结算永久卡死（实测同挨饿）。重置到当前：
+        // 视为"到昨晚为止都已结算"，不补发巨量扣分。
+        if (this.lastChargedNightK != Integer.MIN_VALUE && this.lastChargedNightK > kLastComplete) {
+            this.lastChargedNightK = kLastComplete;
+        }
+        if (this.lastSleptNightK != Integer.MIN_VALUE && this.lastSleptNightK > kNow) {
+            this.lastSleptNightK = kNow;
+        }
         if (this.lastSleptNightK == Integer.MIN_VALUE) {
             this.lastSleptNightK = kNow;
         }
@@ -690,8 +722,44 @@ public final class Status {
             return;
         }
         this.lastChargedNightK = kLastComplete;
-        this.applyRaw(resident, -missed * noSleep);
+        // 铭记修正：身上有"缺觉"的永久记忆，又没睡好额外更痛（用户定稿 +10）
+        int memoryPenalty = resident.getMemoryState()
+                .hasFirmMemory(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS)
+                ? Config.MOOD_MEMORY_PENALTY.get() : 0;
+        this.applyRaw(resident, -missed * noSleep - memoryPenalty);
         addThought(resident, level, EventType.NO_SLEEP);
+        // 记忆累计：一夜没睡 +15；积满固化 → 想法日志宣布（紫色，不说话——用户定稿）
+        if (resident.getMemoryState().addProgress(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS,
+                (int) (level.getDayTime() / 24000L),
+                Config.MEMORY_GAIN.get(), Config.MEMORY_THRESHOLD.get())) {
+            addThought(level, TONE_MEMORY_BAD,
+                    "mood.bmfstown.thought.memory_sleepless", Thought.MARK_NONE);
+        }
+        // 台词：缺觉即时线（变体由台词注册表的 condition 区分）
+        com.bmf.bmfstown.social.TownEventBus.dispatch(
+                com.bmf.bmfstown.social.TownEvent.sleepless(resident));
+        this.sleptBadToday = true; // 供 tickDaily 的记忆进度衰减判定用
+    }
+
+    /**
+     * 铭记进度的每日结算（tickDaily 末尾）：挨饿/缺觉的累计都在各自
+     * 事件点发生（挨饿=饱食度归零且不解决；缺觉=晨间罚分），这里只管
+     * "收手了的日子"进度 -5 淡忘（归零清空；已固化的不受影响）。
+     */
+    private void settleMemory(Resident resident, ServerLevel level) {
+        com.bmf.bmfstown.entity.domain.MemoryState memory = resident.getMemoryState();
+        // 挨饿：过去一天内有过挨饿事件（事件点已累计过）就不衰减
+        if (this.lastStarvingAt == Long.MIN_VALUE
+                || level.getDayTime() - this.lastStarvingAt >= 24000L) {
+            memory.decayProgress(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING,
+                    Config.MEMORY_DECAY.get());
+        }
+        // 缺觉：昨晚结算没罚分（事件点没累计过）→ 衰减
+        if (!this.sleptBadToday) {
+            memory.decayProgress(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS,
+                    Config.MEMORY_DECAY.get());
+        }
+        this.sleptBadToday = false;
     }
 
     // ==========================================================
@@ -899,7 +967,13 @@ public final class Status {
 
     /** 距 last 是否已过 interval（dayTime 口径；必须走这个 helper 防 long 溢出误判）。 */
     private static boolean elapsed(long now, long last, long interval) {
-        return last == Long.MIN_VALUE || now - last >= interval;
+        // 回拨保护（v0.9.3）：/time set 把 dayTime 往回拨后，游标（last）会停在
+        // "未来"，now - last 恒为负 → 节流永久卡死（实测：跳天不再触发挨饿/缺觉）。
+        // 视为"节流重置"：放行一次，调用方会把游标覆写回当前时间。
+        if (last == Long.MIN_VALUE || now < last) {
+            return true;
+        }
+        return now - last >= interval;
     }
 
     /**
@@ -1013,10 +1087,15 @@ public final class Status {
      */
     public static Status load(CompoundTag tag, CompoundTag legacyProfileTag, boolean legacy) {
         Status s = new Status();
-        s.hunger = legacyProfileTag != null && legacyProfileTag.contains("Hunger")
-                ? legacyProfileTag.getInt("Hunger") : MAX_HUNGER;
-        s.mood = legacyProfileTag != null && legacyProfileTag.contains("Mood")
-                ? legacyProfileTag.getInt("Mood") : Config.INITIAL_MOOD.get();
+        // Hunger/Mood：先读新格式键（六域 v0.9 起写入），读不到再回退 v0.8 老标签，
+        // 最后兜底默认——⚠ v0.9.3 修复：此前只读 legacy 标签，新格式档永远
+        // 读不到，导致每次重进世界饥饿回满/心情回初始（实测踩坑）
+        s.hunger = tag.contains("Hunger") ? tag.getInt("Hunger")
+                : (legacyProfileTag != null && legacyProfileTag.contains("Hunger")
+                        ? legacyProfileTag.getInt("Hunger") : MAX_HUNGER);
+        s.mood = tag.contains("Mood") ? tag.getInt("Mood")
+                : (legacyProfileTag != null && legacyProfileTag.contains("Mood")
+                        ? legacyProfileTag.getInt("Mood") : Config.INITIAL_MOOD.get());
 
         s.lastSettledDay = tag.contains("LastSettledDay") ? tag.getInt("LastSettledDay") : -1;
         // offset 与 lastSettledDay 成对读回——绝不能在读档时重随机（会重复结算 + 刷限流）

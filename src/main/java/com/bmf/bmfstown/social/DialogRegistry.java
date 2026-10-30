@@ -40,7 +40,25 @@ public final class DialogRegistry {
             // 天气转晴：不讨厌晴天的镇民
             new DialogLine(TownEventType.WEATHER_CHANGED, WeatherPref.CLEAR, "weather",
                     "dialog.bmfstown.weather_clear", false,
-                    r -> r.getPrefs().dislikedWeather() != WeatherPref.CLEAR, 1)
+                    r -> r.getPrefs().dislikedWeather() != WeatherPref.CLEAR, 1),
+            // 受苦即时线：挨饿（有"挨饿"永久记忆的镇民说带旧事语气的变体——condition 区分）
+            new DialogLine(TownEventType.STARVING, null, "starving",
+                    "dialog.bmfstown.starving", false,
+                    r -> !r.getMemoryState().hasFirmMemory(
+                            com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING), 1),
+            new DialogLine(TownEventType.STARVING, null, "starving",
+                    "dialog.bmfstown.starving_memory", false,
+                    r -> r.getMemoryState().hasFirmMemory(
+                            com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING), 1),
+            // 受苦即时线：没睡好
+            new DialogLine(TownEventType.SLEEPLESS, null, "sleepless",
+                    "dialog.bmfstown.sleepless", false,
+                    r -> !r.getMemoryState().hasFirmMemory(
+                            com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS), 1),
+            new DialogLine(TownEventType.SLEEPLESS, null, "sleepless",
+                    "dialog.bmfstown.sleepless_memory", false,
+                    r -> r.getMemoryState().hasFirmMemory(
+                            com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS), 1)
     );
 
     /** 某事件可用的全部台词（触发类型匹配 + 天气匹配 + 附加条件通过）。 */
