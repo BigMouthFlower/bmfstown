@@ -90,6 +90,11 @@ public final class ResidentCommands {
                         .executes(ctx -> sayNearest(
                                 ctx, StringArgumentType.getString(ctx, "text")))));
 
+        // ---- /bmfstown date ----
+        // 历法调试命令：报当前镇民历日期（年/月/日/月相）。
+        root.then(Commands.literal("date")
+                .executes(ResidentCommands::showDate));
+
         // ---- /bmfstown snowfall <秒> [半径] ----
         // 魔法降雪调试命令：以玩家为中心限时局部下雪（任何群系）。
         root.then(Commands.literal("snowfall")
@@ -263,6 +268,18 @@ public final class ResidentCommands {
         com.bmf.bmfstown.social.DialogEngine.sayRaw(said, text);
         ctx.getSource().sendSuccess(() -> Component.translatable(
                 "msg.bmfstown.say.done", said.getName().getString(), text), false);
+        return 1;
+    }
+
+    /** 历法调试：报当前镇民历日期（年/月/日/月相）。 */
+    private static int showDate(CommandContext<CommandSourceStack> ctx) {
+        net.minecraft.server.level.ServerLevel level = ctx.getSource().getLevel();
+        com.bmf.bmfstown.calendar.TownCalendar.CalendarDate date =
+                com.bmf.bmfstown.calendar.TownCalendar.get(level).today(level);
+        ctx.getSource().sendSuccess(() -> Component.translatable(
+                "msg.bmfstown.calendar.today",
+                date.year(), date.month(), date.day(),
+                com.bmf.bmfstown.calendar.TownCalendar.moonPhaseName(date.moonPhase())), false);
         return 1;
     }
 

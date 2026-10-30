@@ -435,5 +435,15 @@
   "dialog.bmfstown.eat_favored": "这%s味道不错。",
   "dialog.bmfstown.eat_favored_love": "我最喜欢吃%s了。",
   "dialog.bmfstown.weather_clear": "今天天气不错。",
-  "msg.bmfstown.say.done": "让 %s 说话：「%s」"
+  "msg.bmfstown.say.done": "让 %s 说话：「%s」",
+  "block.bmfstown.wall_calendar": "挂历",
+  "msg.bmfstown.calendar.today": "镇民历 第%1$d年%2$d月%3$d日 · %4$s",
+  "calendar.bmfstown.moon.0": "满月",
+  "calendar.bmfstown.moon.1": "亏凸月",
+  "calendar.bmfstown.moon.2": "下弦月",
+  "calendar.bmfstown.moon.3": "残月",
+  "calendar.bmfstown.moon.4": "新月",
+  "calendar.bmfstown.moon.5": "娥眉月",
+  "calendar.bmfstown.moon.6": "上弦月",
+  "calendar.bmfstown.moon.7": "盈凸月"
 }

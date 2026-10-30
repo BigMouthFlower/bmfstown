@@ -513,6 +513,7 @@ public final class Status {
         settleDisposition(resident, level);
         settleHomeMaterials(resident, level);
         settleSleep(resident, level);
+        resident.getMemoryState().dailyDecay(); // 印象每日衰减：归零即遗忘（v0.9.2 接上钩子）
     }
 
     /** 结算 1：职业喜欢。判定基准是当前职业（数据驱动，新职业自动参与）。 */

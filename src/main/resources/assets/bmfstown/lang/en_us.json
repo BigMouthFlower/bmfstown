@@ -435,5 +435,15 @@
   "dialog.bmfstown.eat_favored": "This %s tastes pretty good.",
   "dialog.bmfstown.eat_favored_love": "%s is my favorite.",
   "dialog.bmfstown.weather_clear": "Nice weather today.",
-  "msg.bmfstown.say.done": "Made %s say: \"%s\""
+  "msg.bmfstown.say.done": "Made %s say: \"%s\"",
+  "block.bmfstown.wall_calendar": "Wall Calendar",
+  "msg.bmfstown.calendar.today": "Town Calendar: Year %1$s, Month %2$s, Day %3$s · %4$s",
+  "calendar.bmfstown.moon.0": "Full Moon",
+  "calendar.bmfstown.moon.1": "Waning Gibbous",
+  "calendar.bmfstown.moon.2": "Last Quarter",
+  "calendar.bmfstown.moon.3": "Waning Crescent",
+  "calendar.bmfstown.moon.4": "New Moon",
+  "calendar.bmfstown.moon.5": "Waxing Crescent",
+  "calendar.bmfstown.moon.6": "First Quarter",
+  "calendar.bmfstown.moon.7": "Waxing Gibbous"
 }

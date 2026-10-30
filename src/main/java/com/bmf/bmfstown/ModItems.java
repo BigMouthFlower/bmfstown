@@ -69,6 +69,13 @@ public final class ModItems {
                     props -> new TownHandbookItem(props),
                     new Item.Properties().stacksTo(1));
 
+    /**
+     * 挂历：镇民历的实体显示设备（mod 第一个方块！）。
+     * 贴墙/平铺/吸顶放置，右键在 actionbar 报镇民历日期。
+     */
+    public static final DeferredItem<net.minecraft.world.item.BlockItem> WALL_CALENDAR =
+            ITEMS.registerSimpleBlockItem(com.bmf.bmfstown.block.ModBlocks.WALL_CALENDAR);
+
     private ModItems() {
     }
 

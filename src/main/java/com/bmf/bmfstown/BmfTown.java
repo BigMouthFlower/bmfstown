@@ -50,6 +50,7 @@ public class BmfTown {
         // 会引用它。实体实例化远晚于 mod 构造，但保持这个顺序更安全。
         ModDataSerializers.register(modEventBus);
         ModDataComponents.register(modEventBus);
+        com.bmf.bmfstown.block.ModBlocks.register(modEventBus);
         ModItems.register(modEventBus);
         ModCreativeTabs.register(modEventBus);
         ModEntities.register(modEventBus);

@@ -57,8 +57,10 @@ public class MemoryState {
                 String itemId = event.item.isEmpty() ? ""
                         : net.minecraft.core.registries.BuiltInRegistries.ITEM
                                 .getKey(event.item.getItem()).toString();
+                // 记忆时间戳：世界绝对天数（镇民历显示时减纪元换算年月日，见 TownCalendar）
+                int day = (int) (event.subject.level().getDayTime() / 24000L);
                 event.subject.getMemoryState().addImpression(
-                        "eat_favored", IMPRESSION_STRENGTH, itemId);
+                        "eat_favored", day, IMPRESSION_STRENGTH, itemId);
             }
             default -> {
                 // P1 只采集进食；其他事件的记忆价值待重要性表（P2）定义
@@ -67,19 +69,19 @@ public class MemoryState {
     }
 
     /**
-     * 记一条印象：同类型+同物品 → 刷新强度与日期（"天天在他面前钓鱼，
-     * 印象越来越深"的语义）；否则新增，超上限挤掉最旧。
+     * 记一条印象：同类型+同物品 → 强度取高、日期取新（"今天又吃到了，
+     * 印象刷新到今天"的语义）；否则新增，超上限挤掉最旧。
      */
-    public void addImpression(String type, int strength, String itemId) {
+    public void addImpression(String type, int day, int strength, String itemId) {
         for (int i = 0; i < this.impressions.size(); i++) {
             Impression old = this.impressions.get(i);
             if (old.type().equals(type) && old.itemId().equals(itemId)) {
-                this.impressions.set(i, new Impression(type, old.day(),
+                this.impressions.set(i, new Impression(type,
+                        Math.max(old.day(), day),
                         Math.max(old.strength(), strength), itemId));
                 return;
             }
         }
-        int day = 0; // 日志粒度 P1 不重要，P2 随记忆系统完整化补天号
         this.impressions.add(new Impression(type, day, strength, itemId));
         if (this.impressions.size() > MAX_IMPRESSIONS) {
             this.impressions.remove(0); // 最旧的先走
@@ -88,15 +90,19 @@ public class MemoryState {
 
     /** 每日衰减（由 Status.tickDaily 换天钩子调用）：归零即遗忘。 */
     public void dailyDecay() {
-        this.impressions.removeIf(imp -> {
+        if (this.impressions.isEmpty()) {
+            return;
+        }
+        // 重建列表（原 removeIf 内 set 的写法既绕又依赖 record equals，平铺直叙更好）
+        List<Impression> survivors = new ArrayList<>(this.impressions.size());
+        for (Impression imp : this.impressions) {
             int left = imp.strength() - DAILY_DECAY;
-            if (left <= 0) {
-                return true;
+            if (left > 0) {
+                survivors.add(new Impression(imp.type(), imp.day(), left, imp.itemId()));
             }
-            this.impressions.set(this.impressions.indexOf(imp),
-                    new Impression(imp.type(), imp.day(), left, imp.itemId()));
-            return false;
-        });
+        }
+        this.impressions.clear();
+        this.impressions.addAll(survivors);
     }
 
     public List<Impression> impressions() {
