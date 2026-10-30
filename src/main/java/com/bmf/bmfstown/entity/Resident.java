@@ -164,6 +164,8 @@ public class Resident extends PathfinderMob {
     private final Status status = new Status();
     private final TraitState traitState = new TraitState();
     private final JobState jobState = new JobState();
+    /** 记忆仓（第七域，v0.9.1 表达层）：印象池+铭记（P1 仅印象池生效）。 */
+    private final com.bmf.bmfstown.entity.domain.MemoryState memoryState = new com.bmf.bmfstown.entity.domain.MemoryState();
 
     // ---- 觅食状态（就餐区箱子补给，v0.6） ----
     // 状态机：NONE（空闲）→ GO_ZONE（去就餐区）→ GO_CHEST（去箱子）
@@ -542,6 +544,11 @@ public class Resident extends PathfinderMob {
 
     public TraitState getTraitState() {
         return this.traitState;
+    }
+
+    /** 记忆仓（第七域）。服务端专用（客户端实例为空壳）。 */
+    public com.bmf.bmfstown.entity.domain.MemoryState getMemoryState() {
+        return this.memoryState;
     }
 
     public JobState getJobState() {
@@ -941,6 +948,7 @@ public class Resident extends PathfinderMob {
         domains.put("Status", this.status.save());
         domains.put("Trait", this.traitState.save());
         domains.put("Job", this.jobState.save());
+        domains.put("Memory", this.memoryState.save());
         tag.put("Domains", domains);
         // 背包（需要注册表来保存物品的数据组件）
         tag.put("ResidentInventory", this.inventory.save(this.registryAccess()));
@@ -960,6 +968,7 @@ public class Resident extends PathfinderMob {
             this.status.loadFrom(statusTag);
             this.traitState.loadFrom(domains.getCompound("Trait"));
             this.jobState.loadFrom(domains.getCompound("Job"), null, false);
+            this.memoryState.loadFrom(domains.getCompound("Memory"));
         } else {
             // 老存档（六域重构前）：从 ResidentProfile/MoodState 旧键迁移
             CompoundTag profileTag = tag.contains("ResidentProfile", Tag.TAG_COMPOUND)
@@ -1312,6 +1321,8 @@ public class Resident extends PathfinderMob {
                             .map(z -> z.min().toShortString() + "~" + z.max().toShortString())
                             .collect(java.util.stream.Collectors.joining("、")));
         }
+        LOGGER.debug("[BmfTown][觅食] {} 开始觅食（饥饿={} 背包有食物={}）",
+                this.getName().getString(), this.status.hunger(), this.hasAnyFood());
         this.beginForaging();
         if (zone.contains(this.blockPosition())) {
             // 人已经在就餐区里：直接扫箱
@@ -1527,17 +1538,27 @@ public class Resident extends PathfinderMob {
     }
 
     /**
-     * 在给定的一批就餐区里找"带食物的最近容器"（就近原则第二级），锁定后走过去。
+     * 在给定的一批就餐区里锁定要去的容器，锁定后走过去。
      * 传单个区就是"进区扫箱"，传全部区就是"进不了区的降级扫法"。
+     *
+     * <p><b>先定答案、再定箱子（v0.9.1 定稿）</b>：
+     * ① 全区有爱吃的食物 → 锁定"含爱吃的食物的最近容器"；
+     * ② 全区没有 → 目标食物=全区营养最低的 → 锁定"含该营养食物的最近容器"。
+     * 就近原则只在"同一种答案"内生效——喜甜的宁可多走几步也要奔曲奇箱，
+     * 绝不会因为牛排箱更近就拿一辈子牛排。
      */
     private void scanForChest(List<TownZone> zones) {
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
             this.cancelForaging();
             return;
         }
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
+        var hobbyFood = this.prefs.hobbyFood();
         int containers = 0;
+        // 候选收集：每个带食物的容器记一份档案，扫完全区再统一裁决——
+        // "先定答案（吃什么）、再定箱子（去哪拿）"，就近只在同答案内生效
+        record Cand(BlockPos pos, double dist, int minNut, boolean hasFav) {
+        }
+        java.util.List<Cand> cands = new java.util.ArrayList<>();
         for (TownZone zone : zones) {
             int scanned = 0;
             for (BlockPos pos : BlockPos.betweenClosed(zone.min(), zone.max())) {
@@ -1578,13 +1599,41 @@ public class Resident extends PathfinderMob {
                 }
                 continue;
             }
-            double d = pos.distSqr(this.blockPosition());
-            if (best == null || d < bestDist) {
-                best = pos.immutable(); // betweenClosed 复用可变对象，必须 immutable() 收藏
-                bestDist = d;
+            int minNut = Integer.MAX_VALUE;
+            boolean hasFav = false;
+            for (int i = 0; i < container.getContainerSize(); i++) {
+                ItemStack st = container.getItem(i);
+                if (st.isEmpty() || st.get(DataComponents.FOOD) == null) {
+                    continue;
+                }
+                minNut = Math.min(minNut, st.get(DataComponents.FOOD).nutrition());
+                if (com.bmf.bmfstown.entity.profile.FoodTraits.matches(hobbyFood, st)) {
+                    hasFav = true;
+                }
             }
+            cands.add(new Cand(pos.immutable(), pos.distSqr(this.blockPosition()),
+                    minNut, hasFav));
             }
         }
+        // 裁决：①有爱吃的 → 含爱吃的最近箱；②全区没有 → 含全区最低营养食物的最近箱
+        Cand bestFav = null;
+        int globalMinNut = Integer.MAX_VALUE;
+        for (Cand c : cands) {
+            if (c.hasFav() && (bestFav == null || c.dist() < bestFav.dist())) {
+                bestFav = c;
+            }
+            globalMinNut = Math.min(globalMinNut, c.minNut());
+        }
+        Cand chosen = bestFav;
+        if (chosen == null) {
+            for (Cand c : cands) {
+                if (c.minNut() == globalMinNut
+                        && (chosen == null || c.dist() < chosen.dist())) {
+                    chosen = c;
+                }
+            }
+        }
+        BlockPos best = chosen == null ? null : chosen.pos();
         if (best == null) {
             LOGGER.debug("[BmfTown][觅食] {} 扫描 {} 个就餐区完成：容器 {} 个，均无食物或无容器",
                     this.getName().getString(), zones.size(), containers);
@@ -1606,8 +1655,9 @@ public class Resident extends PathfinderMob {
     /**
      * 真正的拿取：最多 FORAGE_TAKE_COUNT 个，不足拿全部；塞不下的放回箱子。
      *
-     * <p><b>偏好拿取（v0.7 定稿）</b>：两遍扫描——第一遍只拿对胃口的
-     * （{@code FoodTraits.matches}），没凑够再第二遍不挑食地补。
+     * <p><b>偏好拿取（v0.7 定稿，v0.9.1 补营养维度）</b>：两遍扫描——第一遍
+     * 只拿对胃口的（{@code FoodTraits.matches}），没凑够再第二遍补普通食物，
+     * 普通食物里<b>从营养最低的拿起</b>（防浪费）。
      * 偏好是<b>优先级</b>不是过滤条件，箱里没有爱吃的照样能吃饱。
      * 这样"玩家囤对库存"就能在囤货端管理全城心情：
      * 粮箱里同时有曲奇和面包时，喜甜的会自动优先拿曲奇，
@@ -1628,41 +1678,84 @@ public class Resident extends PathfinderMob {
             taken += takeFromContainer(container, want - taken, false); // 第二遍：不挑了
         }
         if (taken > 0) {
-            LOGGER.debug("[BmfTown] {} 从 {} 处的箱子拿了 {} 个食物",
-                    this.getName().getString(), chest.toShortString(), taken);
+            LOGGER.debug("[BmfTown][觅食] {} 从 {} 拿了 {} 个食物（背包现有食物 {} 个）",
+                    this.getName().getString(), chest.toShortString(), taken,
+                    countBackpackFood());
         }
     }
 
     /**
      * 从容器拿食物的一遍扫描。
      *
+     * <p>两遍互补，任何食物都恰好属于其中一遍，不会重复拿：
+     * 第一遍（{@code favoriteOnly=true}）只拿对胃口的，按槽位顺序；
+     * 第二遍（{@code favoriteOnly=false}）只拿普通食物，
+     * <b>从营养最低的拿起</b>（防浪费定稿）——每轮全局挑当前最低营养的
+     * 格子拿，拿完再挑次低，直到拿够或拿空。
+     *
      * @param favoriteOnly true = 只拿对胃口的（跳过普通食物）；false = 只拿普通食物
-     *                     （两遍互补，任何食物都恰好属于其中一遍，不会重复拿）
      */
     private int takeFromContainer(net.minecraft.world.Container container, int want,
             boolean favoriteOnly) {
         int taken = 0;
         var hobbyFood = this.prefs.hobbyFood();
-        for (int i = 0; i < container.getContainerSize() && taken < want; i++) {
-            ItemStack stack = container.getItem(i);
-            if (stack.isEmpty() || stack.get(DataComponents.FOOD) == null) {
-                continue;
+        if (favoriteOnly) {
+            for (int i = 0; i < container.getContainerSize() && taken < want; i++) {
+                taken += grabFromSlot(container, i, want - taken, hobbyFood, true);
             }
-            if (favoriteOnly != com.bmf.bmfstown.entity.profile.FoodTraits.matches(hobbyFood, stack)) {
-                continue; // 第一遍跳过不合胃口的 / 第二遍跳过爱吃的
+            return taken;
+        }
+        // 普通轮：每轮挑"营养最低的普通食物"格子，拿到够为止
+        while (taken < want) {
+            int bestSlot = -1;
+            int bestNut = Integer.MAX_VALUE;
+            for (int i = 0; i < container.getContainerSize(); i++) {
+                ItemStack stack = container.getItem(i);
+                if (stack.isEmpty() || stack.get(DataComponents.FOOD) == null) {
+                    continue;
+                }
+                if (com.bmf.bmfstown.entity.profile.FoodTraits.matches(hobbyFood, stack)) {
+                    continue; // 普通轮跳过爱吃的（两遍互补）
+                }
+                int nut = stack.get(DataComponents.FOOD).nutrition();
+                if (nut < bestNut) {
+                    bestNut = nut;
+                    bestSlot = i;
+                }
             }
-            int n = Math.min(want - taken, stack.getCount());
-            ItemStack grabbed = stack.split(n);
-            container.setItem(i, stack.isEmpty() ? ItemStack.EMPTY : stack); // 触发容器标记变更
-            ItemStack leftover = this.inventory.addItem(grabbed);
-            if (!leftover.isEmpty()) {
-                container.setItem(i, leftover); // 背包塞不下：剩余的放回
-                taken += n - leftover.getCount();
-                break;
+            if (bestSlot < 0) {
+                break; // 普通食物拿完了
             }
-            taken += n;
+            taken += grabFromSlot(container, bestSlot, want - taken, hobbyFood, false);
         }
         return taken;
+    }
+
+    /**
+     * 从指定格拿一次食物（含背包放不下回填的边界处理）。
+     *
+     * @param favoredFilter true = 该格必须是对胃口的才拿；false = 该格必须不是对胃口的才拿
+     * @return 实际拿走的数量
+     */
+    private int grabFromSlot(net.minecraft.world.Container container, int slot, int want,
+            com.bmf.bmfstown.entity.profile.Hobbies.Food hobbyFood, boolean favoredFilter) {
+        ItemStack stack = container.getItem(slot);
+        if (stack.isEmpty() || stack.get(DataComponents.FOOD) == null) {
+            return 0;
+        }
+        if (favoredFilter != com.bmf.bmfstown.entity.profile.FoodTraits
+                .matches(hobbyFood, stack)) {
+            return 0; // 过滤不符：爱吃的轮跳过普通格 / 普通轮跳过爱吃格
+        }
+        int n = Math.min(want, stack.getCount());
+        ItemStack grabbed = stack.split(n);
+        container.setItem(slot, stack.isEmpty() ? ItemStack.EMPTY : stack); // 触发容器标记变更
+        ItemStack leftover = this.inventory.addItem(grabbed);
+        if (!leftover.isEmpty()) {
+            container.setItem(slot, leftover); // 背包塞不下：剩余的放回
+            return n - leftover.getCount();
+        }
+        return n;
     }
 
     /** 超时兜底。返回 false 表示本轮已被超时终结。 */
@@ -1758,6 +1851,17 @@ public class Resident extends PathfinderMob {
     }
 
     /** 背包里是否还有任何食物（不管营养多少、能不能不浪费地吃下）。 */
+    private int countBackpackFood() {
+        int count = 0;
+        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
+            ItemStack stack = this.inventory.getItem(i);
+            if (!stack.isEmpty() && stack.get(DataComponents.FOOD) != null) {
+                count += stack.getCount();
+            }
+        }
+        return count;
+    }
+
     private boolean hasAnyFood() {
         for (int i = 0; i < this.inventory.getContainerSize(); i++) {
             ItemStack stack = this.inventory.getItem(i);
@@ -1772,6 +1876,25 @@ public class Resident extends PathfinderMob {
         for (int i = 0; i < container.getContainerSize(); i++) {
             ItemStack stack = container.getItem(i);
             if (!stack.isEmpty() && stack.get(DataComponents.FOOD) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 容器里有没有"对胃口"的食物。
+     *
+     * @deprecated 选箱已升级为"先定答案再定箱子"（见 {@link #scanForChest}），
+     *     口味与营养都在扫描时逐容器统计，本方法不再被调用。留作排障工具。
+     */
+    @Deprecated(forRemoval = false)
+    private static boolean containerHasFavoredFood(net.minecraft.world.Container container,
+            com.bmf.bmfstown.entity.profile.Hobbies.Food hobby) {
+        for (int i = 0; i < container.getContainerSize(); i++) {
+            ItemStack stack = container.getItem(i);
+            if (!stack.isEmpty() && stack.get(DataComponents.FOOD) != null
+                    && com.bmf.bmfstown.entity.profile.FoodTraits.matches(hobby, stack)) {
                 return true;
             }
         }
@@ -2794,6 +2917,9 @@ public class Resident extends PathfinderMob {
             if (com.bmf.bmfstown.entity.profile.FoodTraits.matches(
                     this.prefs.hobbyFood(), eaten)) {
                 this.status.ateFavored(this, moodLevel);
+                // 广播站喊一嗓子（v0.9.1 表达层）：台词引擎/记忆仓订阅
+                com.bmf.bmfstown.social.TownEventBus.dispatch(
+                        com.bmf.bmfstown.social.TownEvent.eatFavored(this, eaten));
             }
         }
 

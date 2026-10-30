@@ -232,7 +232,7 @@ public class WorkerGoal extends Goal {
         if (order == null) {
             this.resident.containerFx(level, this.inputPos, false);
             this.retryCooldown = IDLE_RETRY_TICKS;
-            LOGGER.info("[BmfTown][工人] {} 订单 {} 没有对应配方，待机",
+            LOGGER.debug("[BmfTown][工人] {} 订单 {} 没有对应配方，待机",
                     this.resident.getName().getString(), orderItem);
             return;
         }

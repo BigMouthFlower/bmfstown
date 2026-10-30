@@ -207,6 +207,26 @@ public final class ModNetworking {
         }
     }
 
+    /** S → C：魔法降雪状态（开始/结束/中途进服补发）。 */
+    public record SnowfallSyncPayload(boolean active, long centerPacked, int radius)
+            implements CustomPacketPayload {
+
+        public static final Type<SnowfallSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "snowfall_sync"));
+
+        public static final StreamCodec<ByteBuf, SnowfallSyncPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.BOOL, SnowfallSyncPayload::active,
+                        ByteBufCodecs.VAR_LONG, SnowfallSyncPayload::centerPacked,
+                        ByteBufCodecs.VAR_INT, SnowfallSyncPayload::radius,
+                        SnowfallSyncPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     // ==========================================================
     //  S → C：手册数据同步
     // ==========================================================
@@ -1079,6 +1099,18 @@ public final class ModNetworking {
                 com.bmf.bmfstown.client.TownHandbookClient.setZoneSelecting(payload.active()));
     }
 
+    private static void handleSnowfallSync(SnowfallSyncPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() ->
+                com.bmf.bmfstown.client.SnowfallClient.set(
+                        payload.active(), payload.centerPacked(), payload.radius()));
+    }
+
+
+    /** 向整个维度广播魔法降雪状态（开始/结束）。 */
+    public static void sendSnowfallSync(ServerLevel level, boolean active, long centerPacked, int radius) {
+        PacketDistributor.sendToPlayersInDimension(level, new SnowfallSyncPayload(active, centerPacked, radius));
+    }
+
     /** 选区会话状态推送给客户端（会话开始/结束时调）。 */
     public static void sendZoneSelectSync(ServerPlayer player, boolean active) {
         PacketDistributor.sendToPlayer(player, new ZoneSelectSyncPayload(active));
@@ -1320,6 +1352,8 @@ public final class ModNetworking {
                 ModNetworking::handleHandbookAppendZone);
         registrar.playToClient(ZoneSelectSyncPayload.TYPE, ZoneSelectSyncPayload.STREAM_CODEC,
                 ModNetworking::handleZoneSelectSync);
+        registrar.playToClient(SnowfallSyncPayload.TYPE, SnowfallSyncPayload.STREAM_CODEC,
+                ModNetworking::handleSnowfallSync);
         registrar.playToClient(HandbookSyncPayload.TYPE, HandbookSyncPayload.STREAM_CODEC,
                 ModNetworking::handleHandbookSync);
         registrar.playToClient(TauntSyncPayload.TYPE, TauntSyncPayload.STREAM_CODEC,

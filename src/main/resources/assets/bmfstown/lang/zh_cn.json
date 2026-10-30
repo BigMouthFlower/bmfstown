@@ -428,5 +428,12 @@
   "gui.bmfstown.handbook.block_main_hint": "主区块是城镇的本体区域：这里不可改名或删除。下方是本区块名下的功能区管理。",
   "gui.bmfstown.handbook.block_append_hint": "追加区块：可改名、可删除（需先删掉区块内的功能区）。下方是本区块名下的功能区管理。",
   "msg.bmfstown.zoneblock.has_children": "该区块下还有功能区，先删除它们再删除区块",
-  "gui.bmfstown.handbook.block_type": "类型：%s"
+  "gui.bmfstown.handbook.block_type": "类型：%s",
+  "msg.bmfstown.snowfall.started": "魔法降雪开始：半径 %s 格，持续 %s 秒",
+  "msg.bmfstown.snowfall.ended": "魔法降雪结束，积雪正在消融",
+  "msg.bmfstown.snowfall.rejected": "降雪半径或时长超出上限",
+  "dialog.bmfstown.eat_favored": "这%s味道不错。",
+  "dialog.bmfstown.eat_favored_love": "我最喜欢吃%s了。",
+  "dialog.bmfstown.weather_clear": "今天天气不错。",
+  "msg.bmfstown.say.done": "让 %s 说话：「%s」"
 }

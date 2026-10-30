@@ -542,6 +542,26 @@ public final class Config {
             .defineList("traits.weightOverrides", java.util.List.of(),
                     o -> o instanceof String str && str.contains(":"));
 
+    // ---- 台词（v0.9.1 表达层）----
+
+    public static final ModConfigSpec.IntValue DIALOG_EAT_COOLDOWN = BUILDER
+            .comment("吃到爱吃的台词的冷却（秒）；一顿饭只说一次", "Cooldown of the 'tasty food' line (seconds)")
+            .defineInRange("dialog.eatCooldownSeconds", 90, 5, 3600);
+
+    public static final ModConfigSpec.IntValue DIALOG_WEATHER_COOLDOWN = BUILDER
+            .comment("天气台词的冷却（秒）", "Cooldown of weather lines (seconds)")
+            .defineInRange("dialog.weatherCooldownSeconds", 300, 30, 7200);
+
+    public static final ModConfigSpec.IntValue DIALOG_STAGGER_TICKS = BUILDER
+            .comment("天气变化后全镇台词的错峰窗口（tick）；每个镇民按个人相位延迟 0~该值 再说",
+                    "Stagger window in ticks after a weather change")
+            .defineInRange("dialog.staggerTicks", 600, 0, 24000);
+
+    public static final ModConfigSpec.IntValue DIALOG_WEATHER_ONE_IN_N = BUILDER
+            .comment("天气变化时只有 1/N 的镇民开口（按个人相位筛选），避免全员齐喊",
+                    "Only 1 in N villagers speak on a weather change")
+            .defineInRange("dialog.weatherOneInN", 3, 1, 20);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     // ==========================================================

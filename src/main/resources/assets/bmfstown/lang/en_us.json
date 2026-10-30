@@ -428,5 +428,12 @@
   "gui.bmfstown.handbook.block_main_hint": "The main block is the town's own area: it cannot be renamed or deleted. Below is the facility management of this block.",
   "gui.bmfstown.handbook.block_append_hint": "Appended block: can be renamed and deleted (remove its facilities first). Below is the facility management of this block.",
   "msg.bmfstown.zoneblock.has_children": "This block still has facilities inside - delete them first",
-  "gui.bmfstown.handbook.block_type": "Type: %s"
+  "gui.bmfstown.handbook.block_type": "Type: %s",
+  "msg.bmfstown.snowfall.started": "Magical snowfall begins: radius %s, lasting %ss",
+  "msg.bmfstown.snowfall.ended": "The magical snowfall ends; snow is melting away",
+  "msg.bmfstown.snowfall.rejected": "Radius or duration out of range",
+  "dialog.bmfstown.eat_favored": "This %s tastes pretty good.",
+  "dialog.bmfstown.eat_favored_love": "%s is my favorite.",
+  "dialog.bmfstown.weather_clear": "Nice weather today.",
+  "msg.bmfstown.say.done": "Made %s say: \"%s\""
 }

@@ -698,6 +698,13 @@ public final class Status {
     // ==========================================================
 
     /** 每 tick 的感知节拍：内部数到 SENSE_INTERVAL 才真正扫一次。 */
+    /** 个人相位偏移（出生随机、落 NBT）：全镇负载均衡共用的"个人节拍"——
+     * 每日结算用它错峰，台词触发/将来的轮询系统同样读它，保证同一个
+     * NPC 在所有系统里的错峰节拍一致。 */
+    public int phaseOffset() {
+        return this.settleOffset;
+    }
+
     public void tickSenses(Resident resident, ServerLevel level) {
         if (++this.senseTimer < SENSE_INTERVAL) {
             return;
@@ -817,6 +824,9 @@ public final class Status {
         }
         this.lastWeatherAt = now;
         this.lastWeather = current;
+        // 天气变化 → 广播站喊一嗓子（台词引擎/记忆仓自行订阅；v0.9.1 表达层）
+        com.bmf.bmfstown.social.TownEventBus.dispatch(
+                com.bmf.bmfstown.social.TownEvent.weatherChanged(resident, current));
         if (resident.getPrefs().dislikedWeather() == current) {
             this.applyClamped(resident, -Config.MOOD_WEATHER_DISLIKED.get());
             addThought(resident, level, EventType.WEATHER_DISLIKED);

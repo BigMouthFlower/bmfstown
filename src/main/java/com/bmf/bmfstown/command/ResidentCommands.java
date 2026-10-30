@@ -10,6 +10,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 
 import java.util.Collection;
@@ -81,6 +82,24 @@ public final class ResidentCommands {
                         .executes(ctx -> rerollPrefs(
                                 ctx,
                                 EntityArgument.getEntities(ctx, "targets")))));
+
+        // ---- /bmfstown say <文字> ----
+        // 台词调试命令：让最近的镇民头顶显示这句原文（验证展示链路用）。
+        root.then(Commands.literal("say")
+                .then(Commands.argument("text", StringArgumentType.greedyString())
+                        .executes(ctx -> sayNearest(
+                                ctx, StringArgumentType.getString(ctx, "text")))));
+
+        // ---- /bmfstown snowfall <秒> [半径] ----
+        // 魔法降雪调试命令：以玩家为中心限时局部下雪（任何群系）。
+        root.then(Commands.literal("snowfall")
+                .then(Commands.argument("seconds", IntegerArgumentType.integer(1, 600))
+                        .executes(ctx -> startSnowfall(
+                                ctx, IntegerArgumentType.getInteger(ctx, "seconds"), 32))
+                        .then(Commands.argument("radius", IntegerArgumentType.integer(4, 128))
+                                .executes(ctx -> startSnowfall(
+                                        ctx, IntegerArgumentType.getInteger(ctx, "seconds"),
+                                        IntegerArgumentType.getInteger(ctx, "radius"))))));
 
         // ---- /bmfstown trait <目标> <特性|random> ----
         // 直接指定目标镇民的特性（调试用；特性 14 选 1，靠 reroll 抽太慢）。
@@ -220,6 +239,48 @@ public final class ResidentCommands {
      *
      * <p>只走 MoodState 的懒生成路径，不动档案其他字段（饥饿/心情/职业不动）。
      */
+    /** 台词调试：最近的镇民说这句原文。 */
+    private static int sayNearest(CommandContext<CommandSourceStack> ctx, String text)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        com.bmf.bmfstown.entity.Resident nearest = null;
+        double best = Double.MAX_VALUE;
+        for (com.bmf.bmfstown.entity.Resident resident : player.serverLevel()
+                .getEntitiesOfClass(com.bmf.bmfstown.entity.Resident.class,
+                        player.getBoundingBox().inflate(32))) {
+            double d = resident.distanceToSqr(player);
+            if (d < best) {
+                best = d;
+                nearest = resident;
+            }
+        }
+        if (nearest == null) {
+            ctx.getSource().sendFailure(Component.translatable(
+                    "msg.bmfstown.command.no_resident"));
+            return 0;
+        }
+        com.bmf.bmfstown.entity.Resident said = nearest;
+        com.bmf.bmfstown.social.DialogEngine.sayRaw(said, text);
+        ctx.getSource().sendSuccess(() -> Component.translatable(
+                "msg.bmfstown.say.done", said.getName().getString(), text), false);
+        return 1;
+    }
+
+    /** 魔法降雪：以命令执行者脚下为中心开始。 */
+    private static int startSnowfall(CommandContext<CommandSourceStack> ctx, int seconds, int radius)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        boolean ok = com.bmf.bmfstown.weather.SnowfallManager.start(
+                player.serverLevel(), player.blockPosition(), radius, seconds);
+        if (!ok) {
+            ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.snowfall.rejected"));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.translatable(
+                "msg.bmfstown.snowfall.started", radius, seconds), false);
+        return 1;
+    }
+
     private static int rerollPrefs(CommandContext<CommandSourceStack> ctx,
                                    Collection<? extends Entity> targets) {
         int changed = 0;
