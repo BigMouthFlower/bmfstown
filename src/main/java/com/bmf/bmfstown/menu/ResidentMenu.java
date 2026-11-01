@@ -319,13 +319,24 @@ public class ResidentMenu extends AbstractContainerMenu {
 
         if (id >= BTN_PROFESSION_BASE) {
             int index = id - BTN_PROFESSION_BASE;
-            ProfessionType[] all = ProfessionType.values();
-            if (index < 0 || index >= all.length) {
+            // 职业锁定（v0.10）：可选列表在数据层过滤（unlock.job.*），
+            // 访问空间 = 该镇民所在城镇（无城镇 = 只有初始职业）
+            var selectable = com.bmf.bmfstown.unlock.JobUnlocks.selectable(
+                    level, this.resident.getIdentity().townId(),
+                    this.resident.getProfession());
+            if (index < 0 || index >= selectable.size()) {
                 return true; // 列表刚变过，下标失效：忽略
             }
-            ProfessionType type = all[index];
+            ProfessionType type = selectable.get(index);
             if (this.resident.getProfession() == type) {
                 return true; // 重复点不算错
+            }
+            // 双保险：客户端列表与服务端短暂不一致（同步延迟）时兜底
+            if (!com.bmf.bmfstown.unlock.JobUnlocks.isUnlockedServer(
+                    level, this.resident.getIdentity().townId(), type)) {
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.job_locked"), true);
+                return true;
             }
             this.resident.getIdentity().setProfession(type);
             this.resident.syncClient();

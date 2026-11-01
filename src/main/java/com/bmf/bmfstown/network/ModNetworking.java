@@ -227,6 +227,67 @@ public final class ModNetworking {
         }
     }
 
+    /** S → C：解锁状态全量快照（按城镇分组；解锁瞬间与登录时发送）。 */
+    public record TownUnlockEntry(String townId, java.util.List<String> ids) {
+    }
+
+    public record UnlockSyncPayload(java.util.List<TownUnlockEntry> towns)
+            implements CustomPacketPayload {
+
+        public static final Type<UnlockSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "unlock_sync"));
+
+        public static final StreamCodec<ByteBuf, UnlockSyncPayload> STREAM_CODEC =
+                StreamCodec.ofMember(
+                        (payload, buf) -> {
+                            ByteBufCodecs.VAR_INT.encode(buf, payload.towns().size());
+                            for (TownUnlockEntry town : payload.towns()) {
+                                ByteBufCodecs.STRING_UTF8.encode(buf, town.townId());
+                                ByteBufCodecs.VAR_INT.encode(buf, town.ids().size());
+                                for (String id : town.ids()) {
+                                    ByteBufCodecs.STRING_UTF8.encode(buf, id);
+                                }
+                            }
+                        },
+                        buf -> {
+                            int towns = ByteBufCodecs.VAR_INT.decode(buf);
+                            java.util.List<TownUnlockEntry> list = new java.util.ArrayList<>(towns);
+                            for (int i = 0; i < towns; i++) {
+                                String townId = ByteBufCodecs.STRING_UTF8.decode(buf);
+                                int n = ByteBufCodecs.VAR_INT.decode(buf);
+                                java.util.List<String> ids = new java.util.ArrayList<>(n);
+                                for (int j = 0; j < n; j++) {
+                                    ids.add(ByteBufCodecs.STRING_UTF8.decode(buf));
+                                }
+                                list.add(new TownUnlockEntry(townId, java.util.List.copyOf(ids)));
+                            }
+                            return new UnlockSyncPayload(java.util.List.copyOf(list));
+                        });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /** S → C：昼夜流速镜像（客户端 ClientLevel 据此平滑插值太阳动画）。 */
+    public record TimeSpeedSyncPayload(float perTick)
+            implements CustomPacketPayload {
+
+        public static final Type<TimeSpeedSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "time_speed_sync"));
+
+        public static final StreamCodec<ByteBuf, TimeSpeedSyncPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.FLOAT, TimeSpeedSyncPayload::perTick,
+                        TimeSpeedSyncPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     // ==========================================================
     //  S → C：手册数据同步
     // ==========================================================
@@ -1100,6 +1161,7 @@ public final class ModNetworking {
     }
 
     private static void handleSnowfallSync(SnowfallSyncPayload payload, IPayloadContext ctx) {
+
         ctx.enqueueWork(() ->
                 com.bmf.bmfstown.client.SnowfallClient.set(
                         payload.active(), payload.centerPacked(), payload.radius()));
@@ -1109,6 +1171,32 @@ public final class ModNetworking {
     /** 向整个维度广播魔法降雪状态（开始/结束）。 */
     public static void sendSnowfallSync(ServerLevel level, boolean active, long centerPacked, int radius) {
         PacketDistributor.sendToPlayersInDimension(level, new SnowfallSyncPayload(active, centerPacked, radius));
+    }
+
+    private static void handleUnlockSync(UnlockSyncPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() ->
+                com.bmf.bmfstown.client.ClientUnlockState.handleSync(payload));
+    }
+
+    /** 向整个维度广播解锁状态全量快照（解锁瞬间 / 玩家登录时调）。 */
+    /** 向整个维度广播解锁状态全量快照（按城镇分组；解锁瞬间 / 玩家登录时调）。 */
+    public static void sendUnlockSync(ServerLevel level,
+            java.util.Map<java.util.UUID, java.util.Set<String>> snapshot) {
+        var towns = snapshot.entrySet().stream()
+                .map(e -> new TownUnlockEntry(
+                        e.getKey().toString(), java.util.List.copyOf(e.getValue())))
+                .toList();
+        PacketDistributor.sendToPlayersInDimension(level, new UnlockSyncPayload(towns));
+    }
+
+    private static void handleTimeSpeedSync(TimeSpeedSyncPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() ->
+                com.bmf.bmfstown.client.ClientTimeFlow.handleSync(payload));
+    }
+
+    /** 向整个维度广播昼夜流速镜像（设置流速 / 玩家登录时调）。 */
+    public static void sendTimeSpeedSync(ServerLevel level, float perTick) {
+        PacketDistributor.sendToPlayersInDimension(level, new TimeSpeedSyncPayload(perTick));
     }
 
     /** 选区会话状态推送给客户端（会话开始/结束时调）。 */
@@ -1358,6 +1446,10 @@ public final class ModNetworking {
                 ModNetworking::handleHandbookSync);
         registrar.playToClient(TauntSyncPayload.TYPE, TauntSyncPayload.STREAM_CODEC,
                 ModNetworking::handleTauntSync);
+        registrar.playToClient(UnlockSyncPayload.TYPE, UnlockSyncPayload.STREAM_CODEC,
+                ModNetworking::handleUnlockSync);
+        registrar.playToClient(TimeSpeedSyncPayload.TYPE, TimeSpeedSyncPayload.STREAM_CODEC,
+                ModNetworking::handleTimeSpeedSync);
         registrar.playToClient(MoodSyncPayload.TYPE, MoodSyncPayload.STREAM_CODEC,
                 ModNetworking::handleMoodSync);
     }

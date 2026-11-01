@@ -451,5 +451,19 @@
   "dialog.bmfstown.sleepless": "好困……昨晚没睡好……",
   "dialog.bmfstown.sleepless_memory": "又没睡好……那些不眠的夜晚，记得清清楚楚。",
   "mood.bmfstown.thought.memory_starving": "他记住了挨饿的滋味。",
-  "mood.bmfstown.thought.memory_sleepless": "他记住了困的感觉。"
+  "mood.bmfstown.thought.memory_sleepless": "他记住了困的感觉。",
+  "msg.bmfstown.work.job_locked": "这个职业还没有解锁。",
+  "msg.bmfstown.timespeed.set": "昼夜流速已设为 %s 倍。",
+  "msg.bmfstown.unlock.announce.head": "已发现 ",
+  "msg.bmfstown.unlock.type.job": "隐藏职业",
+  "msg.bmfstown.unlock.type.trait": "隐藏特性",
+  "msg.bmfstown.unlock.type.personality": "隐藏性格",
+  "msg.bmfstown.unlock.type.perk": "隐藏天赋",
+  "msg.bmfstown.unlock.type.race": "隐藏种族",
+  "msg.bmfstown.unlock.type.secret": "隐藏秘密",
+  "msg.bmfstown.unlock.type.system": "隐藏系统",
+  "msg.bmfstown.unlock.type.ui": "隐藏界面",
+  "unlock.bmfstown.job.worker.name": "工人",
+  "unlock.bmfstown.job.bookkeeper.name": "簿记员",
+  "dialog.bmfstown.jobhint.worker": "%s，你还会搞红石的装置啊……如果你对反复生产这些乱七八糟的红石元件感到头疼的话，我也可以帮你来生产哦。"
 }

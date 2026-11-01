@@ -114,8 +114,8 @@ public final class DialogEngine {
                             Config.DIALOG_EAT_COOLDOWN.get() * 20L);
                 }
             }
-            case STARVING, SLEEPLESS -> {
-                // 即时：受苦线（挨饿/没睡——与记忆无关谁都喊，变体由 condition 区分）
+            case STARVING, SLEEPLESS, JOB_HINT -> {
+                // 即时：受苦/职业线索（同 tick 已解锁；公告在解锁路径里，命令回显不重复）
                 if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())
                         && cooldownOk(event.subject, line.group(), level.getGameTime())) {
                     say(level, event.subject, line, event.item);

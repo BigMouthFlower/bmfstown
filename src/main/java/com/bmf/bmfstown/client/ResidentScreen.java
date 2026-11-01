@@ -1053,10 +1053,19 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final int WORK_BTN_GAP = 3;
     /** 工作页职业列表可见行数。职业再多，列表高度也固定，其余滚轮翻。 */
     private static final int VISIBLE_PROF_ROWS = 3;
-    /** 职业列表行数。客户端与服务端都按 {@code ProfessionType.values()} 原顺序列，下标天然一致。 */
-    private static final int PROFESSION_ROW_COUNT = com.bmf.bmfstown.entity.profile.ProfessionType.values().length;
     /** 工作页职业列表的滚动偏移。 */
     private int workScroll = 0;
+
+    /**
+     * 可选职业列表（数据层过滤，v0.10）：未解锁的职业根本不进列表——
+     * 当前职业永远保留（否则看不出他现在是谁）。访问空间 = 该镇民所在
+     * 城镇（快照同步的 townId；无城镇 = 只有初始职业）。渲染/点击/滚轮共用。
+     */
+    private java.util.List<com.bmf.bmfstown.entity.profile.ProfessionType> selectableProfessions() {
+        Resident r = this.menu.getResident();
+        java.util.UUID townId = r == null ? null : r.getArchive().townId();
+        return com.bmf.bmfstown.unlock.JobUnlocks.selectableClient(townId, currentProfession());
+    }
 
     // ---- 工作页布局（v0.5 修订）：职业选框只包住可见行，按钮/经验条在框下方 ----
     // 旧布局沿用了归属页的 6 行框，按钮画进了选框内部且与经验条文字重叠。
@@ -1176,16 +1185,16 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         int y = this.topPos;
         gfx.fill(x + 4, y + listTop(), x + this.imageWidth - 4, y + workListBottom(), 0xFF373737);
 
-        // ---- 职业列表（滚动窗口：可见 3 行，其余滚轮翻） ----
-        var professions = com.bmf.bmfstown.entity.profile.ProfessionType.values();
+        // ---- 职业列表（滚动窗口：可见 3 行，其余滚轮翻；数据层过滤锁定职业） ----
+        var professions = selectableProfessions();
         var current = currentProfession();
         for (int v = 0; v < VISIBLE_PROF_ROWS; v++) {
             int i = this.workScroll + v;
-            if (i >= professions.length) {
+            if (i >= professions.size()) {
                 break;
             }
             int rowY = y + workRowTop() + v * ROW_H;
-            boolean cur = current != null && current.ordinal() == i;
+            boolean cur = current != null && professions.get(i) == current;
             boolean hovered = !cur && mouseX >= x + 5 && mouseX < x + this.imageWidth - 5
                     && mouseY >= rowY && mouseY < rowY + ROW_H;
             if (cur) {
@@ -1287,17 +1296,17 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 工作页文字：页名、职业行（✔ 选中）、按钮文字、底部提示。 */
     private void renderWorkPageText(GuiGraphics gfx, int mouseX, int mouseY) {
         Resident resident = this.menu.getResident();
-        // ---- 职业行文字（滚动窗口，与背景层同一偏移） ----
-        var professions = com.bmf.bmfstown.entity.profile.ProfessionType.values();
+        // ---- 职业行文字（滚动窗口，与背景层同一偏移；数据层过滤锁定职业） ----
+        var professions = selectableProfessions();
         var current = currentProfession();
         for (int v = 0; v < VISIBLE_PROF_ROWS; v++) {
             int i = this.workScroll + v;
-            if (i >= professions.length) {
+            if (i >= professions.size()) {
                 break;
             }
             int rowY = workRowTop() + v * ROW_H + 3;
-            boolean cur = current != null && current.ordinal() == i;
-            String label = I18n.get(professions[i].displayName());
+            boolean cur = current != null && professions.get(i) == current;
+            String label = I18n.get(professions.get(i).displayName());
             int color = cur ? 0xFFFFFF : 0xE0E0E0;
             gfx.drawString(this.font, (cur ? "✔ " : "  ") + label, 8, rowY, color, false);
         }
@@ -1961,13 +1970,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 return true;
             }
 
-            // 职业行（滚动窗口：可见行 v → 实际下标 workScroll + v）
+            // 职业行（滚动窗口：可见行 v → 实际下标 workScroll + v；下标=过滤列表位置）
             int rowTop = this.topPos + workRowTop();
             int rel = (int) (mouseY - rowTop);
             if (mouseX >= listX && mouseX < listX + listW
                     && rel >= 0 && rel < VISIBLE_PROF_ROWS * ROW_H) {
                 int index = this.workScroll + rel / ROW_H;
-                if (index < PROFESSION_ROW_COUNT) {
+                if (index < selectableProfessions().size()) {
                     clickMenu(ResidentMenu.BTN_PROFESSION_BASE + index);
                 }
                 return true;
@@ -2188,7 +2197,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (this.page == PAGE_WORK) {
             // 职业列表滚轮：职业超过 3 行（可见上限）时翻页（簿记员就是从这里漏掉的）
-            int max = Math.max(0, PROFESSION_ROW_COUNT - VISIBLE_PROF_ROWS);
+            int max = Math.max(0, selectableProfessions().size() - VISIBLE_PROF_ROWS);
             this.workScroll = Mth.clamp(this.workScroll - (int) Math.signum(scrollY), 0, max);
             return true;
         }
@@ -2199,7 +2208,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         }
         if (this.page == PAGE_WORK) {
             // 职业列表滚轮：可见 3 行，翻到列表尾为止
-            int max = Math.max(0, PROFESSION_ROW_COUNT - VISIBLE_PROF_ROWS);
+            int max = Math.max(0, selectableProfessions().size() - VISIBLE_PROF_ROWS);
             this.workScroll = Mth.clamp(this.workScroll - (int) Math.signum(scrollY), 0, max);
             return true;
         }

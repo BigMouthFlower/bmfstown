@@ -15,5 +15,7 @@ public enum TownEventType {
     /** 镇民正在挨饿（subject = 挨饿的镇民；挨饿心情事件同拍，半日至多一次）。 */
     STARVING,
     /** 镇民昨晚没睡好（subject = 没睡的镇民；晨间结算同拍，一晚至多一次）。 */
-    SLEEPLESS
+    SLEEPLESS,
+    /** 镇民看见玩家携带特定物品，触发职业线索台词（subject = 线索镇民，item = 看见的东西）。 */
+    JOB_HINT
 }

@@ -2944,6 +2944,9 @@ public class Resident extends PathfinderMob {
                 com.bmf.bmfstown.social.TownEventBus.dispatch(
                         com.bmf.bmfstown.social.TownEvent.eatFavored(this, eaten));
             }
+            // 图鉴纪律（用户两次定稿）：图鉴只登记 mod 自有的隐藏内容
+            // （职业/种族/perk/特性/性格），绝不收录"吃过什么/见过什么"的
+            // 原版全收集清单——此处的食物解锁打样已按此移除。
         }
 
         this.eatingFood = ItemStack.EMPTY;

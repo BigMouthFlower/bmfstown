@@ -58,7 +58,10 @@ public final class DialogRegistry {
             new DialogLine(TownEventType.SLEEPLESS, null, "sleepless",
                     "dialog.bmfstown.sleepless_memory", false,
                     r -> r.getMemoryState().hasFirmMemory(
-                            com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS), 1)
+                            com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS), 1),
+            // 职业线索线：镇民看见玩家携带红石元件 → 念出元件名 → 解锁工人职业
+            new DialogLine(TownEventType.JOB_HINT, null, "jobhint",
+                    "dialog.bmfstown.jobhint.worker", true, null, 1)
     );
 
     /** 某事件可用的全部台词（触发类型匹配 + 天气匹配 + 附加条件通过）。 */

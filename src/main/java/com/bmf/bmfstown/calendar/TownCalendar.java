@@ -4,7 +4,13 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.saveddata.SavedData;
+import com.bmf.bmfstown.network.ModNetworking;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.tick.LevelTickEvent;
+
 
 /**
  * 镇民历（v0.9.2）：mod 自带的纪年体系——记忆与纪念日的"时间坐标系"。
@@ -26,6 +32,7 @@ import net.minecraft.world.level.saveddata.SavedData;
  * 换算公式：日 = 绝对天数%8＋1（= 月相序号，1 号恒为满月）；
  * 月/年 = 从"纪元所在月的满月"起算的总月数 ÷12／%12。
  */
+@EventBusSubscriber
 public final class TownCalendar extends SavedData {
 
     /** 月长 = 月相周期（原版 8 相位每晚一换）。 */
@@ -37,6 +44,7 @@ public final class TownCalendar extends SavedData {
 
     /** 镇民历第 0 天对应的世界绝对天数；{@code Long.MIN_VALUE} = 未初始化（首次访问时落锚）。 */
     private long epochDay = Long.MIN_VALUE;
+
 
     public TownCalendar() {
     }
@@ -66,6 +74,81 @@ public final class TownCalendar extends SavedData {
             this.setDirty();
         }
         return abs - this.epochDay;
+    }
+
+    // ------------------------------------------------------------
+    //  冻结模式的睡觉跳晨（v0.10：doDaylightCycle=false 时原版跳夜被
+    //  gamerule 门槛挡住——这里补上，根治"停表数据包"的睡眠缺陷）
+    // ------------------------------------------------------------
+
+    @SubscribeEvent
+    public static void onLevelTick(LevelTickEvent.Pre event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) {
+            return; // 只关心服务端关卡
+        }
+        if (level.getGameRules().getBoolean(GameRules.RULE_DAYLIGHT)) {
+            return; // 正常流速：跳夜由原版原生处理（含唤醒与止雨）
+        }
+        // 冻结模式：全员入睡 → 跳到次日清晨 + 唤醒（模仿原版 wakeUpAllPlayers）
+        var players = level.players();
+        if (players.isEmpty() || !players.stream().allMatch(p -> p.isSleeping())) {
+            return;
+        }
+        long day = level.getDayTime();
+        long toMorning = 24000L - Math.floorMod(day, 24000L);
+        if (toMorning > 0) {
+            level.setDayTime(day + toMorning);
+        }
+        for (var p : players) {
+            if (p instanceof net.minecraft.server.level.ServerPlayer sp) {
+                sp.stopSleepInBed(false, false); // 原版 wakeUpAllPlayers 同款
+            }
+        }
+    }
+
+    /** 当前昼夜流速倍率（gameTime 口径的原生字段；未设置 = 1.0）。 */
+    public static double speedOf(ServerLevel level) {
+        float perTick = level.getDayTimePerTick();
+        return perTick < 0 ? 1.0 : perTick;
+    }
+
+    /**
+     * 流速上限 1000 倍 = 一天 1.2 现实秒（延时摄影级）。
+     * ⚠ 不能设为"类型最大值"：perTick 是 float（最大 ~3.4e38）比 dayTime
+     * 的 long（~9.2e18）还大——超限后一 tick 就让世界时间溢出变负，
+     * 历法/睡眠账本/记忆时间戳全部崩坏。1000 倍已覆盖全部合理用法，
+     * 纯跳时间请用 /time add（可精确指定落点）。
+     */
+    public static final double MAX_SPEED = 1000.0;
+
+    /**
+     * 设置昼夜流速（原生可变昼夜：ServerLevel.setDayTimePerTick——
+     * 自动落档、自动强制时间同步；客户端经 TimeSpeedSyncPayload 镜像）。
+     * 0 = 冻结（gamerule doDaylightCycle=false；睡觉跳晨仍可用）。
+     */
+    public static void setSpeed(ServerLevel level, double value) {
+        double v = Math.max(0.0, Math.min(MAX_SPEED, value));
+        GameRules rules = level.getGameRules();
+        if (v == 0.0) {
+            rules.getRule(GameRules.RULE_DAYLIGHT).set(false, level.getServer());
+        } else {
+            rules.getRule(GameRules.RULE_DAYLIGHT).set(true, level.getServer());
+            level.setDayTimePerTick((float) v);
+        }
+        syncSpeed(level);
+    }
+
+    /** 把当前流速镜像到客户端（客户端 ClientLevel 据此平滑插值太阳动画）。 */
+    public static void syncSpeed(ServerLevel level) {
+        ModNetworking.sendTimeSpeedSync(level, (float) speedOf(level));
+    }
+
+    /** 玩家登录补发流速镜像。 */
+    @SubscribeEvent
+    public static void onPlayerLoggedIn(net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedInEvent event) {
+        if (event.getEntity() instanceof net.minecraft.server.level.ServerPlayer player) {
+            syncSpeed(player.serverLevel());
+        }
     }
 
     // ------------------------------------------------------------

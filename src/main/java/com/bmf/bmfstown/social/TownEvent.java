@@ -42,4 +42,8 @@ public final class TownEvent {
     public static TownEvent sleepless(Resident subject) {
         return new TownEvent(TownEventType.SLEEPLESS, subject, ItemStack.EMPTY, null);
     }
+
+    public static TownEvent jobHint(Resident subject, ItemStack item) {
+        return new TownEvent(TownEventType.JOB_HINT, subject, item, null);
+    }
 }

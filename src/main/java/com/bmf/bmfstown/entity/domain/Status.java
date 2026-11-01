@@ -785,6 +785,8 @@ public final class Status {
         senseJukebox(resident, level);
         senseHostiles(resident, level);
         senseWeather(resident, level);
+        // 职业线索（v0.10）：看见玩家携带特定物品 → 线索台词 → 解锁职业
+        com.bmf.bmfstown.unlock.JobHints.sense(resident, level);
     }
 
     /** 喜欢的动物在 8 格内出没 → 正面（每天 1 次）。 */

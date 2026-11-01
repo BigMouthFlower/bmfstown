@@ -451,5 +451,19 @@
   "dialog.bmfstown.sleepless": "So tired... barely slept last night...",
   "dialog.bmfstown.sleepless_memory": "Sleepless again... those restless nights are carved in memory.",
   "mood.bmfstown.thought.memory_starving": "He will never forget the taste of hunger.",
-  "mood.bmfstown.thought.memory_sleepless": "He will never forget the feeling of exhaustion."
+  "mood.bmfstown.thought.memory_sleepless": "He will never forget the feeling of exhaustion.",
+  "msg.bmfstown.work.job_locked": "This profession hasn't been unlocked yet.",
+  "msg.bmfstown.timespeed.set": "Day/night speed set to %sx.",
+  "msg.bmfstown.unlock.announce.head": "Discovered ",
+  "msg.bmfstown.unlock.type.job": "Hidden Profession",
+  "msg.bmfstown.unlock.type.trait": "Hidden Trait",
+  "msg.bmfstown.unlock.type.personality": "Hidden Personality",
+  "msg.bmfstown.unlock.type.perk": "Hidden Perk",
+  "msg.bmfstown.unlock.type.race": "Hidden Race",
+  "msg.bmfstown.unlock.type.secret": "Hidden Secret",
+  "msg.bmfstown.unlock.type.system": "Hidden System",
+  "msg.bmfstown.unlock.type.ui": "Hidden UI",
+  "unlock.bmfstown.job.worker.name": "Worker",
+  "unlock.bmfstown.job.bookkeeper.name": "Bookkeeper",
+  "dialog.bmfstown.jobhint.worker": "%s, huh... you dabble in redstone? If fiddling with all these fiddly redstone components is wearing you down, I could craft them for you."
 }

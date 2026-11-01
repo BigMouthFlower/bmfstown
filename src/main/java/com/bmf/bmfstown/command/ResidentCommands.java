@@ -3,6 +3,8 @@ package com.bmf.bmfstown.command;
 import com.bmf.bmfstown.entity.Resident;
 import com.bmf.bmfstown.entity.domain.Status;
 import com.mojang.brigadier.CommandDispatcher;
+import com.bmf.bmfstown.town.Town;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -94,6 +96,51 @@ public final class ResidentCommands {
         // 历法调试命令：报当前镇民历日期（年/月/日/月相）。
         root.then(Commands.literal("date")
                 .executes(ResidentCommands::showDate));
+
+        // ---- /bmfstown timespeed <倍率> ----
+        // 昼夜流速：0=冻结，1=原版，>1 加速，<1 减速——睡觉跳夜任何倍率下都可用。
+        root.then(Commands.literal("timespeed")
+                .then(Commands.argument("multiplier",
+                                DoubleArgumentType.doubleArg(0.0,
+                                        com.bmf.bmfstown.calendar.TownCalendar.MAX_SPEED))
+                        .executes(ctx -> {
+                            net.minecraft.server.level.ServerLevel level =
+                                    ctx.getSource().getLevel();
+                            double v = DoubleArgumentType.getDouble(ctx, "multiplier");
+                            com.bmf.bmfstown.calendar.TownCalendar.setSpeed(level, v);
+                            double shown = com.bmf.bmfstown.calendar.TownCalendar.speedOf(level);
+                            ctx.getSource().sendSuccess(() -> Component.translatable(
+                                    "msg.bmfstown.timespeed.set",
+                                    String.format(java.util.Locale.ROOT, "%.2f", shown)), false);
+                            return 1;
+                        })));
+
+        // ---- /bmfstown unlock|lock|unlocks：解锁系统调试 ----
+        // 访问空间 = 城镇（用户定稿）。<城镇> 可省略 → 按玩家站立位置解析；
+        // 显式给出 → 接受城镇名（忽略大小写，须唯一）或 UUID。
+        root.then(Commands.literal("unlock")
+                .then(Commands.argument("id", StringArgumentType.string())
+                        .executes(ctx -> doUnlock(ctx.getSource(), null,
+                                StringArgumentType.getString(ctx, "id"))))
+                .then(Commands.argument("城镇", StringArgumentType.string())
+                        .then(Commands.argument("id", StringArgumentType.string())
+                                .executes(ctx -> doUnlock(ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "城镇"),
+                                        StringArgumentType.getString(ctx, "id"))))));
+        root.then(Commands.literal("lock")
+                .then(Commands.argument("id", StringArgumentType.string())
+                        .executes(ctx -> doLock(ctx.getSource(), null,
+                                StringArgumentType.getString(ctx, "id"))))
+                .then(Commands.argument("城镇", StringArgumentType.string())
+                        .then(Commands.argument("id", StringArgumentType.string())
+                                .executes(ctx -> doLock(ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "城镇"),
+                                        StringArgumentType.getString(ctx, "id"))))));
+        root.then(Commands.literal("unlocks")
+                .executes(ctx -> doUnlocks(ctx.getSource(), null))
+                .then(Commands.argument("城镇", StringArgumentType.string())
+                        .executes(ctx -> doUnlocks(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "城镇")))));
 
         // ---- /bmfstown snowfall <秒> [半径] ----
         // 魔法降雪调试命令：以玩家为中心限时局部下雪（任何群系）。
@@ -270,6 +317,105 @@ public final class ResidentCommands {
                 "msg.bmfstown.say.done", said.getName().getString(), text), false);
         return 1;
     }
+
+
+    /**
+     * 城镇参数解析：显式给出 → 城镇名（忽略大小写，须唯一）或 UUID；
+     * 传 null → 按执行者站立位置解析（站在哪个镇就是哪个镇）。
+     * 失败时已向执行者发送原因，返回 null。
+     */
+    private static com.bmf.bmfstown.town.Town resolveTown(
+            net.minecraft.commands.CommandSourceStack source,
+            @javax.annotation.Nullable String townText) {
+        net.minecraft.server.level.ServerLevel level = source.getLevel();
+        var data = com.bmf.bmfstown.town.TownSaveData.get(level);
+        if (townText == null) {
+            net.minecraft.server.level.ServerPlayer player;
+            try {
+                player = source.getPlayerOrException();
+            } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+                source.sendFailure(Component.literal("该命令需要玩家执行（或显式指定 <城镇>）"));
+                return null;
+            }
+            var pos = player.blockPosition();
+            var dimension = level.dimension().location().toString();
+            Town at = data.findOverlapping(dimension, pos, pos);
+            if (at == null) {
+                source.sendFailure(Component.literal(
+                        "你当前不在任何城镇范围内，请站进城镇或显式指定 <城镇>"));
+            }
+            return at;
+        }
+        Town byId = data.findTown(townText); // UUID 优先
+        if (byId != null) {
+            return byId;
+        }
+        var matches = data.allTowns().stream()
+                .filter(t -> t.name().equalsIgnoreCase(townText)).toList();
+        if (matches.size() == 1) {
+            return matches.get(0);
+        }
+        if (matches.isEmpty()) {
+            source.sendFailure(Component.literal("找不到城镇: " + townText));
+        } else {
+            source.sendFailure(Component.literal(
+                    "存在多个同名城镇（" + matches.size() + " 个），请改用 UUID"));
+        }
+        return null;
+    }
+
+    /** 解锁（调试）：反馈 = 聊天公告本身；重复解锁给轻提示。 */
+    private static int doUnlock(net.minecraft.commands.CommandSourceStack source,
+            @javax.annotation.Nullable String townText, String id) {
+        Town town = resolveTown(source, townText);
+        if (town == null) {
+            return 0;
+        }
+        net.minecraft.server.level.ServerLevel level = source.getLevel();
+        if (com.bmf.bmfstown.unlock.UnlockState.get(level)
+                .unlockIfNew(level, town.id(), id)) {
+            return 1;
+        }
+        source.sendFailure(Component.literal(
+                "「" + town.name() + "」已解锁过: " + id));
+        return 0;
+    }
+
+    /** 重新锁定（调试）：静默操作，仅命令回显。 */
+    private static int doLock(net.minecraft.commands.CommandSourceStack source,
+            @javax.annotation.Nullable String townText, String id) {
+        Town town = resolveTown(source, townText);
+        if (town == null) {
+            return 0;
+        }
+        net.minecraft.server.level.ServerLevel level = source.getLevel();
+        boolean removed = com.bmf.bmfstown.unlock.UnlockState.get(level)
+                .lock(level, town.id(), id);
+        if (removed) {
+            source.sendSuccess(() -> Component.literal(
+                    "「" + town.name() + "」已重新锁定: " + id), false);
+        } else {
+            source.sendFailure(Component.literal(
+                    "「" + town.name() + "」本就未解锁: " + id));
+        }
+        return removed ? 1 : 0;
+    }
+
+    /** 列出城镇已解锁的 id（调试）。 */
+    private static int doUnlocks(net.minecraft.commands.CommandSourceStack source,
+            @javax.annotation.Nullable String townText) {
+        Town town = resolveTown(source, townText);
+        if (town == null) {
+            return 0;
+        }
+        var ids = com.bmf.bmfstown.unlock.UnlockState.get(source.getLevel())
+                .allIds(town.id());
+        source.sendSuccess(() -> Component.literal(
+                "「" + town.name() + "」已解锁 " + ids.size() + " 项: "
+                        + String.join(", ", ids.stream().sorted().toList())), false);
+        return ids.size();
+    }
+
 
     /** 历法调试：报当前镇民历日期（年/月/日/月相）。 */
     private static int showDate(CommandContext<CommandSourceStack> ctx) {
