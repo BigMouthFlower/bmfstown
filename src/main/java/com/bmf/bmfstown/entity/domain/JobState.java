@@ -100,6 +100,27 @@ public final class JobState {
         this.data.putLong(KEY_OUTPUT_CHEST, output);
     }
 
+    // ---- 学者图书馆认领（v0.11：自动认领，0 = 未认领）----
+
+    public static final String KEY_LIBRARY_LECTERN = "LibraryLecternPos";
+    public static final String KEY_LIBRARY_INPUT = "LibraryInputPos";
+
+    public long libraryLecternPos() {
+        return this.data.getLong(KEY_LIBRARY_LECTERN);
+    }
+
+    public long libraryInputPos() {
+        return this.data.getLong(KEY_LIBRARY_INPUT);
+    }
+
+    public void putLibraryLectern(BlockPos pos) {
+        this.data.putLong(KEY_LIBRARY_LECTERN, pos == null ? 0L : pos.asLong());
+    }
+
+    public void putLibraryInput(BlockPos pos) {
+        this.data.putLong(KEY_LIBRARY_INPUT, pos == null ? 0L : pos.asLong());
+    }
+
     /** 设置当前订单（产物注册名；服务端已复核白名单与线别）。 */
     public void setOrderItem(String product) {
         this.data.putString(KEY_ORDER_ITEM, product == null ? "" : product);

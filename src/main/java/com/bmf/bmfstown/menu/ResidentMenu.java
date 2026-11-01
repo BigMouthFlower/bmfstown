@@ -171,6 +171,9 @@ public class ResidentMenu extends AbstractContainerMenu {
     /** 页编号：想法页（心情想法日志，整页深色列表，v0.7.1 从喜好页拆出）。 */
     public static final int PAGE_THOUGHTS = 4;
 
+    /** 知识页（v0.11 学者）：书槽/已学列表/研读进度。 */
+    public static final int PAGE_KNOWLEDGE = 5;
+
     /**
      * 客户端当前页（0=资料页）。
      *
@@ -238,6 +241,31 @@ public class ResidentMenu extends AbstractContainerMenu {
      * 下标天然一致（与城镇分配同一套约定）。
      */
     public static final int BTN_PROFESSION_BASE = 700;
+
+    /** 知识页：装备已学书（下标偏移）。 */
+    public static final int BTN_KNOWLEDGE_BASE = 800;
+
+    /**
+     * 工作页：取走学者写作中的书稿（WIP 书从镇民转移到玩家背包，
+     * 组件原样保留——换人/存放即继承进度，v0.11 用户需求）。
+     */
+    public static final int BTN_TAKE_WIP = 900;
+
+    /**
+     * 学者书稿槽坐标（GUI 相对）。真实槽位（不是画的图标）——光标拿起/
+     * 放回/Shift 快捷搬运走原版全套语义。坐标是工作页布局的一部分：
+     * 按钮带顶 63 + (14-18)/2 = 61，Screen 的渲染直接引用这里的常量。
+     */
+    public static final int WIP_SLOT_X = (GUI_WIDTH - 18) / 2;
+    public static final int WIP_SLOT_Y = 61;
+
+    /** 书稿槽在 {@code slots} 里的菜单下标（构造时最后一个 add：装备6+背包27+玩家36 之后）。 */
+    public static final int WIP_SLOT_INDEX = PLAYER_INV_START + 36;
+
+    /** 判别一个槽位是不是学者书稿槽（跨包给 Screen 豁免渲染/点击规则用）。 */
+    public static boolean isWipSlot(Slot slot) {
+        return slot instanceof WipSlot;
+    }
 
     /**
      * 客户端点了按钮，服务端在这里处理。
@@ -314,6 +342,28 @@ public class ResidentMenu extends AbstractContainerMenu {
             }
             // 职业合法：客户端已经在本地进入"选取岗哨位置"状态，
             // 服务端等 WorkGuardPostPayload 确认包再落账，这里无事可做。
+            return true;
+        }
+
+        // ---- 工作页：取走学者书稿（v0.11）----
+        // 必须在 BTN_PROFESSION_BASE 兜底分支之前判（900 >= 700 会被当职业下标）
+        if (id == BTN_TAKE_WIP) {
+            ItemStack wip = this.resident.getWritingBook();
+            if (!wip.isEmpty()) {
+                this.resident.setWritingBook(ItemStack.EMPTY);
+                if (!player.getInventory().add(wip)) {
+                    player.drop(wip, false); // 背包满：掉脚底下，绝不吞书
+                }
+                this.resident.syncClient();
+            }
+            return true;
+        }
+
+        // ---- 知识页：装备已学书（v0.11）----
+        if (id >= BTN_KNOWLEDGE_BASE && id < BTN_KNOWLEDGE_BASE + 100) {
+            int index = id - BTN_KNOWLEDGE_BASE;
+            this.resident.getKnowledge().equipByIndex(index);
+            this.resident.syncClient();
             return true;
         }
 
@@ -600,6 +650,14 @@ public class ResidentMenu extends AbstractContainerMenu {
                     PANEL_X + col * SLOT_SIZE, HOTBAR_Y));
         }
 
+        // ---- 学者书稿槽：桥接 resident.writingBook（v0.11 用户需求——
+        //      半成品书要能像装备栏一样拿起/放回/Shift 搬运）。
+        //      真实槽位 = vanilla 同步/点击/tooltip 全套白送；
+        //      WipSlot 只在"工作页 + 学者"激活，其他页/职业隐形且点不到。
+        //      必须最后一个 add——WIP_SLOT_INDEX 依赖它排在这批槽之后 ----
+        this.addSlot(new WipSlot(
+                new WipBridgeContainer(this.resident), 0, WIP_SLOT_X, WIP_SLOT_Y));
+
         // ---- 登记数据槽 ----
         // 服务端把"实时读实体"的那份登记进来；客户端把哑容器登记进来。
         // 两边 getCount() 一致（都是 DATA_COUNT），索引才不会错位。
@@ -719,15 +777,19 @@ public class ResidentMenu extends AbstractContainerMenu {
 
         boolean inResidentArea = index < PLAYER_INV_START;
 
-        if (inResidentArea) {
-            // 镇民区域 → 玩家背包（从玩家背包第一格开始找位置）
+        if (inResidentArea || index == WIP_SLOT_INDEX) {
+            // 镇民区域 / 书稿槽 → 玩家背包（从玩家背包第一格开始找位置）
             if (!this.moveItemStackTo(original, PLAYER_INV_START, this.slots.size(), true)) {
                 return ItemStack.EMPTY;
             }
         } else {
-            // 玩家背包 → 先试装备槽（如果是能穿的），再试镇民背包
+            // 玩家背包 → 书稿（WIP）优先还回书稿槽（空槽才收——用户定稿），
+            // 然后装备槽，最后镇民背包
             boolean moved = false;
-            if (this.isEquipment(original)) {
+            if (original.is(com.bmf.bmfstown.ModItems.WRITING_BOOK.get())) {
+                moved = this.moveItemStackTo(original, WIP_SLOT_INDEX, WIP_SLOT_INDEX + 1, false);
+            }
+            if (!moved && this.isEquipment(original)) {
                 moved = this.moveItemStackTo(original, EQUIP_START, EQUIP_START + EQUIP_ORDER.length, false);
             }
             if (!moved) {
@@ -788,11 +850,13 @@ public class ResidentMenu extends AbstractContainerMenu {
     }
 
     /**
-     * 只在资料页可用的玩家槽位。
+     * 资料页 + 工作页可用的玩家槽位。
      *
-     * <p>归属/工作页把面板下半段收掉腾给 perk 等内容——槽位必须
-     * {@code isActive() == false}，vanilla 在渲染、悬停、tooltip、点击
-     * 分发四条路径上都会检查它，"只不画"防不住隐形点击（见切页注释）。
+     * <p>工作页显示玩家背包（拿取学者书稿等用途，v0.11），槽位坐标与
+     * 资料页同一套（PLAYER_INV_Y/HOTBAR_Y 固定）；其余页把面板下半段
+     * 收掉，槽位必须 {@code isActive() == false}，vanilla 在渲染、悬停、
+     * tooltip、点击分发四条路径上都会检查它，"只不画"防不住隐形点击
+     * （见切页注释）。
      */
     private static class PlayerInvSlot extends Slot {
         PlayerInvSlot(Container container, int index, int x, int y) {
@@ -801,7 +865,132 @@ public class ResidentMenu extends AbstractContainerMenu {
 
         @Override
         public boolean isActive() {
-            return CLIENT_PAGE == PAGE_INFO;
+            return CLIENT_PAGE == PAGE_INFO || CLIENT_PAGE == PAGE_WORK;
+        }
+    }
+
+    /**
+     * 书稿槽的桥接容器：1 格，读写直通 {@link Resident#getWritingBook()}。
+     * 镇民的 WIP 书本来是独立字段（不在任何容器里），这个桥让它以
+     * 原版 Container 的身份参与菜单同步/点击——写作进度逐 tick 变化时
+     * broadcastChanges 自动重推，面板关了就没有同步开销。
+     */
+    private static class WipBridgeContainer implements Container {
+        @Nullable
+        private final Resident resident;
+
+        WipBridgeContainer(@Nullable Resident resident) {
+            this.resident = resident;
+        }
+
+        /** resident 未就绪（客户端"同步中"）按空槽处理，绝不 NPE。 */
+        private ItemStack wip() {
+            return this.resident == null ? ItemStack.EMPTY : this.resident.getWritingBook();
+        }
+
+        private void store(ItemStack stack) {
+            if (this.resident != null) {
+                this.resident.setWritingBook(stack);
+                this.resident.syncClient();
+            }
+        }
+
+        @Override
+        public int getContainerSize() {
+            return 1;
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return this.wip().isEmpty();
+        }
+
+        @Override
+        public ItemStack getItem(int slot) {
+            return this.wip();
+        }
+
+        @Override
+        public ItemStack removeItem(int slot, int amount) {
+            ItemStack wip = this.wip();
+            if (wip.isEmpty()) {
+                return ItemStack.EMPTY;
+            }
+            ItemStack take = wip.split(Math.min(amount, wip.getCount()));
+            if (wip.isEmpty()) {
+                this.store(ItemStack.EMPTY);
+            } else {
+                this.resident.syncClient();
+            }
+            return take;
+        }
+
+        @Override
+        public ItemStack removeItemNoUpdate(int slot) {
+            ItemStack wip = this.wip();
+            this.store(ItemStack.EMPTY);
+            return wip;
+        }
+
+        @Override
+        public void setItem(int slot, ItemStack stack) {
+            // 防御：原版交换路径个别分支不走 mayPlace——只收 WIP 书，
+            // 其余拒收（空=清空）。写进镇民字段的东西必须是写作中的书。
+            if (stack.isEmpty()) {
+                this.store(ItemStack.EMPTY);
+            } else if (stack.is(com.bmf.bmfstown.ModItems.WRITING_BOOK.get())) {
+                this.store(stack.copy());
+            }
+        }
+
+        @Override
+        public void setChanged() {
+            if (this.resident != null) {
+                this.resident.syncClient();
+            }
+        }
+
+        @Override
+        public boolean stillValid(Player player) {
+            return true; // 菜单开着即有效（镇民距离校验由菜单 stillValid 统一做）
+        }
+
+        @Override
+        public void clearContent() {
+            this.store(ItemStack.EMPTY);
+        }
+
+        @Override
+        public int getMaxStackSize() {
+            return 1; // 一人一次只写一本
+        }
+
+        @Override
+        public boolean canPlaceItem(int slot, ItemStack stack) {
+            return stack.is(com.bmf.bmfstown.ModItems.WRITING_BOOK.get());
+        }
+    }
+
+    /**
+     * 学者书稿槽：只在工作页 + 学者时激活；只收写作中的书（mayPlace
+     * 挡住"把别的物品换进来"），空槽也只能放回 WIP 书。
+     * 非静态内部类——isActive 要读菜单实例里的 resident 判职业。
+     */
+    private class WipSlot extends Slot {
+        WipSlot(Container container, int index, int x, int y) {
+            super(container, index, x, y);
+        }
+
+        @Override
+        public boolean mayPlace(ItemStack stack) {
+            return stack.is(com.bmf.bmfstown.ModItems.WRITING_BOOK.get());
+        }
+
+        @Override
+        public boolean isActive() {
+            return CLIENT_PAGE == PAGE_WORK
+                    && ResidentMenu.this.resident != null
+                    && ResidentMenu.this.resident.getProfession() == ProfessionType.SCHOLAR;
         }
     }
 

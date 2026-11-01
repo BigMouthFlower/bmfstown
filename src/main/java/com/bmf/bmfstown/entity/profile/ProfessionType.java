@@ -46,7 +46,15 @@ public enum ProfessionType implements StringRepresentable {
      * 簿记员（v0.8.1）：统计城镇容器物资 + 带玩家去找指定物品。
      * 信息向职业：不生产、不战斗，劳动是" walk & look "。
      */
-    BOOKKEEPER("bookkeeper", "簿记员", 10);
+    BOOKKEEPER("bookkeeper", "簿记员", 10),
+
+    /**
+     * 学者（v0.11）：图书馆写书。工作内容 = 消耗书+墨囊 → 抽奖写书
+     * （perk 池不放回抽取 / 闲书词库拼装）；成果进雕纹书架供全镇研读。
+     * 50% 卡点机制见 {@code ScholarGoal}；工作方块（讲台）自动认领，
+     * 无需绑定三件套。
+     */
+    SCHOLAR("scholar", "学者", 10);
 
     private final String name;
     private final String zhName;
@@ -92,6 +100,7 @@ public enum ProfessionType implements StringRepresentable {
             case WARRIOR -> SkillType.COMBAT;
             case WORKER -> SkillType.CRAFTING;
             case BOOKKEEPER -> SkillType.BOOKKEEPING;
+            case SCHOLAR -> SkillType.SCHOLARSHIP;
             default -> null;
         };
     }

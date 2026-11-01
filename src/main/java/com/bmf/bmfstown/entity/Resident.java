@@ -12,6 +12,7 @@ import com.bmf.bmfstown.entity.profile.HungerSystem;
 import com.bmf.bmfstown.entity.profile.ModDataSerializers;
 import com.bmf.bmfstown.entity.profile.Perks;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
+import com.bmf.bmfstown.book.BookContent;
 import com.bmf.bmfstown.entity.profile.ResidentInventory;
 import com.bmf.bmfstown.menu.ResidentMenuProvider;
 import com.bmf.bmfstown.town.Town;
@@ -119,6 +120,10 @@ public class Resident extends PathfinderMob {
     private static final EntityDataAccessor<Boolean> DATA_WORKER_VISUAL =
             SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.BOOLEAN);
 
+    /** 学者"写作中"可视化标记（v0.11）：头顶书+笔气泡。 */
+    private static final EntityDataAccessor<Boolean> DATA_SCHOLAR_VISUAL =
+            SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.BOOLEAN);
+
     /**
      * 工人状态（v0.8.1）：绑定/订单/工作阶段打包进一个 int，
      * 走实体同步通道（菜单数据槽实测客户端收不到更新，别再踩）。
@@ -137,6 +142,17 @@ public class Resident extends PathfinderMob {
      * 现在这个阶段客户端拿不到背包内容，不影响任何逻辑（逻辑都在服务端跑）。
      */
     private final ResidentInventory inventory = new ResidentInventory();
+
+    /** 知识域（v0.11 学者）：装备/已学/研读进度，读书系统的镇民侧数据。 */
+    private final com.bmf.bmfstown.entity.domain.KnowledgeState knowledge =
+            new com.bmf.bmfstown.entity.domain.KnowledgeState();
+
+    /** 写作中的书（学者工作页专属格子；非学者恒空）。进度全在书组件里。 */
+    private ItemStack writingBook = ItemStack.EMPTY;
+
+    /** 跟随目标镇民（学者实践观察用；null = 没在跟随）。 */
+    @Nullable
+    private UUID followResidentId;
 
     /** 距离上次饥饿结算累积的 tick 数。 */
     private int hungerTickAccumulator = 0;
@@ -437,6 +453,13 @@ public class Resident extends PathfinderMob {
         this.goalSelector.addGoal(4, this.workerGoal);
         // ---- 簿记员带路（一次性差事，见 BookkeeperGoal） ----
         this.goalSelector.addGoal(4, new BookkeeperGoal(this));
+        // ---- 学者写书（v0.11：图书馆/讲台自动认领，见 ScholarGoal） ----
+        // 跟随观察（途径 B）与写作互斥（两 Goal 各自 canUse 判 followResidentId）
+        this.goalSelector.addGoal(4, new ScholarGoal(this));
+        this.goalSelector.addGoal(4, new ScholarFollowGoal(this));
+        // ---- 阅读（v0.11 已禁用，用户实测：全体镇民被书架吸引、睡觉也去——
+        // 启动条件与优先级需要重设计，读书行为产生机制定稿后再启用） ----
+        // this.goalSelector.addGoal(5, new ReadingGoal(this));
         // ---- 开门/关门（原版村民同款，用户定稿） ----
         // DoorInteractGoal 系不占 MOVE/LOOK 旗标（构造器无 setFlags，已核对字节码）：
         // 寻路撞上关闭的木门时它并行启动——开门、等走过、再关门。
@@ -459,6 +482,7 @@ public class Resident extends PathfinderMob {
         builder.define(DATA_ARCHIVE, ResidentSnapshot.defaults());
         builder.define(DATA_WORK, WorkMode.NONE.ordinal());
         builder.define(DATA_WORKER_VISUAL, false);
+        builder.define(DATA_SCHOLAR_VISUAL, false);
         builder.define(DATA_WORKER_STATUS, 0);
     }
 
@@ -471,8 +495,17 @@ public class Resident extends PathfinderMob {
         if (this.level() != null && this.level().isClientSide()) {
             return;
         }
+        // 写作进度百分比（学者工作页进度条；快照 equals 去重——没变化不发包）
+        int writingPercent = -1;
+        BookContent wipContent = this.writingBook.get(
+                com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+        if (wipContent != null && wipContent.target() > 0) {
+            writingPercent = (int) Math.min(100L,
+                    wipContent.progress() * 100L / wipContent.target());
+        }
         this.entityData.set(DATA_ARCHIVE, ResidentSnapshot.of(
-                this.identity, this.growth, this.prefs, this.status));
+                this.identity, this.growth, this.prefs, this.status, this.knowledge,
+                writingPercent));
     }
 
     /** 工人"工作中"可视化标记（气泡渲染读客户端同步值）。 */
@@ -482,6 +515,36 @@ public class Resident extends PathfinderMob {
 
     public boolean isWorkerVisual() {
         return this.entityData.get(DATA_WORKER_VISUAL);
+    }
+
+    public void setScholarVisual(boolean writing) {
+        this.entityData.set(DATA_SCHOLAR_VISUAL, writing);
+    }
+
+    public boolean isScholarVisual() {
+        return this.entityData.get(DATA_SCHOLAR_VISUAL);
+    }
+
+    public com.bmf.bmfstown.entity.domain.KnowledgeState getKnowledge() {
+        return this.knowledge;
+    }
+
+    /** 写作中的书（学者工作页专属格子）。 */
+    public ItemStack getWritingBook() {
+        return this.writingBook;
+    }
+
+    public void setWritingBook(ItemStack stack) {
+        this.writingBook = stack.copy();
+    }
+
+    @Nullable
+    public UUID getFollowResidentId() {
+        return this.followResidentId;
+    }
+
+    public void setFollowResidentId(@Nullable UUID target) {
+        this.followResidentId = target;
     }
 
     /** 服务端每 tick 刷新打包状态（set 同值不发包，无流量）。 */
@@ -720,6 +783,45 @@ public class Resident extends PathfinderMob {
     }
 
     /**
+     * 死亡掉落（v0.10.2，用户定稿）：镇民死亡掉落身上**所有东西**——
+     * 27 格背包 + 6 个装备槽。掉落后原槽位清空，防复制。
+     *
+     * <p>预留：写作中的书（学者工作页格子）与知识页装备的书，
+     * 对应系统实装后在此接入——它们同样是"身上"的东西。
+     */
+    @Override
+    public void die(net.minecraft.world.damagesource.DamageSource source) {
+        if (!this.level().isClientSide) {
+            this.dropEverythingOnDeath();
+        }
+        super.die(source);
+    }
+
+    private void dropEverythingOnDeath() {
+        // 写作中的书（学者工作页格子）与知识装备——系统实装后自动纳入
+        if (!this.writingBook.isEmpty()) {
+            this.spawnAtLocation(this.writingBook);
+            this.writingBook = ItemStack.EMPTY;
+        }
+        // ---- 背包 27 格 ----
+        for (int i = 0; i < this.inventory.getContainerSize(); i++) {
+            ItemStack stack = this.inventory.getItem(i);
+            if (!stack.isEmpty()) {
+                this.spawnAtLocation(stack);
+                this.inventory.setItem(i, ItemStack.EMPTY);
+            }
+        }
+        // ---- 装备 6 槽（主手/副手/盔甲四件）----
+        for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.values()) {
+            ItemStack stack = this.getItemBySlot(slot);
+            if (!stack.isEmpty()) {
+                this.spawnAtLocation(stack);
+                this.setItemSlot(slot, ItemStack.EMPTY);
+            }
+        }
+    }
+
+    /**
      * 把 27 格背包暴露给命令系统（{@code /item replace ... container.N}）。
      *
      * <h2>为什么要重写这里</h2>
@@ -952,9 +1054,17 @@ public class Resident extends PathfinderMob {
         domains.put("Trait", this.traitState.save());
         domains.put("Job", this.jobState.save());
         domains.put("Memory", this.memoryState.save());
+        domains.put("Knowledge", this.knowledge.save());
         tag.put("Domains", domains);
         // 背包（需要注册表来保存物品的数据组件）
         tag.put("ResidentInventory", this.inventory.save(this.registryAccess()));
+        // 写作中的书（含组件随物品存档）与跟随目标
+        if (!this.writingBook.isEmpty()) {
+            tag.put("WritingBook", this.writingBook.save(this.registryAccess()));
+        }
+        if (this.followResidentId != null) {
+            tag.putUUID("FollowResident", this.followResidentId);
+        }
     }
 
     @Override
@@ -972,6 +1082,7 @@ public class Resident extends PathfinderMob {
             this.traitState.loadFrom(domains.getCompound("Trait"));
             this.jobState.loadFrom(domains.getCompound("Job"), null, false);
             this.memoryState.loadFrom(domains.getCompound("Memory"));
+            this.knowledge.loadFrom(domains.getCompound("Knowledge"));
         } else {
             // 老存档（六域重构前）：从 ResidentProfile/MoodState 旧键迁移
             CompoundTag profileTag = tag.contains("ResidentProfile", Tag.TAG_COMPOUND)
@@ -998,6 +1109,13 @@ public class Resident extends PathfinderMob {
         if (tag.contains("ResidentInventory", Tag.TAG_COMPOUND)) {
             this.inventory.load(tag.getCompound("ResidentInventory"), this.registryAccess());
         }
+        // 写作中的书与跟随目标
+        if (tag.contains("WritingBook", Tag.TAG_COMPOUND)) {
+            ItemStack.parse(this.registryAccess(), tag.getCompound("WritingBook"))
+                    .ifPresent(this::setWritingBook);
+        }
+        this.followResidentId = tag.hasUUID("FollowResident")
+                ? tag.getUUID("FollowResident") : null;
 
         // 同步通道初值：读档后立刻推一份快照 + 工作模式位
         this.syncClient();
@@ -1072,6 +1190,8 @@ public class Resident extends PathfinderMob {
         if (this.hungerTickAccumulator >= ticksPerPoint) {
             this.hungerTickAccumulator = 0;
             HungerSystem.tickHunger(this, ticksPerPoint);
+        // 知识域：装备中的特殊书研读累计（装备期间每 tick +1）
+        this.knowledge.tick();
         }
 
         // ---- 2. 进食 ----

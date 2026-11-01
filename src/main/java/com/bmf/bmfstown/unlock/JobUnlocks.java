@@ -46,6 +46,7 @@ public final class JobUnlocks {
     public static boolean isUnlockedServer(ServerLevel level, @Nullable java.util.UUID townId,
             ProfessionType type) {
         return type == ProfessionType.WARRIOR || type == ProfessionType.NONE
+                || type == ProfessionType.SCHOLAR
                 || (townId != null && UnlockState.get(level).isUnlocked(townId, idOf(type)));
     }
 
@@ -53,9 +54,10 @@ public final class JobUnlocks {
             @Nullable ProfessionType current) {
         List<ProfessionType> out = new ArrayList<>();
         for (ProfessionType type : ProfessionType.values()) {
-            // 无业（NONE）与战士同为初始状态，永远可选（用户 2026-10-31 定稿）
+            // 无业（NONE）/战士/学者（v0.11 用户定稿：学者默认可选不设解锁）永远可选
             if (type == current || type == ProfessionType.WARRIOR
-                    || type == ProfessionType.NONE || unlocked.test(type)) {
+                    || type == ProfessionType.NONE || type == ProfessionType.SCHOLAR
+                    || unlocked.test(type)) {
                 out.add(type);
             }
         }

@@ -3,6 +3,8 @@ package com.bmf.bmfstown.command;
 import com.bmf.bmfstown.entity.Resident;
 import com.bmf.bmfstown.entity.domain.Status;
 import com.mojang.brigadier.CommandDispatcher;
+import com.bmf.bmfstown.book.BookContent;
+import net.minecraft.world.item.ItemStack;
 import com.bmf.bmfstown.town.Town;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -53,6 +55,17 @@ public final class ResidentCommands {
                                         ctx,
                                         EntityArgument.getEntities(ctx, "targets"),
                                         IntegerArgumentType.getInteger(ctx, "value"))))));
+
+        // ---- /bmfstown bookprogress <目标> <0-100> ----
+        // 学者调试：直接设置写作中书的研究进度（百分比）。走 gameTime 的
+        // 在岗累计用 /time 快进不了——测试全靠这个命令。
+        root.then(Commands.literal("bookprogress")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .then(Commands.argument("percent", IntegerArgumentType.integer(0, 100))
+                                .executes(ctx -> setBookProgress(
+                                        ctx,
+                                        EntityArgument.getEntities(ctx, "targets"),
+                                        IntegerArgumentType.getInteger(ctx, "percent"))))));
 
         // ---- /bmfstown mood <目标> <0-100> ----
         root.then(Commands.literal("mood")
@@ -200,6 +213,38 @@ public final class ResidentCommands {
         return changed;
     }
 
+
+    /**
+     * 设置学者写作进度（百分比）。只对身上有"写作中的书"的镇民生效——
+     * 进度直接写进书的组件 NBT（继承/掉落语义不变）。
+     */
+    private static int setBookProgress(CommandContext<CommandSourceStack> ctx,
+                                       Collection<? extends Entity> targets, int percent) {
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (!(entity instanceof Resident resident)) {
+                continue;
+            }
+            ItemStack wip = resident.getWritingBook();
+            BookContent content = wip.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+            if (content == null) {
+                continue; // 这位学者手里没有写作中的书
+            }
+            long progress = Math.round(content.target() * percent / 100.0);
+            wip.set(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get(),
+                    new BookContent(content.townId(), content.authors(), content.draft(),
+                            progress, content.target(), content.checkpointPassed()));
+            resident.setWritingBook(wip);
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    resident.getName().getString() + " 写作进度 → " + percent + "%"), false);
+            changed++;
+        }
+        if (changed == 0) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "目标身上没有写作中的书（先给学者配好图书馆和原料）"));
+        }
+        return changed;
+    }
 
     /** 设置饥饿值。 */
     private static int setHunger(CommandContext<CommandSourceStack> ctx,

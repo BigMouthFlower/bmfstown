@@ -63,6 +63,15 @@ public record TownZone(UUID id, String name, BlockPos min, BlockPos max,
         return TownWandItem.fmt(max);
     }
 
+    /**
+     * 遍历区域内的所有方块位置（含端点，y 优先内层——柱状扫描对缓存友好）。
+     * 学者找讲台/雕纹书架用；区域是玩家手画的功能区，通常不大，
+     * 全量扫描一次的成本可接受（结果由调用方缓存）。
+     */
+    public static Iterable<BlockPos> iterate(TownZone zone) {
+        return BlockPos.betweenClosed(zone.min(), zone.max());
+    }
+
     // ==========================================================
     //  NBT 存档
     // ==========================================================

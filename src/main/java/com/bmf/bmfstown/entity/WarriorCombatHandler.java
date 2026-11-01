@@ -28,5 +28,10 @@ public final class WarriorCombatHandler {
         if (event.getSource().getEntity() instanceof Resident resident && resident.isWarrior()) {
             resident.addSkillXp(SkillType.COMBAT, Config.WARRIOR_XP_PER_KILL.get());
         }
+        // 学者实践观察（v0.11）：跟随中的学者看到战士杀敌 → 书上计数 +1
+        if (event.getSource().getEntity() instanceof Resident resident && resident.isWarrior()
+                && resident.level() instanceof net.minecraft.server.level.ServerLevel level) {
+            PracticeObserver.observe(level, resident, com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR);
+        }
     }
 }

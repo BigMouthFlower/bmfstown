@@ -76,6 +76,25 @@ public final class ModItems {
     public static final DeferredItem<net.minecraft.world.item.BlockItem> WALL_CALENDAR =
             ITEMS.registerSimpleBlockItem(com.bmf.bmfstown.block.ModBlocks.WALL_CALENDAR);
 
+    /**
+     * 写作中的书（v0.11 学者）：开写即抽定内容，进度/实践计数/作者链全在
+     * 组件 NBT 里——死亡掉落、换人续写、销毁退池都随书走。
+     * 名字恒为"未完成的书"，玩家打不开（内容保密）。
+     */
+    public static final DeferredItem<com.bmf.bmfstown.book.WritingBookItem> WRITING_BOOK =
+            ITEMS.registerItem("writing_book",
+                    props -> new com.bmf.bmfstown.book.WritingBookItem(props),
+                    new Item.Properties().stacksTo(1));
+
+    /**
+     * 成书（v0.11 学者）：写完的书——特殊书（职业强化/隐藏解锁）与
+     * 词库闲书共用，内容由 BOOK_CONTENT 组件区分；名字按内容生成。
+     */
+    public static final DeferredItem<com.bmf.bmfstown.book.FinishedBookItem> FINISHED_BOOK =
+            ITEMS.registerItem("finished_book",
+                    props -> new com.bmf.bmfstown.book.FinishedBookItem(props),
+                    new Item.Properties().stacksTo(1));
+
     private ModItems() {
     }
 

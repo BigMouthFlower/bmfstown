@@ -85,6 +85,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 页编号：喜好页（偏好一览 + 想法日志）。 */
     private static final int PAGE_HOBBY = ResidentMenu.PAGE_HOBBY;
     private static final int PAGE_THOUGHTS = ResidentMenu.PAGE_THOUGHTS;
+    private static final int PAGE_KNOWLEDGE = ResidentMenu.PAGE_KNOWLEDGE;
 
     /** 当前页。切页是纯客户端状态，不进网络。 */
     private int page = PAGE_INFO;
@@ -243,14 +244,16 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     @Override
     protected void init() {
         // ---- 按页决定面板高度（必须在 super.init() 之前：leftPos/topPos 由它算） ----
-        // 归属/工作页不再有玩家背包，下半段收掉——归属页只留列表，
-        // 工作页留出 perk 节点区（按"三节点全展开"的最大高度取值，展开/收起不跳动）。
+        // 按页决定面板高度（必须在 super.init() 之前：leftPos/topPos 由它算）。
+        // 归属页收掉下半段只留列表；工作页与资料页同高——底部显示玩家
+        // 背包（拿取学者书稿等，v0.11），perk 区改固定高滚动菜单不与背包抢地盘。
         this.imageWidth = ResidentMenu.GUI_WIDTH;
         this.imageHeight = switch (this.page) {
             case PAGE_TOWN -> TOWN_GUI_HEIGHT;
             case PAGE_WORK -> WORK_GUI_HEIGHT;
             case PAGE_HOBBY -> HOBBY_GUI_HEIGHT;
             case PAGE_THOUGHTS -> THOUGHTS_GUI_HEIGHT;
+            case PAGE_KNOWLEDGE -> KNOWLEDGE_GUI_HEIGHT;
             default -> ResidentMenu.GUI_HEIGHT;
         };
         super.init();
@@ -280,15 +283,17 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     // THOUGHTS_VISIBLE 必须声明在它前面——静态字段初始化器引用"后面才声明"的
     // 字段是非法前向引用，编译直接失败（v0.8 交付后本地编译踩坑，同 MoodState.TONE_*）。
     private static final int THOUGHTS_GUI_HEIGHT = ResidentMenu.PANEL_Y + THOUGHTS_VISIBLE * ROW_H + 6;
+    private static final int KNOWLEDGE_GUI_HEIGHT = ResidentMenu.PANEL_Y + 9 * ROW_H + 6;
 
     /** 想法页当前滚动位置（0 = 最新的在最上面）。 */
     private int thoughtScroll = 0;
 
     /**
-     * 工作页面板高：工作控件 + 经验条 + 效率行 + perk 节点区。
-     * perk 区按"3 节点 + 1 个展开的分支组"的最大高度预留，展开/收起时面板不跳动。
+     * 工作页面板高：与资料页同高（玩家背包/快捷栏都在固定位置显示）。
+     * perk 节点区改固定高滚动菜单（{@link #PERK_VISIBLE_ROWS} 行可见，
+     * 分支再多也只滚动不撑高），塞在效率行与玩家背包之间的空档里。
      */
-    private static final int WORK_GUI_HEIGHT = ResidentMenu.STATS_Y + 32 + 7 * ROW_H + 12;
+    private static final int WORK_GUI_HEIGHT = ResidentMenu.GUI_HEIGHT;
 
     private void switchPage(int newPage) {
         this.page = newPage;
@@ -297,6 +302,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         this.thoughtScroll = 0; // 想法页回到最新一条
         this.thoughtScrollbarDragging = false; // 切页时结束拖拽，别把状态带到别的页
         this.perkExpandedNode = -1; // perk 节点全部收起
+        this.perkScroll = 0; // perk 滚动回树顶（换职业树也靠这里兜底）
+        this.perkScrollbarDragging = false; // 切页结束 perk 滚动条拖拽
 
         // 关键一步：把页码写回 menu 的静态状态，驱动 Slot.isActive()。
         //
@@ -346,18 +353,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             renderHobbyPageBg(gfx);
         } else if (this.page == PAGE_THOUGHTS) {
             renderThoughtsPageBg(gfx);
+        } else if (this.page == PAGE_KNOWLEDGE) {
+            renderKnowledgePageBg(gfx);
         } else {
             renderInfoPageBg(gfx);
         }
 
-        // ---- 下半部分：原版物品栏贴图（仅资料页——归属/工作页已收起背包） ----
+        // ---- 下半部分：原版物品栏贴图（资料页 + 工作页——其余页背包已收起） ----
         //
         // blit 语义：把贴图上 (u,v) 处的块画到 (x,y)。背包块从 (7,83) 裁起，
         // 块内第一个格子凹槽在贴图 x=8 —— 目标 x 取 PANEL_X-1=7，
         // 凹槽正好落在我们的格子上；y 直接取 PLAYER_INV_Y-1（块顶对格子顶，
         // 格子顶在块内 1px 处）。之前按"整张贴图平移"的老模型减了 83，
         // 整块背包被抬高到状态文字区——就是那次截图里"贴图跑到上面"的错位。
-        if (this.page == PAGE_INFO) {
+        if (this.page == PAGE_INFO || this.page == PAGE_WORK) {
             gfx.blit(INVENTORY_TEXTURE,
                     x + VANILLA_DEST_X, y + ResidentMenu.PLAYER_INV_Y - 1,
                     VANILLA_CELL_U, VANILLA_CELL_V,
@@ -537,8 +546,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (this.page == PAGE_TOWN && slot.y < ResidentMenu.PLAYER_INV_Y) {
             return;
         }
-        // 工作页同样用列表顶替了镇民格子，一并隐藏
-        if (this.page == PAGE_WORK && slot.y < ResidentMenu.PLAYER_INV_Y) {
+        // 工作页同样用列表顶替了镇民格子，一并隐藏——但书稿槽是工作页自己的
+        // 内容，必须放行（v0.11：真槽位，原版渲染物品）
+        if (this.page == PAGE_WORK && slot.y < ResidentMenu.PLAYER_INV_Y
+                && !ResidentMenu.isWipSlot(slot)) {
             return;
         }
         super.renderSlot(gfx, slot);
@@ -568,6 +579,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             renderHobbyPageText(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_THOUGHTS) {
             renderThoughtsPageText(gfx);
+        } else if (this.page == PAGE_KNOWLEDGE) {
+            renderKnowledgePageText(gfx, mouseX, mouseY);
         } else {
             renderInfoPageText(gfx, mouseX, mouseY);
         }
@@ -896,7 +909,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 真实信息在服务端）。非海象照常翻译。
             java.util.List<String> goo = com.bmf.bmfstown.client.ClientMoodState
                     .walrusLinesOf(resident.getUUID());
-            String line = goo != null && i < goo.size() ? goo.get(i) : I18n.get(t.key());
+            String line = goo != null && i < goo.size() ? goo.get(i)
+                    : renderThoughtLine(t);
             // 性格滤镜标记（乐观"+" / 悲观"−"）已按用户 2026-10-25 决定不再显示；
             // Thought.marker 字段保留（同步协议与存档兼容），将来要恢复只改这里。
             // 深底上用原版聊天的亮绿/亮红/灰，暗色调在 0xFF373737 上看不清；
@@ -955,14 +969,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         gfx.drawString(this.font, hint, 8, listBottom() + 3, 0x555555, false);
     }
 
-    /** 下半部分的固定标签。只在资料页画——归属/工作页背包区已收起。 */
+    /**
+     * 下半部分的固定标签。资料页画"物品栏"+"镇民袋"两个；工作页背包
+     * 也在（拿书稿用），只画"物品栏"——镇民袋那一块在工作页不存在。
+     */
     private void drawBottomLabels(GuiGraphics gfx, boolean infoPage) {
-        if (!infoPage) {
+        if (this.page != PAGE_INFO && this.page != PAGE_WORK) {
             return;
         }
         // 现在底板是原版同款浅灰，直接用原版的深灰字，视觉一致
         gfx.drawString(this.font, INVENTORY_LABEL, 8,
                 ResidentMenu.PLAYER_INV_Y - 9, 0x404040, false);
+        if (!infoPage) {
+            return;
+        }
         gfx.drawString(this.font, RESIDENT_BAG_LABEL, ResidentMenu.PANEL_X,
                 ResidentMenu.BAG_Y - 9, 0x8A5A00, false);
     }
@@ -1085,7 +1105,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return workListBottom() + 4;
     }
 
-    // ---- perk 节点区（工作页下半段，背包收起后腾出的空间） ----
+    // ---- perk 节点区（工作页效率行与玩家背包之间的固定高滚动菜单） ----
 
     /** 产物选择弹层的行数（每行 5 格）。 */
     private static int pickerRows(int count) {
@@ -1094,6 +1114,19 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
     /** 展开的 perk 节点下标（-1 = 全部收起）。选择结果走 PerkChoosePayload 落档。 */
     private int perkExpandedNode = -1;
+
+    /**
+     * perk 区当前滚动位置（逻辑行下标，0 = 树顶）。
+     * 分支展开/职业切换都要 clamp（内容变短后窗口别悬在空档上）。
+     */
+    private int perkScroll = 0;
+
+    /** perk 滚动条拖拽状态（想法页同款：记按点相对滑块顶的偏移）。 */
+    private boolean perkScrollbarDragging = false;
+    private int perkDragGrabOffset = 0;
+
+    /** perk 区可见行数（固定高——分支再多只滚动不撑高，给玩家背包让位）。 */
+    private static final int PERK_VISIBLE_ROWS = 3;
 
     /** 节点/分支定义表（{@link com.bmf.bmfstown.entity.profile.Perks}，下标对齐）。 */
     /** 当前职业的 perk 节点/分支 id（战士/工人各一棵树）。 */
@@ -1124,10 +1157,39 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return ResidentMenu.STATS_Y + 32;
     }
 
-    /** perk 区总行数（3 节点 + 展开的分支组）。 */
-    private int perkRowCount() {
-        return perkNodeIds().length + (this.perkExpandedNode >= 0
-                ? perkBranchIds()[this.perkExpandedNode].length : 0);
+    /**
+     * perk 树的"逻辑行"：节点行 + 展开节点下插的分支行，扁平化成一列。
+     * 渲染/点击/滚动条三方共用这一份展开顺序，行号永远对得上。
+     *
+     * @param node 节点下标
+     * @param branch 分支下标；-1 = 节点行本身
+     */
+    private record PerkRow(int node, int branch) {
+    }
+
+    /** 当前 perk 树的全部逻辑行（含展开分支）。 */
+    private java.util.List<PerkRow> perkLogicalRows() {
+        int tier = mainSkillTier();
+        java.util.List<PerkRow> rows = new java.util.ArrayList<>();
+        for (int n = 0; n < perkNodeIds().length; n++) {
+            rows.add(new PerkRow(n, -1));
+            if (n == this.perkExpandedNode && tier >= PERK_NODE_TIERS[n]) {
+                for (int b = 0; b < perkBranchIds()[n].length; b++) {
+                    rows.add(new PerkRow(n, b));
+                }
+            }
+        }
+        return rows;
+    }
+
+    /** perk 滚动上限（内容行数 - 可见行数，不够一屏为 0）。 */
+    private int perkMaxScroll() {
+        return Math.max(0, perkLogicalRows().size() - PERK_VISIBLE_ROWS);
+    }
+
+    /** 滚动位置收敛到合法区间（内容变短/切职业后调用）。 */
+    private void clampPerkScroll() {
+        this.perkScroll = Mth.clamp(this.perkScroll, 0, perkMaxScroll());
     }
 
     /** 某节点当前选中的分支序号；未选返回 -1。 */
@@ -1148,9 +1210,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return -1;
     }
 
-    /** perk 区底（GUI 相对）。 */
+    /** perk 区底（GUI 相对）——固定高，不随展开/收起变化。 */
     private int perkAreaBottom() {
-        return perkAreaTop() + perkRowCount() * ROW_H + 4;
+        return perkAreaTop() + PERK_VISIBLE_ROWS * ROW_H + 4;
     }
 
     /** 当前职业主技能的段位；无职业/无主技能返回 -1（perk 区全锁定）。 */
@@ -1208,7 +1270,17 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         // ---- 工作模式按钮（互斥：激活的那个亮起并描边）----
         // 只有当前职业有"工作方式"时才画（无业 = 什么都没有）。
         // 将来别的职业在这里按职业画各自的控件——这块区域不属于战士专属。
-        if (workControlsVisible()) {
+        if (current == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+            // 学者：上行书稿槽（真实槽位，物品由 vanilla 渲染）+ 下行进度条槽——无按钮
+            int bx = x + 5;
+            int bw = this.imageWidth - 10;
+            int slotY = y + ResidentMenu.WIP_SLOT_Y;
+            int slotX = x + ResidentMenu.WIP_SLOT_X;
+            gfx.fill(slotX - 1, slotY - 1, slotX + 19, slotY + 19, 0xFF8B8B8B);
+            gfx.fill(slotX, slotY, slotX + 18, slotY + 18, 0xFF373737);
+            int barY = y + workButtonsTop() + WORK_BTN_H + WORK_BTN_GAP;
+            gfx.fill(bx, barY, bx + bw, barY + WORK_BTN_H, 0xFF2E2E2E);
+        } else if (workControlsVisible()) {
             int workMode = currentWorkMode();
             int bx = x + 5;
             int bw = this.imageWidth - 10;
@@ -1218,38 +1290,52 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             drawWorkButton(gfx, bx, bw, guardY, workMode == 2, mouseX, mouseY);
         }
 
-        // ---- perk 节点区（占位）：深灰框，行背景与文字在文字层画 ----
+        // ---- perk 节点区（固定高滚动菜单）：深灰框，行背景与文字在文字层画 ----
         gfx.fill(x + 4, y + perkAreaTop(), x + this.imageWidth - 4, y + perkAreaBottom(), 0xFF373737);
+        var perkRows = perkLogicalRows();
         int perkTier = mainSkillTier();
-        int perkRow = 0;
-        for (int n = 0; n < PERK_NODE_TIERS.length; n++) {
-            int rowY = y + perkAreaTop() + perkRow * ROW_H;
-            boolean unlocked = perkTier >= PERK_NODE_TIERS[n];
-            boolean expandedHere = n == this.perkExpandedNode && unlocked;
+        for (int v = 0; v < PERK_VISIBLE_ROWS; v++) {
+            int i = this.perkScroll + v;
+            if (i >= perkRows.size()) {
+                break;
+            }
+            PerkRow row = perkRows.get(i);
+            boolean unlocked = perkTier >= PERK_NODE_TIERS[row.node()];
+            int rowY = y + perkAreaTop() + v * ROW_H;
             boolean hovered = mouseX >= x + 5 && mouseX < x + this.imageWidth - 5
                     && mouseY >= rowY && mouseY < rowY + ROW_H;
-            if (expandedHere) {
-                // 展开的节点行：深底 + 亮边（归属页选中行同款语言）
-                gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF141414);
-                gfx.renderOutline(x + 5, rowY, this.imageWidth - 10, ROW_H, 0xFFE0E0E0);
-                perkRow++;
-                for (int b = 0; b < perkBranchIds()[n].length; b++) {
-                    int branchY = y + perkAreaTop() + perkRow * ROW_H;
-                    boolean bHovered = mouseX >= x + 5 && mouseX < x + this.imageWidth - 5
-                            && mouseY >= branchY && mouseY < branchY + ROW_H;
-                    if (bHovered) {
-                        gfx.fill(x + 5, branchY, x + this.imageWidth - 5, branchY + ROW_H, 0xFF4C4C4C);
-                    }
-                    perkRow++;
-                }
-            } else {
-                // 收起的节点行：解锁的可悬停提亮，锁定的死灰
-                if (hovered && unlocked) {
+            if (row.branch() < 0) {
+                boolean expandedHere = row.node() == this.perkExpandedNode && unlocked;
+                if (expandedHere) {
+                    // 展开的节点行：深底 + 亮边（归属页选中行同款语言）
+                    gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF141414);
+                    gfx.renderOutline(x + 5, rowY, this.imageWidth - 10, ROW_H, 0xFFE0E0E0);
+                } else if (hovered && unlocked) {
+                    // 收起的节点行：解锁的可悬停提亮，锁定的死灰
                     gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF4C4C4C);
                 }
-                perkRow++;
+            } else if (hovered) {
+                // 分支行：悬停提亮
+                gfx.fill(x + 5, rowY, x + this.imageWidth - 5, rowY + ROW_H, 0xFF4C4C4C);
             }
         }
+        drawPerkScrollbar(gfx);
+    }
+
+    /** perk 滚动条：轨道常驻，内容不足一屏时只有轨道（想法页同款语言）。 */
+    private void drawPerkScrollbar(GuiGraphics gfx) {
+        int trackX = scrollbarX();
+        int trackY = this.topPos + perkAreaTop() + 1;
+        int trackH = perkAreaBottom() - perkAreaTop() - 2;
+        gfx.fill(trackX, trackY, trackX + SCROLLBAR_WIDTH, trackY + trackH, 0xFF1E1E1E);
+        int max = perkMaxScroll();
+        if (max <= 0) {
+            return;
+        }
+        int total = perkLogicalRows().size();
+        int thumbH = Math.max(8, trackH * PERK_VISIBLE_ROWS / total);
+        int thumbY = trackY + (trackH - thumbH) * this.perkScroll / max;
+        gfx.fill(trackX, thumbY, trackX + SCROLLBAR_WIDTH, thumbY + thumbH, 0xFFC6C6C6);
     }
 
     /**
@@ -1318,6 +1404,35 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         int bw = this.imageWidth - 10;
         int followY = workButtonsTop();
         int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
+        if (current == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+            // 学者：书稿槽物品与悬停 tooltip 由 vanilla（真槽位）渲染——
+            // 这里只在空槽时画提示 + 画进度绿条（不显数值，用户定稿）
+            int writing = resident.getArchive().writingPercent();
+            boolean hasWip = writing >= 0;
+            if (!hasWip) {
+                drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.scholar_nowriting"),
+                        5, bw, ResidentMenu.WIP_SLOT_Y + 5, 0xA0A0A0);
+            }
+            // 进度条：深槽 + 亮绿填充；槽内居中"研究进度 · N%"（白字带影，
+            // 压在填充上也读得清。百分比显示是用户 00:04 定稿——给百分比、
+            // 不给预计完成时间）
+            int barX = 5;
+            int barW = bw - 4;
+            int barY = guardY + (WORK_BTN_H - 6) / 2;
+            gfx.fill(barX, barY, barX + barW, barY + 6, 0xFF1E1E1E);
+            if (hasWip && writing > 0) {
+                int fillW = Math.max(1, (barW - 2) * writing / 100);
+                gfx.fill(barX + 1, barY + 1, barX + 1 + fillW, barY + 5, 0xFF7FE07F);
+            }
+            String researchLabel = hasWip
+                    ? I18n.get("gui.bmfstown.resident.work.scholar_label_percent", writing)
+                    : I18n.get("gui.bmfstown.resident.work.scholar_label");
+            gfx.drawString(this.font, researchLabel,
+                    barX + (barW - this.font.width(researchLabel)) / 2,
+                    barY - 2, 0xFFFFFF, true);
+            // 不提前 return——段位名+经验栏是各职业共用的尾段骨架，
+            // 学者同样要有（v0.11.1 修复：早期 return 把共用骨架截断了）
+        }
         if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR) {
             // 战士：跟随/站岗两枚按钮
             int workMode = currentWorkMode();
@@ -1367,7 +1482,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             if (phase >= 0) {
                 line += " · " + I18n.get("gui.bmfstown.resident.work.wphase." + phase);
             }
-            drawCenteredInPanel(gfx, line, 5, bw, perkAreaBottom() + 3, 0x9E9E9E);
+            // perk 区下方现在是玩家背包（v0.11），状态行改画在 perk 区上方空档
+            drawCenteredInPanel(gfx, line, 5, bw, perkAreaTop() - 10, 0x9E9E9E);
         }
 
         // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框）----
@@ -1586,46 +1702,51 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     }
 
     /**
-     * perk 节点区文字（占位阶段）。
+     * perk 节点区文字。
      *
-     * <p>行结构：3 个节点行，展开的节点下插分支行——与背景层、
-     * 点击层的行计数逻辑必须严格一致（都用同一套 row 递增）。
+     * <p>与背景层、点击层共用 {@link #perkLogicalRows()} 这一份展开顺序
+     * 加 {@link #perkScroll} 滚动窗口——三方行号永远对得上。
      */
     private void renderPerkText(GuiGraphics gfx) {
+        clampPerkScroll(); // 职业切换/分支收起后内容行数变了，窗口别悬在空档上
         int tier = mainSkillTier();
-        int row = 0;
-        for (int n = 0; n < perkNodeIds().length; n++) {
-            boolean unlocked = tier >= PERK_NODE_TIERS[n];
-            int textY = perkAreaTop() + row * ROW_H + 3;
-            row++;
-            int selected = unlocked ? perkSelectedBranch(n) : -1;
-            String status;
-            if (!unlocked) {
-                status = I18n.get("gui.bmfstown.resident.perk.locked", PERK_NODE_TIERS[n] + 1);
-            } else if (selected >= 0) {
-                status = I18n.get("gui.bmfstown.resident.perk.chosen",
-                        I18n.get(branchKeyPrefix() + "name." + n + "." + selected));
-            } else if (this.perkExpandedNode == n) {
-                status = "▾";
-            } else {
-                status = I18n.get("gui.bmfstown.resident.perk.ready");
+        var rows = perkLogicalRows();
+        for (int v = 0; v < PERK_VISIBLE_ROWS; v++) {
+            int i = this.perkScroll + v;
+            if (i >= rows.size()) {
+                break;
             }
-            int color = unlocked ? 0xFFFFFF : 0x808080;
-            gfx.drawString(this.font, "◆ " + I18n.get("gui.bmfstown.resident.perk.node." + n)
-                    + "  " + status, 8, textY, color, false);
-            if (this.perkExpandedNode == n && unlocked) {
-                for (int b = 0; b < perkBranchIds()[n].length; b++) {
-                    int branchY = perkAreaTop() + row * ROW_H + 3;
-                    row++;
-                    String name = I18n.get(branchKeyPrefix() + "name." + n + "." + b);
-                    // 描述文本带 %s 占位，数值从配置现读——改 toml 文案跟着变
-                    String desc = I18n.get(branchKeyPrefix() + "desc." + n + "." + b,
-                            perkDescArgs(n, b));
-                    String prefix = selected == b ? "✔ " : "   ";
-                    // 选中分支亮白，未选灰白；锁定描述不额外变色（父节点已置灰）
-                    gfx.drawString(this.font, prefix + name + " · " + desc,
-                            8, branchY, selected == b ? 0xFFFFFF : 0xC8C8C8, false);
+            PerkRow row = rows.get(i);
+            int n = row.node();
+            boolean unlocked = tier >= PERK_NODE_TIERS[n];
+            int textY = perkAreaTop() + v * ROW_H + 3;
+            if (row.branch() < 0) {
+                int selected = unlocked ? perkSelectedBranch(n) : -1;
+                String status;
+                if (!unlocked) {
+                    status = I18n.get("gui.bmfstown.resident.perk.locked", PERK_NODE_TIERS[n] + 1);
+                } else if (selected >= 0) {
+                    status = I18n.get("gui.bmfstown.resident.perk.chosen",
+                            I18n.get(branchKeyPrefix() + "name." + n + "." + selected));
+                } else if (this.perkExpandedNode == n) {
+                    status = "▾";
+                } else {
+                    status = I18n.get("gui.bmfstown.resident.perk.ready");
                 }
+                int color = unlocked ? 0xFFFFFF : 0x808080;
+                gfx.drawString(this.font, "◆ " + I18n.get("gui.bmfstown.resident.perk.node." + n)
+                        + "  " + status, 8, textY, color, false);
+            } else {
+                int b = row.branch();
+                String name = I18n.get(branchKeyPrefix() + "name." + n + "." + b);
+                // 描述文本带 %s 占位，数值从配置现读——改 toml 文案跟着变
+                String desc = I18n.get(branchKeyPrefix() + "desc." + n + "." + b,
+                        perkDescArgs(n, b));
+                int selected = perkSelectedBranch(n);
+                String prefix = selected == b ? "✔ " : "   ";
+                // 选中分支亮白，未选灰白；锁定描述不额外变色（父节点已置灰）
+                gfx.drawString(this.font, prefix + name + " · " + desc,
+                        8, textY, selected == b ? 0xFFFFFF : 0xC8C8C8, false);
             }
         }
     }
@@ -1798,14 +1919,16 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             "gui.bmfstown.resident.tab.town",
             "gui.bmfstown.resident.tab.work",
             "gui.bmfstown.resident.tab.hobby",
-            "gui.bmfstown.resident.tab.thoughts"};
+            "gui.bmfstown.resident.tab.thoughts",
+            "gui.bmfstown.resident.tab.knowledge"};
     /** 页签文字（每次绘制时从 lang 取，语言切换即时生效）。 */
     private static String[] tabNames() {
         return new String[]{I18n.get(TAB_KEYS[0]), I18n.get(TAB_KEYS[1]),
-                I18n.get(TAB_KEYS[2]), I18n.get(TAB_KEYS[3]), I18n.get(TAB_KEYS[4])};
+                I18n.get(TAB_KEYS[2]), I18n.get(TAB_KEYS[3]), I18n.get(TAB_KEYS[4]),
+                I18n.get(TAB_KEYS[5])};
     }
     /** 页签宽度（px），与 TAB_KEYS 一一对应。五个页签总宽不得超面板 176px。 */
-    private static final int[] TAB_WIDTHS = {34, 30, 30, 30, 30};
+    private static final int[] TAB_WIDTHS = {34, 30, 30, 30, 30, 30};
 
     /**
      * 画左上角的页签。
@@ -2032,6 +2155,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 }
                 // 不在按钮上：掉出本块，交给后面的 perk 区点击
             }
+            // ---- 学者的书稿交互已升级为真槽位（ResidentMenu.WipSlot）：
+            //      光标拿起/放回/Shift 搬运全走 vanilla，这里不再拦截 ----
             // ---- 战士：跟随 / 站岗 ----
             if (workControlsVisible() && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR
                     && mouseX >= listX && mouseX < listX + listW) {
@@ -2058,44 +2183,60 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 }
             }
 
-            // ---- perk 节点区点击（占位：展开/收起节点；分支选择等分支表定稿后接入） ----
+            // ---- perk 节点区点击（固定高滚动菜单：滚动条 + 节点/分支命中） ----
+            int perkTrackX = scrollbarX();
+            int perkTrackY = this.topPos + perkAreaTop() + 1;
+            int perkTrackH = perkAreaBottom() - perkAreaTop() - 2;
+            if (perkMaxScroll() > 0 && mouseX >= perkTrackX && mouseX < perkTrackX + SCROLLBAR_WIDTH
+                    && mouseY >= perkTrackY && mouseY < perkTrackY + perkTrackH) {
+                // 滚动条：按滑块记抓取偏移，按轨道直接跳过去接着拖（想法页同款）
+                int max = perkMaxScroll();
+                int total = perkLogicalRows().size();
+                int thumbH = Math.max(8, perkTrackH * PERK_VISIBLE_ROWS / total);
+                int thumbY = perkTrackY + (perkTrackH - thumbH) * this.perkScroll / max;
+                this.perkDragGrabOffset = Mth.clamp((int) mouseY - thumbY, 0, thumbH);
+                this.perkScrollbarDragging = true;
+                updatePerkScrollFromMouse((int) mouseY, perkTrackY, perkTrackH, thumbH, max);
+                return true;
+            }
             if (mouseX >= this.leftPos + 4 && mouseX < this.leftPos + this.imageWidth - 4
                     && mouseY >= this.topPos + perkAreaTop() && mouseY < this.topPos + perkAreaBottom()) {
                 int perkTier = mainSkillTier();
                 int relPerk = (int) (mouseY - (this.topPos + perkAreaTop()));
-                int perkRow = 0;
-                for (int n = 0; n < perkNodeIds().length; n++) {
-                    int nodeRow = perkRow;
-                    perkRow++;
-                    boolean expandedHere = n == this.perkExpandedNode && perkTier >= PERK_NODE_TIERS[n];
-                    if (expandedHere) {
+                int visible = relPerk / ROW_H;
+                var rows = perkLogicalRows();
+                int idx = this.perkScroll + visible;
+                if (idx < rows.size()) {
+                    PerkRow row = rows.get(idx);
+                    if (row.branch() < 0) {
+                        // 节点行：已解锁的展开/收起；展开时滚到该节点置顶，分支直接可见
+                        if (perkTier >= PERK_NODE_TIERS[row.node()]) {
+                            this.perkExpandedNode = this.perkExpandedNode == row.node() ? -1 : row.node();
+                            clampPerkScroll();
+                        }
+                    } else {
                         // 分支行：点中就发选档包（服务端复核段位后落档，免费改选）
-                        if (relPerk >= (nodeRow + 1) * ROW_H
-                                && relPerk < (nodeRow + 1 + perkBranchIds()[n].length) * ROW_H) {
-                            int b = (relPerk - (nodeRow + 1) * ROW_H) / ROW_H;
-                            Resident r = this.menu.getResident();
-                            if (r != null) {
-                                ModNetworking.sendToServer(new ModNetworking.PerkChoosePayload(
-                                        r.getId(), perkNodeIds()[n], perkBranchIds()[n][b]));
-                            }
-                            return true;
+                        Resident r = this.menu.getResident();
+                        if (r != null) {
+                            ModNetworking.sendToServer(new ModNetworking.PerkChoosePayload(
+                                    r.getId(), perkNodeIds()[row.node()],
+                                    perkBranchIds()[row.node()][row.branch()]));
                         }
-                        perkRow += perkBranchIds()[n].length;
-                    }
-                    if (relPerk >= nodeRow * ROW_H && relPerk < (nodeRow + 1) * ROW_H) {
-                        // 已解锁节点：展开/收起切换；锁定的吞掉点击给死反馈
-                        if (perkTier >= PERK_NODE_TIERS[n]) {
-                            this.perkExpandedNode = this.perkExpandedNode == n ? -1 : n;
-                        }
-                        return true;
                     }
                 }
                 return true;
             }
 
-            // 上板其余区域是死区（下面躺着被隐藏的格子）
+            // 上板其余区域是死区（下面躺着被隐藏的格子）——
+            // 例外：学者书稿槽是真槽位，点击必须放行给 vanilla 处理
+            // （拿起/放回/Shift 搬运都在 super.mouseClicked 里分发）
+            boolean inWipSlot = mouseX >= this.leftPos + ResidentMenu.WIP_SLOT_X
+                    && mouseX < this.leftPos + ResidentMenu.WIP_SLOT_X + 18
+                    && mouseY >= this.topPos + ResidentMenu.WIP_SLOT_Y
+                    && mouseY < this.topPos + ResidentMenu.WIP_SLOT_Y + 18;
             if (mouseX >= this.leftPos && mouseX < this.leftPos + this.imageWidth
-                    && mouseY >= this.topPos && mouseY < this.topPos + ResidentMenu.PLAYER_INV_Y - 4) {
+                    && mouseY >= this.topPos && mouseY < this.topPos + ResidentMenu.PLAYER_INV_Y - 4
+                    && !inWipSlot) {
                 return true;
             }
         }
@@ -2134,6 +2275,14 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
             // 上板之外（玩家背包、快捷栏）照常走原版逻辑
         }
+        // ---- 知识页：点已学书行 = 装备该书（服务端按排序下标对齐） ----
+        if (this.page == PAGE_KNOWLEDGE && button == 0) {
+            int[] row = knowledgeRowAt(mouseX, mouseY);
+            if (row != null) {
+                clickMenu(ResidentMenu.BTN_KNOWLEDGE_BASE + row[0]);
+                return true;
+            }
+        }
         // 喜好页滚动条：按下滑块或轨道即开始拖拽（点轨道任意处直接跳过去）
         if (this.page == PAGE_THOUGHTS && button == 0 && thoughtMaxScroll() > 0) {
             int trackX = scrollbarX();
@@ -2161,6 +2310,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         this.thoughtScroll = Mth.clamp(target, 0, max);
     }
 
+    /** perk 滚动条拖拽的换算（想法页同款公式）。 */
+    private void updatePerkScrollFromMouse(int mouseY, int trackY, int trackH, int thumbH, int max) {
+        int target = (mouseY - this.perkDragGrabOffset - trackY) * max / (trackH - thumbH);
+        this.perkScroll = Mth.clamp(target, 0, max);
+    }
+
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (this.thoughtScrollbarDragging && this.page == PAGE_THOUGHTS) {
@@ -2176,6 +2331,18 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
             return true;
         }
+        if (this.perkScrollbarDragging && this.page == PAGE_WORK) {
+            int max = perkMaxScroll();
+            if (max <= 0) {
+                this.perkScrollbarDragging = false;
+            } else {
+                int trackY = this.topPos + perkAreaTop() + 1;
+                int trackH = perkAreaBottom() - perkAreaTop() - 2;
+                int thumbH = Math.max(8, trackH * PERK_VISIBLE_ROWS / perkLogicalRows().size());
+                updatePerkScrollFromMouse((int) mouseY, trackY, trackH, thumbH, max);
+            }
+            return true;
+        }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
@@ -2183,6 +2350,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         if (button == 0) {
             this.thoughtScrollbarDragging = false;
+            this.perkScrollbarDragging = false;
         }
         return super.mouseReleased(mouseX, mouseY, button);
     }
@@ -2196,7 +2364,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (this.page == PAGE_WORK) {
-            // 职业列表滚轮：职业超过 3 行（可见上限）时翻页（簿记员就是从这里漏掉的）
+            // 悬停在 perk 区上：滚 perk 树（固定高滚动菜单）
+            if (mouseY >= this.topPos + perkAreaTop() && mouseY < this.topPos + perkAreaBottom()) {
+                clampPerkScroll();
+                this.perkScroll = Mth.clamp(this.perkScroll - (int) Math.signum(scrollY), 0, perkMaxScroll());
+                return true;
+            }
+            // 其余区域：职业列表滚轮（职业超过 3 行可见上限时翻页）
             int max = Math.max(0, selectableProfessions().size() - VISIBLE_PROF_ROWS);
             this.workScroll = Mth.clamp(this.workScroll - (int) Math.signum(scrollY), 0, max);
             return true;
@@ -2204,12 +2378,6 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (this.page == PAGE_TOWN) {
             int max = Math.max(0, currentRows().size() - MAX_VISIBLE);
             this.townScroll = Mth.clamp(this.townScroll - (int) Math.signum(scrollY), 0, max);
-            return true;
-        }
-        if (this.page == PAGE_WORK) {
-            // 职业列表滚轮：可见 3 行，翻到列表尾为止
-            int max = Math.max(0, selectableProfessions().size() - VISIBLE_PROF_ROWS);
-            this.workScroll = Mth.clamp(this.workScroll - (int) Math.signum(scrollY), 0, max);
             return true;
         }
         if (this.page == PAGE_THOUGHTS) {
@@ -2276,5 +2444,111 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             case FEET -> "gui.bmfstown.resident.slot.feet";
             default -> "gui.bmfstown.resident.slot.other";
         };
+    }
+
+
+    // ==========================================================
+    //  知识页（v0.11 学者）：书槽 + 已学列表（点击装备）
+    // ==========================================================
+
+    /** 知识页背景：深底书卷区（与想法页同语言）。 */
+    private void renderKnowledgePageBg(GuiGraphics gfx) {
+        gfx.fill(this.leftPos + 4, this.topPos + ResidentMenu.PANEL_Y + 2,
+                this.leftPos + this.imageWidth - 4, this.topPos + ResidentMenu.PANEL_Y + 9 * ROW_H,
+                0xFF373737);
+    }
+
+    /** 知识页命中检测：鼠标所在已学行下标（null = 不在任何行上）。 */
+    private int[] knowledgeRowAt(double mouseX, double mouseY) {
+        var snapshot = this.menu.getResident() != null
+                ? this.menu.getResident().getArchive() : null;
+        if (snapshot == null) {
+            return null;
+        }
+        var learned = snapshot.learnedBooks();
+        if (learned.isEmpty()) {
+            return null;
+        }
+        int listX = this.leftPos + 4;
+        int listW = this.imageWidth - 8;
+        int rowTop = this.topPos + ResidentMenu.PANEL_Y + ROW_H + 4;
+        int rel = (int) (mouseY - rowTop);
+        if (mouseX >= listX && mouseX < listX + listW && rel >= 0 && rel < learned.size() * ROW_H) {
+            return new int[]{rel / ROW_H};
+        }
+        return null;
+    }
+
+    /** 知识页内容：装备中的书 + 已学列表（研读进度括号）。 */
+    private void renderKnowledgePageText(GuiGraphics gfx, double mouseX, double mouseY) {
+        Resident resident = this.menu.getResident();
+        var snapshot = resident != null ? resident.getArchive() : null;
+        if (snapshot == null) {
+            return;
+        }
+        int textX = TEXT_PAD;
+        int y = ResidentMenu.PANEL_Y + 4;
+
+        // ---- 书槽行：当前装备 ----
+        String equipped = snapshot.equippedBookId();
+        String equippedName = equipped.isEmpty()
+                ? I18n.get("gui.bmfstown.resident.knowledge.none")
+                : specialBookName(equipped);
+        gfx.drawString(this.font,
+                I18n.get("gui.bmfstown.resident.knowledge.equipped", equippedName),
+                textX, y, 0x303030, false);
+        y += ROW_H;
+
+        // ---- 提示行 ----
+        gfx.drawString(this.font,
+                I18n.get("gui.bmfstown.resident.knowledge.hint"),
+                textX, y, 0x606060, false);
+        y += ROW_H + 2;
+
+        // ---- 已学列表（点击装备）----
+        var learned = snapshot.learnedBooks();
+        if (learned.isEmpty()) {
+            gfx.drawString(this.font,
+                    I18n.get("gui.bmfstown.resident.knowledge.empty"),
+                    textX, y, 0x808080, false);
+            return;
+        }
+        for (int i = 0; i < learned.size(); i++) {
+            String id = learned.get(i);
+            int rowY = y + i * ROW_H;
+            boolean equippedNow = id.equals(equipped);
+            int[] row = knowledgeRowAt(mouseX, mouseY);
+            boolean hover = row != null && row[0] == i && !equippedNow;
+            String label = specialBookName(id)
+                    + (equippedNow ? I18n.get("gui.bmfstown.resident.knowledge.equippedMark") : "");
+            gfx.fill(this.leftPos + 4, rowY - 1, this.leftPos + this.imageWidth - 4,
+                    rowY + ROW_H - 2, hover ? 0xFFB8B8B8 : equippedNow ? 0xFFDCDCDC : 0x00000000);
+            gfx.drawString(this.font, label, textX + 2, rowY, 0x303030, false);
+        }
+    }
+
+    /** 特殊书显示名：登记表 lang 键（book.bmfstown.special.<id>.name），未登记退 id。 */
+    private static String specialBookName(String id) {
+        String key = "book.bmfstown.special." + id + ".name";
+        String text = I18n.get(key);
+        return text.equals(key) ? id : text;
+    }
+
+    /**
+     * 想法行渲染：arg 协议 "idle:<种子>" → 客户端按种子现译书名填 %s
+     * （服务端不存成品文本，双语自动）；无参数想法照常直译。
+     */
+    private static String renderThoughtLine(ModNetworking.MoodThought t) {
+        if (t.arg() != null && t.arg().startsWith("idle:")) {
+            try {
+                long seed = Long.parseLong(t.arg().substring("idle:".length()));
+                return I18n.get(t.key(),
+                        com.bmf.bmfstown.book.BookLexicon.title(seed).getString());
+            } catch (NumberFormatException ignored) {
+                // 坏数据退回直译
+            }
+        }
+        return t.arg() != null && !t.arg().isEmpty()
+                ? I18n.get(t.key(), t.arg()) : I18n.get(t.key());
     }
 }

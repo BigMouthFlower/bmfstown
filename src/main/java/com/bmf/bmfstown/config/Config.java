@@ -577,6 +577,33 @@ public final class Config {
                     "Cooldown of suffering lines (starving/sleepless, per resident per type, seconds)")
             .defineInRange("dialog.sufferCooldownSeconds", 600, 30, 7200);
 
+    // ---- 学者（v0.11 写书）----
+
+    public static final ModConfigSpec.LongValue SCHOLAR_WRITE_TICKS = BUILDER
+            .comment("写一本书的在岗基准时长（gameTime tick；90 现实分钟=108000）。 perk/解锁书 ×1.5，闲书 ×0.4。进度按实际写作 tick 累计，效率作乘数，/time 系命令完全影响不了",
+                    "Base on-duty ticks to write one book (90 real minutes). Perk/unlock x1.5, idle x0.4. Progress accumulates only while actually writing")
+            .defineInRange("scholar.writeTicks", 108000L, 1200L, 24000000L);
+
+    public static final ModConfigSpec.LongValue SCHOLAR_COPY_TICKS = BUILDER
+            .comment("抄一本书的在岗基准时长（gameTime tick；60 现实分钟=72000）",
+                    "Base on-duty ticks to copy one book (60 real minutes)")
+            .defineInRange("scholar.copyTicks", 72000L, 1200L, 24000000L);
+
+    public static final ModConfigSpec.IntValue SCHOLAR_PERK_BOOK_CHANCE = BUILDER
+            .comment("写书命中特殊书（perk 池）的概率（%）；未命中写闲书。特殊书不放回：抽中即从该镇池子移除",
+                    "Chance (%) that a written book is a special perk book (drawn without replacement)")
+            .defineInRange("scholar.perkBookChance", 30, 0, 100);
+
+    public static final ModConfigSpec.IntValue SCHOLAR_WORK_START = BUILDER
+            .comment("学者开始写书的时刻（dayTime，0~24000）",
+                    "Time the scholar starts writing (dayTime)")
+            .defineInRange("scholar.workStart", 2000, 0, 23999);
+
+    public static final ModConfigSpec.IntValue SCHOLAR_WORK_END = BUILDER
+            .comment("学者停止写书的时刻（dayTime，0~24000）",
+                    "Time the scholar stops writing (dayTime)")
+            .defineInRange("scholar.workEnd", 11000, 1, 24000);
+
     // ---- 记忆（v0.9.3 铭记）----
 
     public static final ModConfigSpec.IntValue MEMORY_THRESHOLD = BUILDER

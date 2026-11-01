@@ -19,6 +19,8 @@ public final class UnlockBootstrap {
                 List.of(), "unlock.bmfstown.job.worker.name"));
         UnlockRegistry.define(UnlockDefinition.manual("unlock.job.bookkeeper", "job",
                 List.of(), "unlock.bmfstown.job.bookkeeper.name"));
+        UnlockRegistry.define(UnlockDefinition.manual("unlock.job.scholar", "job",
+                List.of(), "unlock.bmfstown.job.scholar.name"));
     }
 
     private UnlockBootstrap() {

@@ -1273,8 +1273,14 @@ public final class ModNetworking {
      * marker：0 = 无、1 = 乐观 "+"、2 = 悲观 "−"（v0.8 性格滤镜，
      * 客户端渲染在文案尾部）。
      */
-    public record MoodThought(int day, int tone, String key, int marker)
+    public record MoodThought(int day, int tone, String key, int marker, String arg)
             implements CustomPacketPayload {
+
+        public MoodThought {
+            if (arg != null && arg.isEmpty()) {
+                arg = null; // 空串 = 无参数想法，还原 null 语义
+            }
+        }
 
         public static final StreamCodec<ByteBuf, MoodThought> STREAM_CODEC =
                 StreamCodec.composite(
@@ -1282,7 +1288,13 @@ public final class ModNetworking {
                         ByteBufCodecs.VAR_INT, MoodThought::tone,
                         ByteBufCodecs.STRING_UTF8, MoodThought::key,
                         ByteBufCodecs.VAR_INT, MoodThought::marker,
+                        ByteBufCodecs.STRING_UTF8, MoodThought::encodedArg,
                         MoodThought::new);
+
+        /** 无参数想法 arg 为 null，而 STRING 编码不接受 null——空串过渡。 */
+        private String encodedArg() {
+            return this.arg == null ? "" : this.arg;
+        }
 
         @Override
         public Type<? extends CustomPacketPayload> type() {
@@ -1367,7 +1379,7 @@ public final class ModNetworking {
             com.bmf.bmfstown.entity.Resident resident) {
         java.util.List<MoodThought> list = new java.util.ArrayList<>();
         for (var t : resident.getStatus().thoughts()) {
-            list.add(new MoodThought(t.day(), t.tone(), t.key(), t.marker()));
+            list.add(new MoodThought(t.day(), t.tone(), t.key(), t.marker(), t.arg()));
         }
         // 偏好懒生成：面板打开这一下正好是最合适的触发点——
         // 保证发出去的 prefs 串一定不是"未生成"的空壳。

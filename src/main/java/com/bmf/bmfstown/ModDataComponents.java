@@ -64,6 +64,17 @@ public final class ModDataComponents {
                     .networkSynchronized(BlockPos.STREAM_CODEC)
                     .build());
 
+    /**
+     * 书的内容（v0.11 学者系统）：写作中的书与成书共用。
+     * 作者链 + 密封内容单（{@link com.bmf.bmfstown.book.BookDraft}）+
+     * 写作进度/目标 + 卡点解除标记。详见 {@link com.bmf.bmfstown.book.BookContent}。
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<com.bmf.bmfstown.book.BookContent>> BOOK_CONTENT =
+            COMPONENTS.register("book_content", () -> DataComponentType.<com.bmf.bmfstown.book.BookContent>builder()
+                    .persistent(com.bmf.bmfstown.book.BookContent.CODEC)
+                    .networkSynchronized(com.bmf.bmfstown.book.BookContent.STREAM_CODEC)
+                    .build());
+
     private ModDataComponents() {
     }
 

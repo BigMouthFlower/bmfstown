@@ -352,6 +352,11 @@ public class WorkerGoal extends Goal {
         this.phase = Phase.FETCH_OPEN;
         LOGGER.debug("[BmfTown][工人] {} 成品入库，继续下一批",
                 this.resident.getName().getString());
+        // 学者实践观察（v0.11）：跟随中的学者看到工人合成 → 书上计数 +1
+        if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            PracticeObserver.observe(serverLevel, this.resident,
+                    com.bmf.bmfstown.entity.profile.ProfessionType.WORKER);
+        }
     }
 
     // ==========================================================

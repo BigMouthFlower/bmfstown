@@ -14,6 +14,7 @@ import com.bmf.bmfstown.entity.profile.WeatherPref;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.util.RandomSource;
 
@@ -66,6 +67,14 @@ public final class ResidentSnapshot {
     private final MobPref dislikedMob;
     private final PersonalityType personality;
 
+    // ---- Knowledge（v0.11 学者：书槽/已学/研读进度）----
+    private final String equippedBookId;
+    private final List<String> learnedBooks;
+    private final Map<String, Long> learnProgress;
+
+    /** 写作进度百分比（0~100；-1 = 当前没有写作中的书）。 */
+    private final int writingPercent;
+
     private ResidentSnapshot(int hunger, int mood,
             ProfessionType profession, UUID townId, BlockPos homePos,
             UUID housingZoneId, long housingAssignedAt,
@@ -73,7 +82,9 @@ public final class ResidentSnapshot {
             Hobbies.Food hobbyFood, ProfessionType likedProfession,
             List<BlockMaterial> likedBlocks, PrefAnimal likedAnimal, PrefColor likedColor,
             boolean likesMusic, WeatherPref dislikedWeather, MobPref dislikedMob,
-            PersonalityType personality) {
+            PersonalityType personality,
+            String equippedBookId, List<String> learnedBooks, Map<String, Long> learnProgress,
+            int writingPercent) {
         this.hunger = hunger;
         this.mood = mood;
         this.profession = profession;
@@ -92,11 +103,15 @@ public final class ResidentSnapshot {
         this.dislikedWeather = dislikedWeather;
         this.dislikedMob = dislikedMob;
         this.personality = personality;
+        this.equippedBookId = equippedBookId;
+        this.learnedBooks = List.copyOf(learnedBooks);
+        this.learnProgress = Map.copyOf(learnProgress);
+        this.writingPercent = writingPercent;
     }
 
-    /** 服务端：从六域中的四域构建同步快照。 */
+    /** 服务端：从六域中的四域构建同步快照（附知识域与写作进度）。 */
     public static ResidentSnapshot of(Identity identity, Growth growth,
-            Prefs prefs, Status status) {
+            Prefs prefs, Status status, KnowledgeState knowledge, int writingPercent) {
         return new ResidentSnapshot(
                 status.hunger(), status.mood(),
                 identity.profession(), identity.townId(), identity.homePos(),
@@ -105,7 +120,10 @@ public final class ResidentSnapshot {
                 prefs.hobbyFood(), prefs.likedProfession(),
                 prefs.likedBlocks(), prefs.likedAnimal(), prefs.likedColor(),
                 prefs.likesMusic(), prefs.dislikedWeather(), prefs.dislikedMob(),
-                prefs.personality());
+                prefs.personality(),
+                knowledge.equippedBookId(), knowledge.learnedSorted(),
+                knowledge.progressView(),
+                writingPercent);
     }
 
     /** 客户端兜底默认（readNbt 返回 null / 新实体 define 时）。 */
@@ -115,7 +133,8 @@ public final class ResidentSnapshot {
                 Map.of(), Map.of(),
                 Hobbies.Food.SWEET, ProfessionType.NONE,
                 List.of(), null, null, false, null, null,
-                PersonalityType.OPTIMIST);
+                PersonalityType.OPTIMIST,
+                "", List.of(), Map.of(), -1);
     }
 
     // ==========================================================
@@ -347,7 +366,41 @@ public final class ResidentSnapshot {
             tag.putString("DislikedMob", this.dislikedMob.name());
         }
         tag.putString("Personality", this.personality.name());
+        CompoundTag knowledge = new CompoundTag();
+        knowledge.putString("Equipped", this.equippedBookId);
+        ListTag learnedTag = new ListTag();
+        for (String id : this.learnedBooks) {
+            learnedTag.add(StringTag.valueOf(id));
+        }
+        knowledge.put("Learned", learnedTag);
+        ListTag progressTag = new ListTag();
+        for (Map.Entry<String, Long> e : this.learnProgress.entrySet()) {
+            CompoundTag t = new CompoundTag();
+            t.putString("Id", e.getKey());
+            t.putLong("Ticks", e.getValue());
+            progressTag.add(t);
+        }
+        knowledge.put("Progress", progressTag);
+        tag.put("Knowledge", knowledge);
+        tag.putInt("WritingPercent", this.writingPercent);
         return tag;
+    }
+
+    public String equippedBookId() {
+        return this.equippedBookId;
+    }
+
+    public List<String> learnedBooks() {
+        return this.learnedBooks;
+    }
+
+    public Map<String, Long> learnProgress() {
+        return this.learnProgress;
+    }
+
+    /** 写作进度百分比（0~100；-1 = 没有写作中的书）。 */
+    public int writingPercent() {
+        return this.writingPercent;
     }
 
     public static ResidentSnapshot load(CompoundTag tag) {
@@ -386,6 +439,22 @@ public final class ResidentSnapshot {
                 }
             }
         }
+        String equippedBook = "";
+        List<String> learnedBooks = new ArrayList<>();
+        Map<String, Long> learnProgress = new HashMap<>();
+        if (tag.contains("Knowledge", Tag.TAG_COMPOUND)) {
+            CompoundTag knowledge = tag.getCompound("Knowledge");
+            equippedBook = knowledge.getString("Equipped");
+            ListTag learnedTag = knowledge.getList("Learned", Tag.TAG_STRING);
+            for (int i = 0; i < learnedTag.size(); i++) {
+                learnedBooks.add(learnedTag.getString(i));
+            }
+            ListTag progressTag = knowledge.getList("Progress", Tag.TAG_COMPOUND);
+            for (int i = 0; i < progressTag.size(); i++) {
+                CompoundTag t = progressTag.getCompound(i);
+                learnProgress.put(t.getString("Id"), t.getLong("Ticks"));
+            }
+        }
         return new ResidentSnapshot(
                 tag.contains("Hunger") ? tag.getInt("Hunger") : Status.MAX_HUNGER,
                 tag.contains("Mood") ? tag.getInt("Mood") : 50,
@@ -404,7 +473,9 @@ public final class ResidentSnapshot {
                 tag.getBoolean("LikesMusic"),
                 getEnum(tag, "DislikedWeather", WeatherPref.class),
                 getEnum(tag, "DislikedMob", MobPref.class),
-                getEnum(tag, "Personality", PersonalityType.class, PersonalityType.OPTIMIST));
+                getEnum(tag, "Personality", PersonalityType.class, PersonalityType.OPTIMIST),
+                equippedBook, learnedBooks, learnProgress,
+                tag.contains("WritingPercent") ? tag.getInt("WritingPercent") : -1);
     }
 
     private static <E extends Enum<E>> E getEnum(CompoundTag tag, String key,

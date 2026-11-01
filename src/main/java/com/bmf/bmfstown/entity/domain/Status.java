@@ -164,14 +164,18 @@ public final class Status {
     }
 
     /**
-     * 一条想法日志。只存翻译 key、发生日、色调、标记——不存数值也不存原文
-     * （客户端用 I18n 现译，语言可切换）。
+     * 一条想法日志。只存翻译 key、发生日、色调、标记与可选参数——不存数值
+     * （客户端用 I18n 现译，语言可切换；arg 为书名等动态参数，可空）。
      */
-    public record Thought(int day, int tone, String key, int marker) {
+    public record Thought(int day, int tone, String key, int marker, String arg) {
 
         static final int MARK_NONE = 0;
         static final int MARK_PLUS = 1;
         static final int MARK_MINUS = 2;
+
+        public Thought(int day, int tone, String key, int marker) {
+            this(day, tone, key, marker, null); // 无参数想法的兼容构造
+        }
     }
 
     /** 心情档位。 */
@@ -1024,8 +1028,24 @@ public final class Status {
         };
     }
 
+    /**
+     * 读闲书（v0.11 用户定稿）：心情 +5，想法唯一文案
+     * "他读了《XX》，感觉很有意思"（书名走参数，客户端现译）。
+     */
+    public void readEnjoyed(ServerLevel level, long bookSeed) {
+        this.mood = Math.min(MAX_MOOD, this.mood + 5); // 读书小额正额（用户定稿 +5）
+        // arg 协议："idle:<种子>"——客户端按种子现译书名（双语自动）
+        addThought(level, TONE_POSITIVE, "mood.bmfstown.thought.reading",
+                Thought.MARK_NONE, "idle:" + bookSeed);
+    }
+
     private void addThought(ServerLevel level, int tone, String key, int marker) {
-        this.thoughts.addLast(new Thought(currentDay(level), tone, key, marker));
+        addThought(level, tone, key, marker, null);
+    }
+
+    /** 带参数的想法（如读书的种子）：客户端渲染时按协议现场生成书名填 %s。 */
+    public void addThought(ServerLevel level, int tone, String key, int marker, String arg) {
+        this.thoughts.addLast(new Thought(currentDay(level), tone, key, marker, arg));
         while (this.thoughts.size() > MAX_THOUGHTS) {
             this.thoughts.pollFirst();
         }
@@ -1064,6 +1084,9 @@ public final class Status {
                 tTag.putInt("Tone", t.tone());
                 tTag.putInt("Marker", t.marker());
                 tTag.putString("Key", t.key());
+                if (t.arg() != null) {
+                    tTag.putString("Arg", t.arg());
+                }
                 list.add(tTag);
             }
             tag.put("Thoughts", list);
@@ -1123,8 +1146,9 @@ public final class Status {
                 int tone = tTag.contains("Tone")
                         ? tTag.getInt("Tone")
                         : (tTag.getBoolean("Pos") ? TONE_POSITIVE : TONE_NEGATIVE);
+                String arg = tTag.contains("Arg") ? tTag.getString("Arg") : null;
                 s.thoughts.addLast(new Thought(tTag.getInt("Day"), tone,
-                        tTag.getString("Key"), tTag.contains("Marker") ? tTag.getInt("Marker") : 0));
+                        tTag.getString("Key"), tTag.contains("Marker") ? tTag.getInt("Marker") : 0, arg));
             }
             while (s.thoughts.size() > MAX_THOUGHTS) {
                 s.thoughts.pollFirst();

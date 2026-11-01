@@ -22,7 +22,8 @@ public enum SkillType {
     CRAFTING("crafting", "合成"),
     COOKING("cooking", "烹调"),
     GATHERING("gathering", "采集"),
-    BOOKKEEPING("bookkeeping", "簿记");
+    BOOKKEEPING("bookkeeping", "簿记"),
+    SCHOLARSHIP("scholarship", "研学");
 
     private final String serializedName;
     private final String zhName;
