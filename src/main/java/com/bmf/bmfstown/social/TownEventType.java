@@ -16,6 +16,8 @@ public enum TownEventType {
     STARVING,
     /** 镇民昨晚没睡好（subject = 没睡的镇民；晨间结算同拍，一晚至多一次）。 */
     SLEEPLESS,
-    /** 镇民看见玩家携带特定物品，触发职业线索台词（subject = 线索镇民，item = 看见的东西）。 */
-    JOB_HINT
+    /** 职业解锁线索（subject = 线索镇民；items = 看到的元件种类，已去重）。 */
+    JOB_HINT,
+    /** 职业引导线（可重复，不解锁；subject = 说话的镇民，item = 看到的红石块/矿）。 */
+    REDSTONE_AMBIENT
 }

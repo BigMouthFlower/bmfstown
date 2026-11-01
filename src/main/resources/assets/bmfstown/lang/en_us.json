@@ -465,5 +465,6 @@
   "msg.bmfstown.unlock.type.ui": "Hidden UI",
   "unlock.bmfstown.job.worker.name": "Worker",
   "unlock.bmfstown.job.bookkeeper.name": "Bookkeeper",
-  "dialog.bmfstown.jobhint.worker": "%s, huh... you dabble in redstone? If fiddling with all these fiddly redstone components is wearing you down, I could craft them for you."
+  "dialog.bmfstown.jobhint.worker": "%s, %s, %s... If you're tired of crafting all these fiddly redstone components, I can make them for you.",
+  "dialog.bmfstown.jobhint.redstone_ambient": "%s... You know, this can be refined into finer components for practical machines. Bring me some crafted redstone components sometime."
 }

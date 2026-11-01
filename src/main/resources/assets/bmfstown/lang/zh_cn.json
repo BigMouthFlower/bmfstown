@@ -465,5 +465,6 @@
   "msg.bmfstown.unlock.type.ui": "隐藏界面",
   "unlock.bmfstown.job.worker.name": "工人",
   "unlock.bmfstown.job.bookkeeper.name": "簿记员",
-  "dialog.bmfstown.jobhint.worker": "%s，你还会搞红石的装置啊……如果你对反复生产这些乱七八糟的红石元件感到头疼的话，我也可以帮你来生产哦。"
+  "dialog.bmfstown.jobhint.worker": "%s、%s、%s……如果你对反复生产这些乱七八糟的红石元件感到头疼的话，我也可以帮你来生产。",
+  "dialog.bmfstown.jobhint.redstone_ambient": "%s……你知道吗，这东西可以加工成更精密的元件，做出一些实用的机器。带几个红石的加工元件来找我吧。"
 }

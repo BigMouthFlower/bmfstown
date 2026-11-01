@@ -109,18 +109,40 @@ public final class DialogEngine {
                 // 即时：吃到爱吃的，冷却内或正在说话（嘴忙）直接跳过
                 if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())
                         && cooldownOk(event.subject, line.group(), level.getGameTime())) {
-                    say(level, event.subject, line, event.item);
+                    say(level, event.subject, line, event.item.getHoverName());
                     markCooldown(event.subject, line.group(), level.getGameTime(),
                             Config.DIALOG_EAT_COOLDOWN.get() * 20L);
                 }
             }
-            case STARVING, SLEEPLESS, JOB_HINT -> {
-                // 即时：受苦/职业线索（同 tick 已解锁；公告在解锁路径里，命令回显不重复）
+            case STARVING, SLEEPLESS -> {
+                // 即时：受苦线（挨饿/没睡——与记忆无关谁都喊，变体由 condition 区分）
                 if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())
                         && cooldownOk(event.subject, line.group(), level.getGameTime())) {
-                    say(level, event.subject, line, event.item);
+                    say(level, event.subject, line, event.item.getHoverName());
                     markCooldown(event.subject, line.group(), level.getGameTime(),
                             Config.DIALOG_SUFFER_COOLDOWN.get() * 20L);
+                }
+            }
+            case JOB_HINT -> {
+                // 即时：职业解锁线——**一次性事件（每镇一次），无 CD**：
+                // 频率由"解锁即静默 + 调试 lock 才能重来"天然保证；
+                // 嘴忙联动在 JobHints 层已查（这里 GROUP_BUSY 再查一次是防御）。
+                // 占位符 = 看到的元件种类名（门槛保证恰好 3 种，台词三占位）。
+                // ⚠ 此分支曾残留受苦线的 600 秒组冷却（共用 case 时代的遗产），
+                //   导致 lock→unlock 密集测试时气泡被静默——已删，勿加回。
+                if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())) {
+                    say(level, event.subject, line,
+                            event.items.stream()
+                                    .map(ItemStack::getHoverName)
+                                    .toArray(net.minecraft.network.chat.Component[]::new));
+                }
+            }
+            case REDSTONE_AMBIENT -> {
+                // 即时：职业引导线（可重复不解锁——引导玩家往元件方向凑）。
+                // 占位符 = 看到的红石块/矿名字。频率由 JobHints 的
+                // 城镇×玩家游标（5 分钟）主控，这里只受嘴忙锁兜底。
+                if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())) {
+                    say(level, event.subject, line, event.item.getHoverName());
                 }
             }
             case WEATHER_CHANGED -> {
@@ -171,7 +193,7 @@ public final class DialogEngine {
                 }
                 if (cooldownOk(resident, GROUP_BUSY, level.getGameTime())
                         && cooldownOk(resident, say.line().group(), level.getGameTime())) {
-                    say(level, resident, say.line(), say.item());
+                    say(level, resident, say.line(), say.item().getHoverName());
                     markCooldown(resident, say.line().group(), level.getGameTime(),
                             Config.DIALOG_WEATHER_COOLDOWN.get() * 20L);
                 }
@@ -236,13 +258,10 @@ public final class DialogEngine {
     // ==========================================================
 
     private static void say(ServerLevel level, Resident resident,
-                            DialogRegistry.DialogLine line, ItemStack item) {
-        Component text;
-        if (line.withItem() && !item.isEmpty()) {
-            text = Component.translatable(line.key(), item.getHoverName());
-        } else {
-            text = Component.translatable(line.key());
-        }
+                            DialogRegistry.DialogLine line, Component... args) {
+        Component text = (line.withItem() && args.length > 0)
+                ? Component.translatable(line.key(), (Object[]) args)
+                : Component.translatable(line.key());
         spawnDisplay(level, resident, text);
         BmfTown.LOGGER.info("[BmfTown][台词] {} →「{}」",
                 resident.getName().getString(), text.getString());
@@ -260,6 +279,15 @@ public final class DialogEngine {
         DISCARDS.add(new PendingDiscard(resident, display, level.getGameTime() + DISPLAY_TICKS));
         // 嘴忙锁：字没消完之前，这个镇民的其他台词全部跳过
         markCooldown(resident, GROUP_BUSY, level.getGameTime(), DISPLAY_TICKS);
+    }
+
+    /**
+     * 该镇民当前嘴是否空闲（10 秒嘴忙锁）。职业线索在 dispatch 前查这个：
+     * 嘴忙则本轮整轮放弃（不说话也不解锁）——保证"说话+解锁"同时发生，
+     * 而不是台词被吞、公告却先飞出去。感知轮 5 秒一次，最多等一嘴的功夫。
+     */
+    public static boolean isMouthFree(Resident resident, long now) {
+        return cooldownOk(resident, GROUP_BUSY, now);
     }
 
     private static boolean cooldownOk(Resident resident, String group, long now) {

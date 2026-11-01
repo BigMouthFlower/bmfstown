@@ -59,9 +59,12 @@ public final class DialogRegistry {
                     "dialog.bmfstown.sleepless_memory", false,
                     r -> r.getMemoryState().hasFirmMemory(
                             com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS), 1),
-            // 职业线索线：镇民看见玩家携带红石元件 → 念出元件名 → 解锁工人职业
+            // 职业解锁线：镇民看见玩家携带 ≥3 种红石元件 → 复述 → 解锁工人职业
             new DialogLine(TownEventType.JOB_HINT, null, "jobhint",
-                    "dialog.bmfstown.jobhint.worker", true, null, 1)
+                    "dialog.bmfstown.jobhint.worker", true, null, 1),
+            // 职业引导线（可重复，不解锁）：看见红石块/矿 → "这东西能加工哦"
+            new DialogLine(TownEventType.REDSTONE_AMBIENT, null, "jobhint_ambient",
+                    "dialog.bmfstown.jobhint.redstone_ambient", true, null, 1)
     );
 
     /** 某事件可用的全部台词（触发类型匹配 + 天气匹配 + 附加条件通过）。 */
