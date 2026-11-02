@@ -99,6 +99,9 @@ public class WorkerGoal extends Goal {
         if (level == null || !inWorkHours(level)) {
             return false;
         }
+        if (!com.bmf.bmfstown.calendar.TownCalendar.get(level).isWorkday(level)) {
+            return false; // 周末（周六日）不上班，进闲暇池
+        }
         JobState job = this.resident.getJobState();
         if (job.craftTablePos() == 0L || job.inputChestPos() == 0L
                 || job.outputChestPos() == 0L || !job.workerEnabled()
@@ -389,6 +392,9 @@ public class WorkerGoal extends Goal {
         efficiency *= com.bmf.bmfstown.entity.profile.EfficiencyMath.workerSpeedMultiplier(
                 this.resident.getGrowth().perkChoice(ProfessionType.WORKER,
                         com.bmf.bmfstown.entity.profile.Perks.NODE_W_ADEPT));
+        // 《天工开物》《考工记》（CRAFT_SPEED）：装备已学特殊书的合成速度加成
+        efficiency *= 1.0 + this.resident.learnedEffectBonus(
+                com.bmf.bmfstown.book.SpecialBookEffect.Type.CRAFT_SPEED) / 100.0;
         if (efficiency < 0.1D) {
             efficiency = 0.1D;
         }

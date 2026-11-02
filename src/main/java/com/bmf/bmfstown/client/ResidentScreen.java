@@ -1129,24 +1129,39 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final int PERK_VISIBLE_ROWS = 3;
 
     /** 节点/分支定义表（{@link com.bmf.bmfstown.entity.profile.Perks}，下标对齐）。 */
-    /** 当前职业的 perk 节点/分支 id（战士/工人各一棵树）。 */
+    /** 当前职业的 perk 节点/分支 id（战士/工人/学者各一棵树）。 */
     private String[] perkNodeIds() {
-        return currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
-                ? com.bmf.bmfstown.entity.profile.Perks.WORKER_NODES
-                : com.bmf.bmfstown.entity.profile.Perks.NODES;
+        var prof = currentProfession();
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+            return com.bmf.bmfstown.entity.profile.Perks.WORKER_NODES;
+        }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+            return com.bmf.bmfstown.entity.profile.Perks.SCHOLAR_NODES;
+        }
+        return com.bmf.bmfstown.entity.profile.Perks.NODES;
     }
 
     private String[][] perkBranchIds() {
-        return currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
-                ? com.bmf.bmfstown.entity.profile.Perks.WORKER_BRANCHES
-                : com.bmf.bmfstown.entity.profile.Perks.BRANCHES;
+        var prof = currentProfession();
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+            return com.bmf.bmfstown.entity.profile.Perks.WORKER_BRANCHES;
+        }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+            return com.bmf.bmfstown.entity.profile.Perks.SCHOLAR_BRANCHES;
+        }
+        return com.bmf.bmfstown.entity.profile.Perks.BRANCHES;
     }
 
-    /** 分支名/描述的语言键前缀（战士/工人各一套文案）。 */
+    /** 分支名/描述的语言键前缀（战士/工人/学者各一套文案）。 */
     private String branchKeyPrefix() {
-        return currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
-                ? "gui.bmfstown.resident.perk.wb"
-                : "gui.bmfstown.resident.perk.b";
+        var prof = currentProfession();
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+            return "gui.bmfstown.resident.perk.wb";
+        }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+            return "gui.bmfstown.resident.perk.sb";
+        }
+        return "gui.bmfstown.resident.perk.b";
     }
 
     /** 节点解锁所需段位（与 {@code Perks.UNLOCK_TIER} 一致，避免每次跨类引用）。 */
@@ -1271,15 +1286,21 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         // 只有当前职业有"工作方式"时才画（无业 = 什么都没有）。
         // 将来别的职业在这里按职业画各自的控件——这块区域不属于战士专属。
         if (current == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
-            // 学者：上行书稿槽（真实槽位，物品由 vanilla 渲染）+ 下行进度条槽——无按钮
-            int bx = x + 5;
-            int bw = this.imageWidth - 10;
+            // 学者：写作槽 + 抄写槽并排（物品由 vanilla 渲染），右侧写书/抄书
+            // 切换按钮，下方进度条（当前模式的 WIP）
             int slotY = y + ResidentMenu.WIP_SLOT_Y;
             int slotX = x + ResidentMenu.WIP_SLOT_X;
+            int copyX = x + ResidentMenu.COPY_SLOT_X;
             gfx.fill(slotX - 1, slotY - 1, slotX + 19, slotY + 19, 0xFF8B8B8B);
             gfx.fill(slotX, slotY, slotX + 18, slotY + 18, 0xFF373737);
+            gfx.fill(copyX - 1, slotY - 1, copyX + 19, slotY + 19, 0xFF8B8B8B);
+            gfx.fill(copyX, slotY, copyX + 18, slotY + 18, 0xFF373737);
+            // 切换按钮（按下的样子 = 当前处于抄书模式）
+            boolean copyMode = currentWorkMode() == com.bmf.bmfstown.entity.WorkMode.COPY.ordinal();
+            drawWorkButton(gfx, x + 80, this.imageWidth - 90, y + workButtonsTop(),
+                    copyMode, mouseX, mouseY);
             int barY = y + workButtonsTop() + WORK_BTN_H + WORK_BTN_GAP;
-            gfx.fill(bx, barY, bx + bw, barY + WORK_BTN_H, 0xFF2E2E2E);
+            gfx.fill(x + 5, barY, x + 5 + (this.imageWidth - 10), barY + WORK_BTN_H, 0xFF2E2E2E);
         } else if (workControlsVisible()) {
             int workMode = currentWorkMode();
             int bx = x + 5;
@@ -1406,32 +1427,38 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
         if (current == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
             // 学者：书稿槽物品与悬停 tooltip 由 vanilla（真槽位）渲染——
-            // 这里只在空槽时画提示 + 画进度绿条（不显数值，用户定稿）
+            // 这里画切换按钮文案 + 当前模式的进度条（含百分比）
+            boolean copyMode = currentWorkMode() == com.bmf.bmfstown.entity.WorkMode.COPY.ordinal();
             int writing = resident.getArchive().writingPercent();
-            boolean hasWip = writing >= 0;
-            if (!hasWip) {
-                drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.scholar_nowriting"),
-                        5, bw, ResidentMenu.WIP_SLOT_Y + 5, 0xA0A0A0);
-            }
-            // 进度条：深槽 + 亮绿填充；槽内居中"研究进度 · N%"（白字带影，
-            // 压在填充上也读得清。百分比显示是用户 00:04 定稿——给百分比、
-            // 不给预计完成时间）
+            int copying = resident.getArchive().copyingPercent();
+            int activePercent = copyMode ? copying : writing;
+            boolean hasWip = activePercent >= 0;
+            // 切换按钮文案：当前模式（按下的那个）
+            String modeLabel = I18n.get(copyMode
+                    ? "gui.bmfstown.resident.work.scholar_mode_copy"
+                    : "gui.bmfstown.resident.work.scholar_mode_write");
+            drawCenteredInPanel(gfx, modeLabel, 80, this.imageWidth - 90,
+                    workButtonsTop() + 3, copyMode ? 0xA8FFA8 : 0xE0E0E0);
+            // 进度条：深槽 + 亮绿填充；槽内居中"研究/抄写进度 · N%"（白字带影）
             int barX = 5;
             int barW = bw - 4;
             int barY = guardY + (WORK_BTN_H - 6) / 2;
             gfx.fill(barX, barY, barX + barW, barY + 6, 0xFF1E1E1E);
-            if (hasWip && writing > 0) {
-                int fillW = Math.max(1, (barW - 2) * writing / 100);
+            if (hasWip && activePercent > 0) {
+                int fillW = Math.max(1, (barW - 2) * activePercent / 100);
                 gfx.fill(barX + 1, barY + 1, barX + 1 + fillW, barY + 5, 0xFF7FE07F);
             }
             String researchLabel = hasWip
-                    ? I18n.get("gui.bmfstown.resident.work.scholar_label_percent", writing)
-                    : I18n.get("gui.bmfstown.resident.work.scholar_label");
+                    ? I18n.get(copyMode
+                            ? "gui.bmfstown.resident.work.scholar_copy_label_percent"
+                            : "gui.bmfstown.resident.work.scholar_label_percent", activePercent)
+                    : I18n.get(copyMode
+                            ? "gui.bmfstown.resident.work.scholar_copy_label"
+                            : "gui.bmfstown.resident.work.scholar_label");
             gfx.drawString(this.font, researchLabel,
                     barX + (barW - this.font.width(researchLabel)) / 2,
                     barY - 2, 0xFFFFFF, true);
-            // 不提前 return——段位名+经验栏是各职业共用的尾段骨架，
-            // 学者同样要有（v0.11.1 修复：早期 return 把共用骨架截断了）
+            // 不提前 return——段位名+经验栏是各职业共用的尾段骨架
         }
         if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR) {
             // 战士：跟随/站岗两枚按钮
@@ -1760,6 +1787,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * 已知限制，当前按"数值以服务端为准，文案尽力而为"处理。
      */
     private Object[] perkDescArgs(int node, int branch) {
+        // 学者树（v0.10.3）：数值全部来自 common 配置
+        if (currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+            return switch (node) {
+                case 0 -> branch == 0
+                        ? new Object[]{} // 辩证法：静态描述
+                        : new Object[]{com.bmf.bmfstown.config.Config.SCHOLAR_DIVISION_BONUS.get()};
+                case 1 -> branch == 0
+                        ? new Object[]{com.bmf.bmfstown.config.Config.SCHOLAR_OVERFIT_BONUS.get()}
+                        : new Object[]{}; // 批注：静态描述（文案里不含 % 号）
+                // 三门问题 / 活字印刷：静态文案但含字面 %%（需 ≥1 参走格式化才显示成 %），
+                // 传一个空串参数撑起格式化管道
+                default -> new Object[]{""};
+            };
+        }
         return switch (node) {
             case 0 -> branch == 0
                     ? new Object[]{Math.round((com.bmf.bmfstown.config.Config.PERK_REGEN_MULTIPLIER.get()
@@ -1988,6 +2029,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return false;
     }
 
+    /** 点击是否落在工作页上板某个槽位（GUI 相对坐标 → 绝对判定）。 */
+    private boolean inRect(double mouseX, double mouseY, int relX, int relY) {
+        return mouseX >= this.leftPos + relX && mouseX < this.leftPos + relX + 18
+                && mouseY >= this.topPos + relY && mouseY < this.topPos + relY + 18;
+    }
+
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         // 页签在最上层：两页都要先判，点中就吞掉（下面不会有什么可点的东西）
@@ -2155,6 +2202,16 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 }
                 // 不在按钮上：掉出本块，交给后面的 perk 区点击
             }
+            // ---- 学者：写书/抄书模式切换按钮（v0.10.3）----
+            if (workControlsVisible() && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+                int toggleX = this.leftPos + 80;
+                int toggleY = this.topPos + workButtonsTop();
+                if (mouseX >= toggleX && mouseX < toggleX + this.imageWidth - 90
+                        && mouseY >= toggleY && mouseY < toggleY + WORK_BTN_H) {
+                    clickMenu(ResidentMenu.BTN_TOGGLE_COPY);
+                    return true;
+                }
+            }
             // ---- 学者的书稿交互已升级为真槽位（ResidentMenu.WipSlot）：
             //      光标拿起/放回/Shift 搬运全走 vanilla，这里不再拦截 ----
             // ---- 战士：跟随 / 站岗 ----
@@ -2228,12 +2285,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
 
             // 上板其余区域是死区（下面躺着被隐藏的格子）——
-            // 例外：学者书稿槽是真槽位，点击必须放行给 vanilla 处理
+            // 例外：学者写作/抄写槽是真槽位，点击必须放行给 vanilla 处理
             // （拿起/放回/Shift 搬运都在 super.mouseClicked 里分发）
-            boolean inWipSlot = mouseX >= this.leftPos + ResidentMenu.WIP_SLOT_X
-                    && mouseX < this.leftPos + ResidentMenu.WIP_SLOT_X + 18
-                    && mouseY >= this.topPos + ResidentMenu.WIP_SLOT_Y
-                    && mouseY < this.topPos + ResidentMenu.WIP_SLOT_Y + 18;
+            boolean inWipSlot = inRect(mouseX, mouseY, ResidentMenu.WIP_SLOT_X, ResidentMenu.WIP_SLOT_Y)
+                    || inRect(mouseX, mouseY, ResidentMenu.COPY_SLOT_X, ResidentMenu.WIP_SLOT_Y);
             if (mouseX >= this.leftPos && mouseX < this.leftPos + this.imageWidth
                     && mouseY >= this.topPos && mouseY < this.topPos + ResidentMenu.PLAYER_INV_Y - 4
                     && !inWipSlot) {

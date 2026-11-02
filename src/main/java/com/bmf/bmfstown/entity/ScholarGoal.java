@@ -81,6 +81,15 @@ public class ScholarGoal extends Goal {
                 || this.resident.getFollowResidentId() != null) {
             return false; // 跟随观察中不写书
         }
+        WorkMode mode = this.resident.getWorkMode();
+        if (mode != WorkMode.WRITE && mode != WorkMode.COPY) {
+            return false; // 未选写书/抄书模式 = 不干活（与战士的跟随/站岗同款语义）
+        }
+        ServerLevel gateLevel = serverLevel();
+        if (gateLevel != null && !com.bmf.bmfstown.calendar.TownCalendar
+                .get(gateLevel).isWorkday(gateLevel)) {
+            return false; // 周末（周六日）不写书，进闲暇池
+        }
         ServerLevel level = serverLevel();
         return level != null && inWorkHours(level)
                 && this.resident.getIdentity().townId() != null;
@@ -89,11 +98,54 @@ public class ScholarGoal extends Goal {
     @Override
     public boolean canContinueToUse() {
         ServerLevel level = serverLevel();
+        WorkMode mode = this.resident.getWorkMode();
+        if (mode != WorkMode.WRITE && mode != WorkMode.COPY) {
+            return false;
+        }
         return level != null && !this.resident.isSleeping() && !this.resident.isForaging()
                 && inWorkHours(level)
                 && this.resident.getFollowResidentId() == null
                 && this.resident.getProfession()
                 == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR;
+    }
+
+    // ==========================================================
+    //  写作 / 抄书共用
+    // ==========================================================
+
+    /** 是否处于抄书模式（写作/抄书的过程物、内容来源、速度修正都由此分叉）。 */
+    private boolean copying() {
+        return this.resident.getWorkMode() == WorkMode.COPY;
+    }
+
+    /** 当前模式的 WIP（写书 = writingBook；抄书 = copyingBook）。 */
+    private ItemStack activeWip() {
+        return copying() ? this.resident.getCopyingBook() : this.resident.getWritingBook();
+    }
+
+    private void setActiveWip(ItemStack stack) {
+        if (copying()) {
+            this.resident.setCopyingBook(stack);
+        } else {
+            this.resident.setWritingBook(stack);
+        }
+    }
+
+    /**
+     * 背包里的第一本成书（抄书的底本）。<b>只扫背包容器</b>——写作/抄写
+     * 过程槽是独立字段、知识装备只记 id，都不在背包容器里，天然不会被
+     * 误选为底本（用户 16:30 特意叮嘱的判定边界）。
+     */
+    private ItemStack firstFinishedBookInBag() {
+        var bag = this.resident.getInventory();
+        for (int i = 0; i < bag.getContainerSize(); i++) {
+            ItemStack stack = bag.getItem(i);
+            if (stack.is(com.bmf.bmfstown.ModItems.FINISHED_BOOK.get())
+                    && stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get()) != null) {
+                return stack;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -140,14 +192,13 @@ public class ScholarGoal extends Goal {
         this.resident.setScholarVisual(this.phase == Phase.WRITE);
 
         if (this.resident.tickCount % 100 == 0) {
-            LOGGER.info("[BmfTown][学者] {} phase={} lectern={} input={} shelf={} wip={} progress={}",
-                    this.resident.getName().getString(), this.phase, this.lecternPos,
-                    this.inputPos, this.shelfPos,
-                    this.resident.getWritingBook().isEmpty() ? "无" : "有",
-                    this.resident.getWritingBook().get(
-                            com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get()) == null ? "-"
-                            : this.resident.getWritingBook().get(
-                                    com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get()).progress());
+            ItemStack dbgWip = activeWip();
+            LOGGER.info("[BmfTown][学者] {} mode={} phase={} lectern={} input={} shelf={} wip={} progress={}",
+                    this.resident.getName().getString(), this.resident.getWorkMode(),
+                    this.phase, this.lecternPos, this.inputPos, this.shelfPos,
+                    dbgWip.isEmpty() ? "无" : "有",
+                    dbgWip.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get()) == null ? "-"
+                            : dbgWip.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get()).progress());
         }
     }
 
@@ -158,7 +209,7 @@ public class ScholarGoal extends Goal {
     /** 去料箱：没认领（或失效）先在图书馆区里认领一个含书墨的容器。 */
     private void tickGoInput(ServerLevel level) {
         // 断点续写：WIP 已含书墨（取料时合成过），不用再去料箱
-        if (!this.resident.getWritingBook().isEmpty()) {
+        if (!activeWip().isEmpty()) {
             this.phase = Phase.GO_LECTERN;
             return;
         }
@@ -240,28 +291,63 @@ public class ScholarGoal extends Goal {
             return;
         }
         this.resident.getNavigation().stop();
-        // 开写：随身书墨合成 WIP（非空=断点续写，直接进写作）
-        if (this.resident.getWritingBook().isEmpty()) {
-            if (!consumeFromInventory(Items.BOOK)
-                    || !consumeFromInventory(Items.INK_SAC)) {
-                this.phase = Phase.GO_INPUT; // 随身料没了：回料箱
-                return;
-            }
+        // 开写/开抄：随身书墨合成 WIP（非空=断点续写，直接进写作）
+        if (activeWip().isEmpty()) {
             UUID townId = this.resident.getIdentity().townId();
-            BookDraft draft = BookDrafting.roll(level, townId, this.resident.getRandom());
-            BookContent content = BookContent.startWriting(townId,
-                    this.resident.getName().getString(), draft,
-                    BookDrafting.targetTicks(draft));
+            boolean annotated = this.resident.hasPerk(
+                    com.bmf.bmfstown.entity.profile.Perks.NODE_S_MASTER, "annotation");
+            BookContent content;
+            if (copying()) {
+                // ---- 抄书：以背包第一本成书为底本（不消费底本，不吃奖池，
+                //      不吃卡点——底本成书必然已解除，抄本直接带着通过标记） ----
+                ItemStack source = firstFinishedBookInBag();
+                if (source == null) {
+                    this.retryCooldown = IDLE_RETRY_TICKS;
+                    this.phase = Phase.GO_INPUT;
+                    return; // 背包里没有成书可抄：待机等放书
+                }
+                if (!consumeFromInventory(Items.BOOK)
+                        || !consumeFromInventory(Items.INK_SAC)) {
+                    this.phase = Phase.GO_INPUT; // 随身料没了：回料箱
+                    return;
+                }
+                BookContent src = source.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+                long target = Math.max(200L, Math.round(
+                        BookDrafting.copyTargetTicks() * (src.annotated() ? 1.5D : 1.0D)));
+                // 副本作者链只记抄工（这本抄本是他抄的；底本作者留在原书上）
+                content = new BookContent(townId,
+                        java.util.List.of(this.resident.getName().getString()),
+                        src.draft(), 0L, target, true, src.annotated());
+            } else {
+                // ---- 写书：奖池/闲书抽奖（原有链路） ----
+                if (!consumeFromInventory(Items.BOOK)
+                        || !consumeFromInventory(Items.INK_SAC)) {
+                    this.phase = Phase.GO_INPUT; // 随身料没了：回料箱
+                    return;
+                }
+                BookDraft draft = BookDrafting.roll(level, townId, this.resident.getRandom(),
+                        this.resident);
+                long target = BookDrafting.targetTicks(draft);
+                if (annotated) {
+                    // 批注 perk（大师 B）：批注本写起来更费工——写作耗时 ×1.5
+                    target = Math.max(200L, Math.round(target * 1.5D));
+                }
+                content = BookContent.startWriting(townId,
+                        this.resident.getName().getString(), draft, target);
+                if (annotated) {
+                    content = content.withAnnotated();
+                }
+            }
             ItemStack stack = new ItemStack(com.bmf.bmfstown.ModItems.WRITING_BOOK.get());
             stack.set(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get(), content);
-            this.resident.setWritingBook(stack);
+            setActiveWip(stack);
         }
         this.phase = Phase.WRITE;
     }
 
-    /** 写作：在岗 tick 累计（效率乘数）；perk 书 50% 卡点。 */
+    /** 写作/抄写：在岗 tick 累计（效率乘数）；perk 书 50% 卡点（抄本自带通过标记不停笔）。 */
     private void tickWrite(ServerLevel level) {
-        ItemStack stack = this.resident.getWritingBook();
+        ItemStack stack = activeWip();
         BookContent content = stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
         if (content == null || content.isFinished()) {
             this.phase = content != null ? Phase.STORE_GO : Phase.GO_INPUT;
@@ -275,7 +361,12 @@ public class ScholarGoal extends Goal {
         }
 
         // ---- 在岗 tick 累计（效率乘数，小数桶积少成多）----
-        this.fraction += efficiency();
+        double tickEfficiency = efficiency(content);
+        if (copying() && this.resident.hasPerk(
+                com.bmf.bmfstown.entity.profile.Perks.NODE_S_LEGEND, "movabletype")) {
+            tickEfficiency *= 1.5D; // 活字印刷术：抄书效率 +50%
+        }
+        this.fraction += tickEfficiency;
         long amount = (long) this.fraction;
         if (amount > 0) {
             this.fraction -= amount;
@@ -315,9 +406,11 @@ public class ScholarGoal extends Goal {
 
     /** 插书（复刻原版 updateState）→ 回料箱写下一本。 */
     private void tickStorePut(ServerLevel level) {
-        ItemStack wip = this.resident.getWritingBook();
+        ItemStack wip = activeWip();
         BookContent content = wip.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-        this.resident.setWritingBook(ItemStack.EMPTY);
+        // 清的必须是"当前模式的 WIP"——曾写死 setWritingBook 导致抄本
+        // 永远清不掉：100% 成品每两 tick 被再完成一次 = 无限塞书架不耗料
+        setActiveWip(ItemStack.EMPTY);
         this.resident.setScholarVisual(false);
         if (content != null) {
             ItemStack finished = new ItemStack(com.bmf.bmfstown.ModItems.FINISHED_BOOK.get());
@@ -330,8 +423,7 @@ public class ScholarGoal extends Goal {
                 LOGGER.info("[BmfTown][学者] {} 书架满/失效，成书进背包",
                         this.resident.getName().getString());
             }
-            this.resident.getGrowth().addSkillXp(
-                    this.resident.getProfession().mainSkill(), 30);
+            grantCompletionXp(content, level);
             this.resident.syncClient();
         }
         this.phase = Phase.GO_INPUT;
@@ -402,16 +494,15 @@ public class ScholarGoal extends Goal {
     }
 
     private void storeToInventory(ServerLevel level) {
-        ItemStack wip = this.resident.getWritingBook();
+        ItemStack wip = activeWip();
         BookContent content = wip.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-        this.resident.setWritingBook(ItemStack.EMPTY);
+        setActiveWip(ItemStack.EMPTY);
         if (content != null) {
             ItemStack finished = new ItemStack(com.bmf.bmfstown.ModItems.FINISHED_BOOK.get());
             finished.set(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get(), content);
             this.resident.getInventory().addItem(finished);
+            grantCompletionXp(content, level);
         }
-        this.resident.getGrowth().addSkillXp(
-                this.resident.getProfession().mainSkill(), 30);
         this.resident.syncClient();
     }
 
@@ -608,13 +699,63 @@ public class ScholarGoal extends Goal {
                         "dialog.bmfstown.scholar.stuck").getString());
     }
 
-    /** 写作效率：与工人同口径（段位效率 × 心情），下限 0.1。 */
-    private double efficiency() {
+    /**
+     * 写作效率：与工人同口径（段位效率 × 心情）+ 学者 perk 修正链，下限 0.1。
+     * <ul>
+     *   <li><b>辩证法</b>：写 perk 书时额外 × 该书对应学科的镇民自身效率
+     *       （传奇战士写战士书 = 写书效率 ×1.5）；</li>
+     *   <li><b>分工</b>：写书效率 +20%（代价是非学者经验锁涨，挂
+     *       {@code Resident.addSkillXp}）；</li>
+     *   <li><b>过拟合</b>：每掌握一门知识 +10%，加算叠加后整体乘进。</li>
+     * </ul>
+     */
+    private double efficiency(BookContent content) {
         var skill = this.resident.getProfession().mainSkill();
         double efficiency = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
                 this.resident.getGrowth().skillXp(skill),
                 this.resident.getStatus().mood(), false);
+        if (content != null && content.draft() instanceof BookDraft.Perk p
+                && this.resident.hasPerk(
+                        com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "dialectics")) {
+            var prof = com.bmf.bmfstown.entity.profile.ProfessionType.byName(p.professionId());
+            if (prof.isReal() && prof.mainSkill() != null) {
+                efficiency *= com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
+                        this.resident.getGrowth().skillXp(prof.mainSkill()),
+                        this.resident.getStatus().mood(), false);
+            }
+        }
+        if (this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "division")) {
+            efficiency *= 1.0 + Config.SCHOLAR_DIVISION_BONUS.get() / 100.0;
+        }
+        if (this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_S_MASTER, "overfit")) {
+            efficiency *= 1.0 + this.resident.getKnowledge().learnedBooks().size()
+                    * Config.SCHOLAR_OVERFIT_BONUS.get() / 100.0;
+        }
+        // 《梦溪笔谈》（WRITE_SPEED）：装备已学特殊书的写书速度加成
+        efficiency *= 1.0 + this.resident.learnedEffectBonus(
+                com.bmf.bmfstown.book.SpecialBookEffect.Type.WRITE_SPEED) / 100.0;
         return Math.max(0.1D, efficiency);
+    }
+
+    /**
+     * 成书经验结算：学者主技能 +30；<b>辩证法</b> perk 下 perk 书
+     * 对应职业经验同样 +30（双涨——原"实践"并入辩证法的效果）。
+     * 注意走 {@code resident.addSkillXp}：分工锁涨在这里统一拦截。
+     */
+    private void grantCompletionXp(BookContent content, ServerLevel level) {
+        this.resident.addSkillXp(this.resident.getProfession().mainSkill(), 30);
+        if (this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "dialectics")
+                && content.draft() instanceof BookDraft.Perk p) {
+            var prof = com.bmf.bmfstown.entity.profile.ProfessionType.byName(p.professionId());
+            if (prof.isReal() && prof.mainSkill() != null) {
+                this.resident.addSkillXp(prof.mainSkill(), 30);
+            }
+        }
+        // 隐藏解锁书：写成即触发该镇解锁广播（UnlockBootstrap 同名定义）
+        if (content.draft() instanceof BookDraft.Unlock u) {
+            com.bmf.bmfstown.unlock.UnlockState.get(level).unlockIfNew(
+                    level, content.townId(), u.unlockId());
+        }
     }
 
     private boolean inWorkHours(ServerLevel level) {

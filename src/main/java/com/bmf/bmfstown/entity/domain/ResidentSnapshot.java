@@ -75,6 +75,9 @@ public final class ResidentSnapshot {
     /** 写作进度百分比（0~100；-1 = 当前没有写作中的书）。 */
     private final int writingPercent;
 
+    /** 抄写进度百分比（0~100；-1 = 当前没有抄写中的书）。 */
+    private final int copyingPercent;
+
     private ResidentSnapshot(int hunger, int mood,
             ProfessionType profession, UUID townId, BlockPos homePos,
             UUID housingZoneId, long housingAssignedAt,
@@ -84,7 +87,7 @@ public final class ResidentSnapshot {
             boolean likesMusic, WeatherPref dislikedWeather, MobPref dislikedMob,
             PersonalityType personality,
             String equippedBookId, List<String> learnedBooks, Map<String, Long> learnProgress,
-            int writingPercent) {
+            int writingPercent, int copyingPercent) {
         this.hunger = hunger;
         this.mood = mood;
         this.profession = profession;
@@ -107,11 +110,13 @@ public final class ResidentSnapshot {
         this.learnedBooks = List.copyOf(learnedBooks);
         this.learnProgress = Map.copyOf(learnProgress);
         this.writingPercent = writingPercent;
+        this.copyingPercent = copyingPercent;
     }
 
-    /** 服务端：从六域中的四域构建同步快照（附知识域与写作进度）。 */
+    /** 服务端：从六域中的四域构建同步快照（附知识域与写作/抄写进度）。 */
     public static ResidentSnapshot of(Identity identity, Growth growth,
-            Prefs prefs, Status status, KnowledgeState knowledge, int writingPercent) {
+            Prefs prefs, Status status, KnowledgeState knowledge, int writingPercent,
+            int copyingPercent) {
         return new ResidentSnapshot(
                 status.hunger(), status.mood(),
                 identity.profession(), identity.townId(), identity.homePos(),
@@ -123,7 +128,7 @@ public final class ResidentSnapshot {
                 prefs.personality(),
                 knowledge.equippedBookId(), knowledge.learnedSorted(),
                 knowledge.progressView(),
-                writingPercent);
+                writingPercent, copyingPercent);
     }
 
     /** 客户端兜底默认（readNbt 返回 null / 新实体 define 时）。 */
@@ -134,7 +139,7 @@ public final class ResidentSnapshot {
                 Hobbies.Food.SWEET, ProfessionType.NONE,
                 List.of(), null, null, false, null, null,
                 PersonalityType.OPTIMIST,
-                "", List.of(), Map.of(), -1);
+                "", List.of(), Map.of(), -1, -1);
     }
 
     // ==========================================================
@@ -383,6 +388,7 @@ public final class ResidentSnapshot {
         knowledge.put("Progress", progressTag);
         tag.put("Knowledge", knowledge);
         tag.putInt("WritingPercent", this.writingPercent);
+        tag.putInt("CopyingPercent", this.copyingPercent);
         return tag;
     }
 
@@ -401,6 +407,11 @@ public final class ResidentSnapshot {
     /** 写作进度百分比（0~100；-1 = 没有写作中的书）。 */
     public int writingPercent() {
         return this.writingPercent;
+    }
+
+    /** 抄写进度百分比（0~100；-1 = 没有抄写中的书）。 */
+    public int copyingPercent() {
+        return this.copyingPercent;
     }
 
     public static ResidentSnapshot load(CompoundTag tag) {
@@ -475,7 +486,8 @@ public final class ResidentSnapshot {
                 getEnum(tag, "DislikedMob", MobPref.class),
                 getEnum(tag, "Personality", PersonalityType.class, PersonalityType.OPTIMIST),
                 equippedBook, learnedBooks, learnProgress,
-                tag.contains("WritingPercent") ? tag.getInt("WritingPercent") : -1);
+                tag.contains("WritingPercent") ? tag.getInt("WritingPercent") : -1,
+                tag.contains("CopyingPercent") ? tag.getInt("CopyingPercent") : -1);
     }
 
     private static <E extends Enum<E>> E getEnum(CompoundTag tag, String key,

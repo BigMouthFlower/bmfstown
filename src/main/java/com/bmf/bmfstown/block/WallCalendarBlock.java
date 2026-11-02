@@ -98,11 +98,15 @@ public class WallCalendarBlock extends FaceAttachedHorizontalDirectionalBlock {
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos,
             Player player, BlockHitResult hit) {
         if (level instanceof ServerLevel serverLevel) {
-            TownCalendar.CalendarDate date = TownCalendar.get(serverLevel).today(serverLevel);
+            TownCalendar calendar = TownCalendar.get(serverLevel);
+            TownCalendar.CalendarDate date = calendar.today(serverLevel);
+            // 日期 + 星期几（v0.10.3：纪元 1 月 1 日 = 周日顺延）合并为一条
             player.displayClientMessage(Component.translatable(
                     "msg.bmfstown.calendar.today",
                     date.year(), date.month(), date.day(),
-                    TownCalendar.moonPhaseName(date.moonPhase())), true);
+                    TownCalendar.moonPhaseName(date.moonPhase()))
+                    .append(" · ")
+                    .append(TownCalendar.weekdayName(calendar.weekday(serverLevel))), true);
             serverLevel.playSound(null, pos, SoundEvents.BOOK_PAGE_TURN,
                     SoundSource.BLOCKS, 0.8F, 1.0F);
         }

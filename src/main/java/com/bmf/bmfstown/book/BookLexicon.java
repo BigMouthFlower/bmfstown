@@ -46,23 +46,81 @@ public final class BookLexicon {
     private BookLexicon() {
     }
 
+    /**
+     * 闲书的"词位解剖"（v0.10.3）：种子不只是拼书名——句式类型与各槽位
+     * 的词都能结构化还原，供读书气泡做动态占位台词（"嗅探兽有意思"）。
+     * 槽位含义随 {@code template} 而定（见 {@link #title} 的句式表）。
+     *
+     * @param template 句式下标 0~5（a~f）
+     * @param words    该句式实际用到的槽位词（1~3 个，顺序 = 模板占位顺序）
+     */
+    public record BookWords(int template, List<MutableComponent> words) {
+
+        public MutableComponent word(int index) {
+            return this.words.get(index);
+        }
+
+        public int slotCount() {
+            return this.words.size();
+        }
+    }
+
+    /**
+     * 按种子还原闲书的句式与词位（确定性重放）。调用顺序与
+     * {@link #title} 完全一致——同一个 seed 两边还原出同一本书。
+     */
+    public static BookWords deconstruct(long seed) {
+        RandomSource random = RandomSource.create(seed);
+        return switch (random.nextInt(6)) {
+            case 0 -> { // 偏正 a：修饰语之中心语
+                MutableComponent mod = adjective(random);
+                MutableComponent head = noun(random);
+                yield new BookWords(0, List.of(mod, head));
+            }
+            case 1 -> { // 偏正 b：修饰语的中心语
+                MutableComponent mod = adjective(random);
+                MutableComponent head = noun(random);
+                yield new BookWords(1, List.of(mod, head));
+            }
+            case 2 -> { // 〜录：单名词
+                MutableComponent head = noun(random);
+                yield new BookWords(2, List.of(head));
+            }
+            case 3 -> { // 论X与Y（并列）：双名词
+                MutableComponent first = noun(random);
+                MutableComponent second = noun(random);
+                yield new BookWords(3, List.of(first, second));
+            }
+            case 4 -> { // 动宾：谓语 + 名词
+                MutableComponent verb = verb(random);
+                MutableComponent obj = noun(random);
+                yield new BookWords(4, List.of(verb, obj));
+            }
+            default -> { // 主谓宾：实体 + 谓语 + 名词
+                MutableComponent subject = entityNoun(random);
+                MutableComponent verb = verb(random);
+                MutableComponent obj = noun(random);
+                yield new BookWords(5, List.of(subject, verb, obj));
+            }
+        };
+    }
+
     /** 按种子生成书名（translatable 组合树，双语显示自动本地化）。 */
     public static MutableComponent title(long seed) {
-        RandomSource random = RandomSource.create(seed);
-        // 6 句式等概率；槽位词性按句式各取各的池（见 lang 模板注释）
-        return switch (random.nextInt(6)) {
+        BookWords words = deconstruct(seed);
+        return switch (words.template()) {
             case 0 -> Component.translatable("book.bmfstown.title.a",
-                    adjective(random), noun(random));                       // 修饰语之中心语
+                    words.word(0), words.word(1));                       // 修饰语之中心语
             case 1 -> Component.translatable("book.bmfstown.title.b",
-                    adjective(random), noun(random));                       // 修饰语的中心语
+                    words.word(0), words.word(1));                       // 修饰语的中心语
             case 2 -> Component.translatable("book.bmfstown.title.c",
-                    noun(random));                                          // 〜录
+                    words.word(0));                                      // 〜录
             case 3 -> Component.translatable("book.bmfstown.title.d",
-                    noun(random), noun(random));                            // 论X与Y（并列）
+                    words.word(0), words.word(1));                       // 论X与Y（并列）
             case 4 -> Component.translatable("book.bmfstown.title.e",
-                    verb(random), noun(random));                            // 动宾
+                    words.word(0), words.word(1));                       // 动宾
             default -> Component.translatable("book.bmfstown.title.f",
-                    entityNoun(random), verb(random), noun(random));        // 主谓宾
+                    words.word(0), words.word(1), words.word(2));        // 主谓宾
         };
     }
 

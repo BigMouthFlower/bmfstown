@@ -87,6 +87,44 @@ public final class BookPoolState extends SavedData {
     }
 
     /**
+     * 全量池抽取（过拟合 perk 专用，v0.10.3）：无视不放回状态，从
+     * **登记表全部书目**里等概率取一本。
+     *
+     * <h2>两种结果的池子处理（用户 00:18 定稿）</h2>
+     * <ul>
+     *   <li>抽中<b>还没写过</b>的书 → 照常出池（从剩余移入已抽）——
+     *       与正常抽取无异，只是多了一层"可能抽到旧的"；</li>
+     *   <li>抽中<b>已经写过</b>的书 → 得到重复副本，池子<b>不动</b>
+     *       （那本书本来就已出池，再多一本收藏品）。</li>
+     * </ul>
+     *
+     * @return 抽中的书 id；登记表为空返回 null（调用方回退闲书）
+     */
+    public String drawFromFullPool(ServerLevel level, UUID townId, RandomSource random) {
+        var all = SpecialBookRegistry.all().keySet();
+        if (all.isEmpty()) {
+            return null;
+        }
+        // 先补登记（与 draw 同口径）：新登记的书先入剩余池
+        Set<String> pool = remaining.computeIfAbsent(townId, k -> new HashSet<>());
+        Set<String> done = drawn.computeIfAbsent(townId, k -> new HashSet<>());
+        for (String id : all) {
+            if (!pool.contains(id) && !done.contains(id)) {
+                pool.add(id);
+            }
+        }
+        String picked = all.stream().skip(random.nextInt(all.size())).findFirst().orElseThrow();
+        if (pool.contains(picked)) {
+            // 还没写过：照常出池
+            pool.remove(picked);
+            done.add(picked);
+            this.setDirty();
+        }
+        // 已写过的：重复副本，池子不动
+        return picked;
+    }
+
+    /**
      * 退池：书稿被彻底销毁时，把那本特殊书放回该镇剩余池（用户定稿）。
      * 已在剩余池（重复退）或从未入池（坏数据）时静默忽略。
      */

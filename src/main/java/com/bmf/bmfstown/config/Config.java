@@ -602,7 +602,49 @@ public final class Config {
     public static final ModConfigSpec.IntValue SCHOLAR_WORK_END = BUILDER
             .comment("学者停止写书的时刻（dayTime，0~24000）",
                     "Time the scholar stops writing (dayTime)")
-            .defineInRange("scholar.workEnd", 11000, 1, 24000);
+            .defineInRange("scholar.workEnd", 10000, 1, 24000);
+
+    public static final ModConfigSpec.IntValue SCHOLAR_DIVISION_BONUS = BUILDER
+            .comment("分工 perk：写书效率加成（%）。代价：非学者职业经验永久锁涨（不限当前职业）",
+                    "Division perk: writing speed bonus (%). Cost: all non-scholar skill xp locked permanently")
+            .defineInRange("scholar.divisionBonusPercent", 20, 0, 200);
+
+    // ---- 休闲（v0.10.3 闲暇活动：闲逛/图书馆看闲书，动态活动池）----
+
+    public static final ModConfigSpec.IntValue LEISURE_SESSION_MIN = BUILDER
+            .comment("单次休闲的最短时长（gameTime tick，默认 1200 = 游戏 1.2 小时）",
+                    "Minimum leisure session length (gameTime ticks)")
+            .defineInRange("leisure.sessionMinTicks", 1200, 100, 24000);
+
+    public static final ModConfigSpec.IntValue LEISURE_SESSION_MAX = BUILDER
+            .comment("单次休闲的最长时长（gameTime tick，默认 2400 = 游戏 2.4 小时）",
+                    "Maximum leisure session length (gameTime ticks)")
+            .defineInRange("leisure.sessionMaxTicks", 2400, 100, 24000);
+
+    public static final ModConfigSpec.IntValue LEISURE_BREAK_MIN = BUILDER
+            .comment("两段休闲之间的最短间隔（gameTime tick）",
+                    "Minimum break between leisure sessions (gameTime ticks)")
+            .defineInRange("leisure.breakMinTicks", 200, 0, 24000);
+
+    public static final ModConfigSpec.IntValue LEISURE_BREAK_MAX = BUILDER
+            .comment("两段休闲之间的最长间隔（gameTime tick）",
+                    "Maximum break between leisure sessions (gameTime ticks)")
+            .defineInRange("leisure.breakMaxTicks", 600, 0, 24000);
+
+    public static final ModConfigSpec.IntValue LEISURE_IDLE_BOOK_READ = BUILDER
+            .comment("读完一本闲书所需的连续阅读时长（gameTime tick，一次休闲段内完成）",
+                    "Reading time to finish one idle book (gameTime ticks, finishes within one session)")
+            .defineInRange("leisure.idleBookReadTicks", 600, 100, 24000);
+
+    public static final ModConfigSpec.IntValue LEISURE_MOOD_BONUS = BUILDER
+            .comment("读完一本闲书的心情加成（批注本 ×1.5）",
+                    "Mood gain from finishing an idle book (annotated copies give 1.5x)")
+            .defineInRange("leisure.readMoodBonus", 5, 1, 100);
+
+    public static final ModConfigSpec.IntValue SCHOLAR_OVERFIT_BONUS = BUILDER
+            .comment("过拟合 perk：每掌握一门知识的写书效率加成（%，加算叠乘）。代价：抽特殊书 50% 走全量池可能出重复书",
+                    "Overfit perk: writing speed bonus per learned book (%). Cost: 50% draws come from the full pool (duplicates possible)")
+            .defineInRange("scholar.overfitBonusPercent", 10, 0, 100);
 
     // ---- 记忆（v0.9.3 铭记）----
 

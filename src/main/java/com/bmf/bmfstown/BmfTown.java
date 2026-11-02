@@ -51,6 +51,7 @@ public class BmfTown {
         ModDataSerializers.register(modEventBus);
         ModDataComponents.register(modEventBus);
         com.bmf.bmfstown.unlock.UnlockBootstrap.register(); // 解锁条目登记（职业锁定等）
+        com.bmf.bmfstown.book.SpecialBookRegistry.bootstrap(); // 特殊书首批书目登记（奖池/习得效果）
         com.bmf.bmfstown.block.ModBlocks.register(modEventBus);
         ModItems.register(modEventBus);
         ModCreativeTabs.register(modEventBus);

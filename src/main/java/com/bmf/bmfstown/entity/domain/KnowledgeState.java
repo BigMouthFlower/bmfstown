@@ -33,6 +33,12 @@ public class KnowledgeState {
     /** 稀疏研读进度：书 id → 已研读 tick。 */
     private final Map<String, Long> learnProgress = new HashMap<>();
 
+    /**
+     * 研读小数桶（v0.10.3 批注 perk）：非整数增益（批注本 1.5 倍速、
+     * 0.5 倍速等）积少成多用，随档保存。
+     */
+    private double learnCarry = 0.0D;
+
     // ==========================================================
     //  装备与研读
     // ==========================================================
@@ -70,6 +76,15 @@ public class KnowledgeState {
      * 即进入已学列表。需要知道习得时长 → 从登记表查，查不到不累计。
      */
     public void tick() {
+        tick(1.0D);
+    }
+
+    /**
+     * 研读累计（带增速倍率）：批注 perk 书被研读时传 1.5（v0.10.3
+     * 预留钩子——读书系统重设计接入后由调用方按装备的实体书判定倍率）。
+     * 非整数部分进 {@link #learnCarry} 小数桶，不丢进度。
+     */
+    public void tick(double gain) {
         if (this.equippedBookId.isEmpty() || this.learned.contains(this.equippedBookId)) {
             return;
         }
@@ -77,7 +92,13 @@ public class KnowledgeState {
         if (book == null) {
             return; // 登记表没有（池子换版等）：进度保留但不推进
         }
-        long progress = this.learnProgress.merge(this.equippedBookId, 1L, Long::sum);
+        this.learnCarry += gain;
+        long whole = (long) this.learnCarry;
+        if (whole <= 0) {
+            return;
+        }
+        this.learnCarry -= whole;
+        long progress = this.learnProgress.merge(this.equippedBookId, whole, Long::sum);
         if (progress >= book.learnTicks()) {
             this.learned.add(this.equippedBookId);
         }
@@ -103,6 +124,18 @@ public class KnowledgeState {
         }
     }
 
+    /**
+     * 直接学会并装备一本书（调试命令 {@code /bmfstown booklearn} 用；
+     * 正式通路是研读累计）。登记表外的 id 静默忽略。
+     */
+    public void forceLearn(String bookId) {
+        if (com.bmf.bmfstown.book.SpecialBookRegistry.byId(bookId) == null) {
+            return;
+        }
+        this.learned.add(bookId);
+        this.equippedBookId = bookId;
+    }
+
     // ==========================================================
     //  落档
     // ==========================================================
@@ -123,6 +156,7 @@ public class KnowledgeState {
             progressTag.add(t);
         }
         tag.put("Progress", progressTag);
+        tag.putDouble("LearnCarry", this.learnCarry);
         return tag;
     }
 
@@ -139,5 +173,6 @@ public class KnowledgeState {
             CompoundTag t = progressTag.getCompound(i);
             this.learnProgress.put(t.getString("Id"), t.getLong("Ticks"));
         }
+        this.learnCarry = tag.getDouble("LearnCarry");
     }
 }

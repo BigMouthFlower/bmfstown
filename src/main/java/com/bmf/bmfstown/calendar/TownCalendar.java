@@ -183,6 +183,30 @@ public final class TownCalendar extends SavedData {
     }
 
     // ------------------------------------------------------------
+    //  星期（v0.10.3）：纪元 1 月 1 日 = 周日，往后顺延。
+    //  0 = 周日 … 6 = 周六；周一~五（1~5）为工作日，周末有职业者休闲。
+    // ------------------------------------------------------------
+
+    public static final int WEEKDAY_SUNDAY = 0;
+    public static final int WEEKDAY_SATURDAY = 6;
+
+    /** 星期几（0 = 周日 … 6 = 周六）：纪元日起按天顺延。 */
+    public int weekday(ServerLevel level) {
+        return (int) Math.floorMod(relDay(level), 7L);
+    }
+
+    /** 星期几是不是工作日（周一~五；周六日有职业者也休闲）。 */
+    public boolean isWorkday(ServerLevel level) {
+        int wd = weekday(level);
+        return wd != WEEKDAY_SUNDAY && wd != WEEKDAY_SATURDAY;
+    }
+
+    /** 星期几的名字（lang：calendar.bmfstown.weekday.0~6）。 */
+    public static Component weekdayName(int weekday) {
+        return Component.translatable("calendar.bmfstown.weekday." + Math.floorMod(weekday, 7));
+    }
+
+    // ------------------------------------------------------------
     //  序列化
     // ------------------------------------------------------------
 

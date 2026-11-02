@@ -46,7 +46,7 @@ public final class WarriorGoals {
     private WarriorGoals() {
     }
 
-    /** 工作锚点：站岗 = 岗哨位置；跟随 = 玩家位置；无工作 = null。 */
+    /** 工作锚点：站岗 = 岗哨位置；跟随 = 玩家位置；其余（无工作/学者模式）= null。 */
     private static BlockPos anchor(Resident resident) {
         return switch (resident.getWorkMode()) {
             case GUARD_POST -> resident.getGuardPost();
@@ -54,7 +54,7 @@ public final class WarriorGoals {
                 Player p = followedPlayer(resident);
                 yield p != null ? p.blockPosition() : null;
             }
-            case NONE -> null;
+            case NONE, WRITE, COPY -> null;
         };
     }
 

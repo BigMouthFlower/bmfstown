@@ -30,6 +30,15 @@ public sealed interface BookDraft permits BookDraft.Perk, BookDraft.Unlock, Book
     /** NBT/网络判别键（也是将来往注册表里填新种类时的路由名）。 */
     String kindName();
 
+    /** 特殊书的登记键（perk 书 = perkId，解锁书 = unlockId；闲书 = null）。 */
+    default String bookId() {
+        return switch (this) {
+            case Perk p -> p.perkId();
+            case Unlock u -> u.unlockId();
+            case Idle i -> null;
+        };
+    }
+
     // ==========================================================
     //  三种实现
     // ==========================================================

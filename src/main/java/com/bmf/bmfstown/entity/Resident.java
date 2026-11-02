@@ -150,6 +150,12 @@ public class Resident extends PathfinderMob {
     /** 写作中的书（学者工作页专属格子；非学者恒空）。进度全在书组件里。 */
     private ItemStack writingBook = ItemStack.EMPTY;
 
+    /** 抄写中的书（学者抄书模式的过程物，v0.10.3；生命周期与写作中的书完全一致）。 */
+    private ItemStack copyingBook = ItemStack.EMPTY;
+
+    /** 研读书（知识页研读槽，v0.10.3）：特殊书放入即自动研读，学成留在槽=装备生效。 */
+    private ItemStack studyBook = ItemStack.EMPTY;
+
     /** 跟随目标镇民（学者实践观察用；null = 没在跟随）。 */
     @Nullable
     private UUID followResidentId;
@@ -457,9 +463,10 @@ public class Resident extends PathfinderMob {
         // 跟随观察（途径 B）与写作互斥（两 Goal 各自 canUse 判 followResidentId）
         this.goalSelector.addGoal(4, new ScholarGoal(this));
         this.goalSelector.addGoal(4, new ScholarFollowGoal(this));
-        // ---- 阅读（v0.11 已禁用，用户实测：全体镇民被书架吸引、睡觉也去——
-        // 启动条件与优先级需要重设计，读书行为产生机制定稿后再启用） ----
-        // this.goalSelector.addGoal(5, new ReadingGoal(this));
+        // ---- 闲暇活动（v0.10.3：动态活动池——闲逛/图书馆看闲书，优先级 5
+        //      低于工作/战士 Goal；窗口判定见 LeisureGoal，读书逻辑在
+        //      leisure.LibraryReadActivity，替代已废弃的 ReadingGoal） ----
+        this.goalSelector.addGoal(5, new com.bmf.bmfstown.leisure.LeisureGoal(this));
         // ---- 开门/关门（原版村民同款，用户定稿） ----
         // DoorInteractGoal 系不占 MOVE/LOOK 旗标（构造器无 setFlags，已核对字节码）：
         // 寻路撞上关闭的木门时它并行启动——开门、等走过、再关门。
@@ -495,17 +502,12 @@ public class Resident extends PathfinderMob {
         if (this.level() != null && this.level().isClientSide()) {
             return;
         }
-        // 写作进度百分比（学者工作页进度条；快照 equals 去重——没变化不发包）
-        int writingPercent = -1;
-        BookContent wipContent = this.writingBook.get(
-                com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-        if (wipContent != null && wipContent.target() > 0) {
-            writingPercent = (int) Math.min(100L,
-                    wipContent.progress() * 100L / wipContent.target());
-        }
+        // 写作/抄写进度百分比（学者工作页进度条；快照 equals 去重——没变化不发包）
+        int writingPercent = wipPercent(this.writingBook);
+        int copyingPercent = wipPercent(this.copyingBook);
         this.entityData.set(DATA_ARCHIVE, ResidentSnapshot.of(
                 this.identity, this.growth, this.prefs, this.status, this.knowledge,
-                writingPercent));
+                writingPercent, copyingPercent));
     }
 
     /** 工人"工作中"可视化标记（气泡渲染读客户端同步值）。 */
@@ -529,13 +531,85 @@ public class Resident extends PathfinderMob {
         return this.knowledge;
     }
 
+    /** 睡眠状态机是否在跑（GO_HOME/FIND_BED/SLEEPING 任一）——闲暇让位用。 */
+    public boolean isSleepRoutineActive() {
+        return this.sleepState != SleepState.AWAKE;
+    }
+
     /** 写作中的书（学者工作页专属格子）。 */
     public ItemStack getWritingBook() {
         return this.writingBook;
     }
 
+    /** 抄写中的书（学者抄书模式的过程物，v0.10.3）。 */
+    public ItemStack getCopyingBook() {
+        return this.copyingBook;
+    }
+
     public void setWritingBook(ItemStack stack) {
         this.writingBook = stack.copy();
+    }
+
+    public void setCopyingBook(ItemStack stack) {
+        this.copyingBook = stack.copy();
+    }
+
+    /** 研读书（知识页研读槽：特殊书放入即自动研读，学成留槽=装备生效）。 */
+    public ItemStack getStudyBook() {
+        return this.studyBook;
+    }
+
+    public void setStudyBook(ItemStack stack) {
+        this.studyBook = stack.copy();
+        // 槽与知识域装备位联动：放入特殊书 = 开始研读；取出 = 卸下
+        BookContent c = this.studyBook.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+        String bookId = c == null ? null : c.draft().bookId();
+        if (bookId != null) {
+            this.knowledge.equip(bookId);
+        } else {
+            this.knowledge.unequip();
+        }
+    }
+
+    /** 研读书的研读倍率（批注本 1.5，普通 1.0；只对槽内书与装备位一致时生效）。 */
+    private double studyGain() {
+        BookContent c = this.studyBook.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+        if (c == null || !c.annotated()) {
+            return 1.0D;
+        }
+        String bookId = c.draft().bookId();
+        return bookId != null && bookId.equals(this.knowledge.equippedBookId()) ? 1.5D : 1.0D;
+    }
+
+    /** WIP 书的进度百分比（-1 = 空手）。 */
+    private static int wipPercent(ItemStack stack) {
+        BookContent c = stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+        if (c == null || c.target() <= 0) {
+            return -1;
+        }
+        return (int) Math.min(100L, c.progress() * 100L / c.target());
+    }
+
+    /**
+     * 装备中的<b>已学</b>特殊书提供的某类效果加成（%；装备未学完不算，
+     * 学完才生效——极乐迪斯科"内化后才起效"口径）。
+     */
+    public int learnedEffectBonus(com.bmf.bmfstown.book.SpecialBookEffect.Type type) {
+        String id = this.knowledge.equippedBookId();
+        if (id.isEmpty() || !this.knowledge.isLearned(id)) {
+            return 0;
+        }
+        var book = com.bmf.bmfstown.book.SpecialBookRegistry.byId(id);
+        if (book == null) {
+            return 0;
+        }
+        int sum = 0;
+        for (var effect : book.effects()) {
+            if (effect.type() == type) {
+                sum += effect.amount();
+            }
+        }
+        return sum;
     }
 
     @Nullable
@@ -760,6 +834,16 @@ public class Resident extends PathfinderMob {
         if (this.level().isClientSide()) {
             return;
         }
+        // 分工 perk（学者树精通 B）：非学者经验永久锁涨——**不限当前职业**，
+        // 选了这分支以后切到战士/工人也不涨（用户 01:20 定稿：永久只会写书的人）。
+        // 只查档案里的 perk 选择记录，不加职业门。
+        if (type != com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR.mainSkill()
+                && hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "division")) {
+            return;
+        }
+        // 国富论（XP_BONUS）：装备已学时全技能经验获取加成
+        amount = Math.max(1, Math.round(amount
+                * (1.0F + learnedEffectBonus(com.bmf.bmfstown.book.SpecialBookEffect.Type.XP_BONUS) / 100.0F)));
         this.growth.addSkillXp(type, amount);
         this.syncClient();
     }
@@ -802,6 +886,14 @@ public class Resident extends PathfinderMob {
         if (!this.writingBook.isEmpty()) {
             this.spawnAtLocation(this.writingBook);
             this.writingBook = ItemStack.EMPTY;
+        }
+        if (!this.copyingBook.isEmpty()) {
+            this.spawnAtLocation(this.copyingBook);
+            this.copyingBook = ItemStack.EMPTY;
+        }
+        if (!this.studyBook.isEmpty()) {
+            this.spawnAtLocation(this.studyBook);
+            this.studyBook = ItemStack.EMPTY;
         }
         // ---- 背包 27 格 ----
         for (int i = 0; i < this.inventory.getContainerSize(); i++) {
@@ -1062,6 +1154,12 @@ public class Resident extends PathfinderMob {
         if (!this.writingBook.isEmpty()) {
             tag.put("WritingBook", this.writingBook.save(this.registryAccess()));
         }
+        if (!this.copyingBook.isEmpty()) {
+            tag.put("CopyingBook", this.copyingBook.save(this.registryAccess()));
+        }
+        if (!this.studyBook.isEmpty()) {
+            tag.put("StudyBook", this.studyBook.save(this.registryAccess()));
+        }
         if (this.followResidentId != null) {
             tag.putUUID("FollowResident", this.followResidentId);
         }
@@ -1113,6 +1211,14 @@ public class Resident extends PathfinderMob {
         if (tag.contains("WritingBook", Tag.TAG_COMPOUND)) {
             ItemStack.parse(this.registryAccess(), tag.getCompound("WritingBook"))
                     .ifPresent(this::setWritingBook);
+        }
+        if (tag.contains("CopyingBook", Tag.TAG_COMPOUND)) {
+            ItemStack.parse(this.registryAccess(), tag.getCompound("CopyingBook"))
+                    .ifPresent(this::setCopyingBook);
+        }
+        if (tag.contains("StudyBook", Tag.TAG_COMPOUND)) {
+            ItemStack.parse(this.registryAccess(), tag.getCompound("StudyBook"))
+                    .ifPresent(this::setStudyBook);
         }
         this.followResidentId = tag.hasUUID("FollowResident")
                 ? tag.getUUID("FollowResident") : null;
@@ -1190,8 +1296,8 @@ public class Resident extends PathfinderMob {
         if (this.hungerTickAccumulator >= ticksPerPoint) {
             this.hungerTickAccumulator = 0;
             HungerSystem.tickHunger(this, ticksPerPoint);
-        // 知识域：装备中的特殊书研读累计（装备期间每 tick +1）
-        this.knowledge.tick();
+        // 知识域：研读槽中的特殊书研读累计（批注本 1.5 倍速——批注 perk 接通点）
+        this.knowledge.tick(this.studyGain());
         }
 
         // ---- 2. 进食 ----
@@ -1254,8 +1360,11 @@ public class Resident extends PathfinderMob {
         }
 
         // ---- 6. 睡眠（夜晚回住宅区躺床；战士工作中不睡觉——
-        //      跟随时贴身守夜，站岗时守岗到天亮；饮食区照常去）----
-        if (this.getWorkMode() == WorkMode.NONE) {
+        //      跟随时贴身守夜，站岗时守岗到天亮；饮食区照常去）。
+        //      学者的写书/抄书模式必须睡觉（v0.10.3 修复：曾沿用
+        //      "仅 NONE 才睡"的旧门，学者一进工作模式就永久不睡）----
+        WorkMode sleepGate = this.getWorkMode();
+        if (sleepGate != WorkMode.FOLLOW && sleepGate != WorkMode.GUARD_POST) {
             this.tickSleep();
         }
     }
@@ -2125,7 +2234,7 @@ public class Resident extends PathfinderMob {
     }
 
     /** 当前时间是否在睡觉窗口内（支持跨午夜，如 22000~6000）。 */
-    private static boolean isNightTime(long dayTime) {
+    public static boolean isNightTime(long dayTime) {
         int t = (int) (dayTime % 24000L);
         int start = Config.SLEEP_START_TIME.get();
         int end = Config.SLEEP_END_TIME.get();
@@ -3239,6 +3348,9 @@ public class Resident extends PathfinderMob {
         }
 
         double efficiency = professionEfficiency();
+        // 《五轮书》《孙子兵法》（MELEE_DAMAGE）：装备已学特殊书的近战伤害加成
+        efficiency *= 1.0 + learnedEffectBonus(
+                com.bmf.bmfstown.book.SpecialBookEffect.Type.MELEE_DAMAGE) / 100.0;
         var attackAttr = this.getAttribute(Attributes.ATTACK_DAMAGE);
         var modId = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("bmfstown", "profession_efficiency");
         boolean boosted = false;

@@ -1032,8 +1032,9 @@ public final class Status {
      * 读闲书（v0.11 用户定稿）：心情 +5，想法唯一文案
      * "他读了《XX》，感觉很有意思"（书名走参数，客户端现译）。
      */
-    public void readEnjoyed(ServerLevel level, long bookSeed) {
-        this.mood = Math.min(MAX_MOOD, this.mood + 5); // 读书小额正额（用户定稿 +5）
+    /** 读完闲书：心情加成由调用方按批注倍率折算，想法记书名（种子现译）。 */
+    public void readEnjoyed(ServerLevel level, long bookSeed, int moodGain) {
+        this.mood = Math.min(MAX_MOOD, this.mood + moodGain);
         // arg 协议："idle:<种子>"——客户端按种子现译书名（双语自动）
         addThought(level, TONE_POSITIVE, "mood.bmfstown.thought.reading",
                 Thought.MARK_NONE, "idle:" + bookSeed);

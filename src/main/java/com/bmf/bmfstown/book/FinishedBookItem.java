@@ -27,12 +27,17 @@ public class FinishedBookItem extends Item {
         if (content == null) {
             return super.getName(stack);
         }
-        return switch (content.draft()) {
+        net.minecraft.network.chat.MutableComponent name = switch (content.draft()) {
             // 特殊书名在登记表 lang：book.bmfstown.special.<id>.name
             case BookDraft.Perk p -> Component.translatable("book.bmfstown.special." + p.perkId() + ".name");
             case BookDraft.Unlock u -> Component.translatable("book.bmfstown.special." + u.unlockId() + ".name");
             case BookDraft.Idle i -> BookLexicon.title(i.seed());
         };
+        // 批注 perk（v0.10.3）：书名后缀"——批注"（数据标记在 BOOK_CONTENT.Annotated）
+        if (content.annotated()) {
+            name = name.copy().append(Component.translatable("book.bmfstown.annotated_suffix"));
+        }
+        return name;
     }
 
     @Override

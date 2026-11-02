@@ -56,13 +56,46 @@ public final class Perks {
             {"opensource", "thrift"},    // 传奇：开源 / 节流
     };
 
+    // ---- 学者节点（v0.10.3，与战士/工人树同构；节点二 B 位待补第二分支） ----
+
+    /**
+     * 学者精通：辩证法（写 perk 书时写书效率额外乘对应学科效率，
+     * 成书双涨经验）/ 分工（写书效率 +20%，非学者经验永久锁涨——
+     * <b>不限当前职业</b>，选了就永久是"只会写书的人"）。
+     */
+    public static final String NODE_S_ADEPT = "scholar.adept";
+    /**
+     * 学者大师：过拟合（每掌握一门知识写书效率 +10%；抽奖 50% 走全量池，
+     * 可能出重复书）/ 批注（书带批注标记：写作耗时 ×1.5，闲书阅读心情
+     * 加成 ×1.5，他人研读 perk 书习得更快）。
+     */
+    public static final String NODE_S_MASTER = "scholar.master";
+    /** 学者传奇：三门问题（换门模型提升特殊书中签率）/ 活字印刷术（抄书效率 +50%，抄书玩法实装后生效）。 */
+    public static final String NODE_S_LEGEND = "scholar.legend";
+
+    public static final String[] SCHOLAR_NODES = {NODE_S_ADEPT, NODE_S_MASTER, NODE_S_LEGEND};
+
+    public static final String[][] SCHOLAR_BRANCHES = {
+            {"dialectics", "division"},   // 精通：辩证法 / 分工
+            {"overfit", "annotation"},    // 大师：过拟合 / 批注
+            {"monty", "movabletype"},     // 传奇：三门问题 / 活字印刷术
+    };
+
     /** 节点解锁所需段位（与 {@code SkillTiers.PERK_TIERS} 对齐：精通/大师/传奇）。 */
     public static final int[] UNLOCK_TIER = {3, 6, 9};
 
     /** 节点 id 前缀 → 归属职业（六域重构：perk 按职业分格后，从节点反查格子）。 */
     public static ProfessionType ownerOf(String node) {
-        return node != null && node.startsWith("worker.")
-                ? ProfessionType.WORKER : ProfessionType.WARRIOR;
+        if (node == null) {
+            return ProfessionType.WARRIOR;
+        }
+        if (node.startsWith("worker.")) {
+            return ProfessionType.WORKER;
+        }
+        if (node.startsWith("scholar.")) {
+            return ProfessionType.SCHOLAR;
+        }
+        return ProfessionType.WARRIOR;
     }
 
     /**
@@ -71,8 +104,8 @@ public final class Perks {
      * <p><b>不能信客户端</b>——payload 里的节点/分支必须复核段位与合法性，
      * 改包客户端想跳级选传奇分支时在这里被拒。
      *
-     * <p>职业门禁：战士节点只认战士，工人节点只认工人——
-     * 拿工人 payload 给战士点天赋在这里被拒。
+     * <p>职业门禁：战士节点只认战士，工人节点只认工人，学者节点只认学者——
+     * 拿别的职业 payload 点天赋在这里被拒。
      *
      * @return true = 允许落档
      */
@@ -81,15 +114,21 @@ public final class Perks {
             String node, String branch) {
         var profession = identity.profession();
         boolean workerTree = node.startsWith("worker.");
+        boolean scholarTree = node.startsWith("scholar.");
         // 节点树前缀必须与职业匹配
         if (workerTree && profession != ProfessionType.WORKER) {
             return false;
         }
-        if (!workerTree && profession != ProfessionType.WARRIOR) {
+        if (scholarTree && profession != ProfessionType.SCHOLAR) {
             return false;
         }
-        String[] nodes = workerTree ? WORKER_NODES : NODES;
-        String[][] branches = workerTree ? WORKER_BRANCHES : BRANCHES;
+        if (!workerTree && !scholarTree && profession != ProfessionType.WARRIOR) {
+            return false;
+        }
+        String[] nodes = workerTree ? WORKER_NODES
+                : scholarTree ? SCHOLAR_NODES : NODES;
+        String[][] branches = workerTree ? WORKER_BRANCHES
+                : scholarTree ? SCHOLAR_BRANCHES : BRANCHES;
         for (int n = 0; n < nodes.length; n++) {
             if (!nodes[n].equals(node)) {
                 continue;

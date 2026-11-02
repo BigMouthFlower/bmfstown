@@ -66,6 +66,16 @@ public final class ResidentCommands {
                                         ctx,
                                         EntityArgument.getEntities(ctx, "targets"),
                                         IntegerArgumentType.getInteger(ctx, "percent"))))));
+        // ---- /bmfstown booklearn <目标> <书id> ----
+        // 学者调试：直接把一本登记的特殊书标记为"已学并装备"——读书系统
+        // 重设计挂起期间，习得效果的测试通路。
+        root.then(Commands.literal("booklearn")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .then(Commands.argument("book", StringArgumentType.string())
+                                .executes(ctx -> learnBook(
+                                        ctx,
+                                        EntityArgument.getEntities(ctx, "targets"),
+                                        StringArgumentType.getString(ctx, "book"))))));
 
         // ---- /bmfstown mood <目标> <0-100> ----
         root.then(Commands.literal("mood")
@@ -215,8 +225,9 @@ public final class ResidentCommands {
 
 
     /**
-     * 设置学者写作进度（百分比）。只对身上有"写作中的书"的镇民生效——
-     * 进度直接写进书的组件 NBT（继承/掉落语义不变）。
+     * 设置学者写作/抄写进度（百分比）。按当前工作模式取槽（写书 → 写作槽，
+     * 抄书 → 抄写槽；当前槽空则看另一个槽）——进度直接写进书的组件 NBT
+     * （继承/掉落语义不变）。
      */
     private static int setBookProgress(CommandContext<CommandSourceStack> ctx,
                                        Collection<? extends Entity> targets, int percent) {
@@ -225,23 +236,64 @@ public final class ResidentCommands {
             if (!(entity instanceof Resident resident)) {
                 continue;
             }
-            ItemStack wip = resident.getWritingBook();
+            boolean copying = resident.getWorkMode() == com.bmf.bmfstown.entity.WorkMode.COPY;
+            // 记住从哪个槽读的——写回必须回同一个槽！（曾因无脑写回写作槽，
+            // 把抄写进度 100 塞进写作槽 + 抄写槽原地 100，双槽卡死疯狂复制）
+            boolean slotIsCopy = copying;
+            ItemStack wip = copying ? resident.getCopyingBook() : resident.getWritingBook();
+            if (wip.isEmpty()) {
+                // 当前模式槽空：看另一个槽（别让"写了半本切到抄书"这种状态卡住命令）
+                slotIsCopy = !copying;
+                wip = slotIsCopy ? resident.getCopyingBook() : resident.getWritingBook();
+            }
             BookContent content = wip.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
             if (content == null) {
-                continue; // 这位学者手里没有写作中的书
+                continue; // 这位学者手里没有写作/抄写中的书
             }
             long progress = Math.round(content.target() * percent / 100.0);
             wip.set(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get(),
                     new BookContent(content.townId(), content.authors(), content.draft(),
-                            progress, content.target(), content.checkpointPassed()));
-            resident.setWritingBook(wip);
+                            progress, content.target(), content.checkpointPassed(),
+                            content.annotated()));
+            if (slotIsCopy) {
+                resident.setCopyingBook(wip);
+            } else {
+                resident.setWritingBook(wip);
+            }
             ctx.getSource().sendSuccess(() -> Component.literal(
                     resident.getName().getString() + " 写作进度 → " + percent + "%"), false);
             changed++;
         }
         if (changed == 0) {
             ctx.getSource().sendFailure(Component.literal(
-                    "目标身上没有写作中的书（先给学者配好图书馆和原料）"));
+                    "目标身上没有写作/抄写中的书（先给学者配好图书馆和原料）"));
+        }
+        return changed;
+    }
+
+    /**
+     * 直接学会一本特殊书（调试）：标记已学 + 装备——装备已学即效果生效。
+     * 书 id 必须在特殊书登记表里（如 wulun / sunzi / shanjing）。
+     */
+    private static int learnBook(CommandContext<CommandSourceStack> ctx,
+                                 Collection<? extends Entity> targets, String bookId) {
+        var book = com.bmf.bmfstown.book.SpecialBookRegistry.byId(bookId);
+        if (book == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "登记表里没有这本书：" + bookId + "（可用：" +
+                    String.join("、", com.bmf.bmfstown.book.SpecialBookRegistry.all().keySet()) + "）"));
+            return 0;
+        }
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (!(entity instanceof Resident resident)) {
+                continue;
+            }
+            resident.getKnowledge().forceLearn(bookId);
+            resident.syncClient();
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    resident.getName().getString() + " 已学会并装备《" + bookId + "》"), false);
+            changed++;
         }
         return changed;
     }

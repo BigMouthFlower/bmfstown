@@ -40,17 +40,28 @@ import java.util.UUID;
  * </ul>
  */
 public record BookContent(UUID townId, List<String> authors, BookDraft draft,
-                          long progress, long target, boolean checkpointPassed) {
+                          long progress, long target, boolean checkpointPassed,
+                          boolean annotated) {
 
-    /** 开写：进度归零、卡点未解除、作者链只有第一人。 */
+    /** 开写：进度归零、卡点未解除、作者链只有第一人、非批注。 */
     public static BookContent startWriting(UUID townId, String firstAuthor, BookDraft draft, long target) {
-        return new BookContent(townId, List.of(firstAuthor), draft, 0L, target, false);
+        return new BookContent(townId, List.of(firstAuthor), draft, 0L, target, false, false);
     }
 
     /** 写作 tick（效率作乘数，由调用方把本 tick 的贡献值算好传入）。 */
     public BookContent withProgressAdded(long amount) {
         return new BookContent(this.townId, this.authors, this.draft,
-                Math.min(this.target, this.progress + amount), this.target, this.checkpointPassed);
+                Math.min(this.target, this.progress + amount), this.target, this.checkpointPassed,
+                this.annotated);
+    }
+
+    /**
+     * 标记为批注本（批注 perk，v0.10.3）：开写时定死，书名加后缀
+     * "——批注"，闲书阅读心情加成 ×1.5、他人研读 perk 书习得更快。
+     */
+    public BookContent withAnnotated() {
+        return new BookContent(this.townId, this.authors, this.draft,
+                this.progress, this.target, this.checkpointPassed, true);
     }
 
     /** 换人续写：作者名往后串（用户定稿：死者也是作者，名字链永留）。 */
@@ -61,7 +72,7 @@ public record BookContent(UUID townId, List<String> authors, BookDraft draft,
         List<String> out = new ArrayList<>(this.authors);
         out.add(author);
         return new BookContent(this.townId, List.copyOf(out), this.draft,
-                this.progress, this.target, this.checkpointPassed);
+                this.progress, this.target, this.checkpointPassed, this.annotated);
     }
 
     /** 实践计数 +1（书 NBT 自带计数器，被跟随的 NPC 每完成一次对应行为 +1）。 */
@@ -72,13 +83,17 @@ public record BookContent(UUID townId, List<String> authors, BookDraft draft,
         int count = Math.min(perk.practiceGoal(), perk.practiceCount() + 1);
         return new BookContent(this.townId, this.authors, new BookDraft.Perk(
                         perk.perkId(), perk.professionId(), count, perk.practiceGoal()),
-                this.progress, this.target, count >= perk.practiceGoal());
+                this.progress, this.target, count >= perk.practiceGoal(), this.annotated);
     }
 
-    /** 本 tick 是否处于 50% 卡点（写作状态机用它决定停笔）。 */
+    /**
+     * 本 tick 是否处于 50% 卡点（写作状态机用它决定停笔）。
+     * practiceGoal = 0 的书（无观察挂点的学科）不吃卡点——否则永远写不完。
+     */
     public boolean isStuck() {
         return this.progress >= this.target / 2 && !this.checkpointPassed
-                && this.draft instanceof BookDraft.Perk;
+                && this.draft instanceof BookDraft.Perk perk
+                && perk.practiceGoal() > 0;
     }
 
     /** 是否已完成。 */
@@ -96,7 +111,8 @@ public record BookContent(UUID townId, List<String> authors, BookDraft draft,
             BookDraftCodec.CODEC.fieldOf("Draft").forGetter(BookContent::draft),
             Codec.LONG.fieldOf("Progress").forGetter(BookContent::progress),
             Codec.LONG.fieldOf("Target").forGetter(BookContent::target),
-            Codec.BOOL.optionalFieldOf("CheckpointPassed", false).forGetter(BookContent::checkpointPassed)
+            Codec.BOOL.optionalFieldOf("CheckpointPassed", false).forGetter(BookContent::checkpointPassed),
+            Codec.BOOL.optionalFieldOf("Annotated", false).forGetter(BookContent::annotated)
     ).apply(inst, BookContent::new));
 
     public static final StreamCodec<ByteBuf, BookContent> STREAM_CODEC = StreamCodec.ofMember(
@@ -111,6 +127,7 @@ public record BookContent(UUID townId, List<String> authors, BookDraft draft,
                 buf.writeLong(content.progress());
                 buf.writeLong(content.target());
                 buf.writeBoolean(content.checkpointPassed());
+                buf.writeBoolean(content.annotated());
             },
             buf -> {
                 java.util.UUID townId = new java.util.UUID(buf.readLong(), buf.readLong());
@@ -123,6 +140,7 @@ public record BookContent(UUID townId, List<String> authors, BookDraft draft,
                 long progress = buf.readLong();
                 long target = buf.readLong();
                 boolean passed = buf.readBoolean();
-                return new BookContent(townId, List.copyOf(authors), draft, progress, target, passed);
+                boolean annotated = buf.readBoolean();
+                return new BookContent(townId, List.copyOf(authors), draft, progress, target, passed, annotated);
             });
 }
