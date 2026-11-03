@@ -78,6 +78,12 @@ public final class ResidentSnapshot {
     /** 抄写进度百分比（0~100；-1 = 当前没有抄写中的书）。 */
     private final int copyingPercent;
 
+    /** 学识点（读完闲书 +1，学特殊书消耗；v0.10.4 学识制）。 */
+    private final int literacy;
+
+    /** 累计读完的书（闲书 + 技能书）。 */
+    private final int totalBooksRead;
+
     private ResidentSnapshot(int hunger, int mood,
             ProfessionType profession, UUID townId, BlockPos homePos,
             UUID housingZoneId, long housingAssignedAt,
@@ -87,7 +93,8 @@ public final class ResidentSnapshot {
             boolean likesMusic, WeatherPref dislikedWeather, MobPref dislikedMob,
             PersonalityType personality,
             String equippedBookId, List<String> learnedBooks, Map<String, Long> learnProgress,
-            int writingPercent, int copyingPercent) {
+            int writingPercent, int copyingPercent,
+            int literacy, int totalBooksRead) {
         this.hunger = hunger;
         this.mood = mood;
         this.profession = profession;
@@ -111,6 +118,8 @@ public final class ResidentSnapshot {
         this.learnProgress = Map.copyOf(learnProgress);
         this.writingPercent = writingPercent;
         this.copyingPercent = copyingPercent;
+        this.literacy = literacy;
+        this.totalBooksRead = totalBooksRead;
     }
 
     /** 服务端：从六域中的四域构建同步快照（附知识域与写作/抄写进度）。 */
@@ -128,7 +137,8 @@ public final class ResidentSnapshot {
                 prefs.personality(),
                 knowledge.equippedBookId(), knowledge.learnedSorted(),
                 knowledge.progressView(),
-                writingPercent, copyingPercent);
+                writingPercent, copyingPercent,
+                knowledge.literacy(), knowledge.totalBooksRead());
     }
 
     /** 客户端兜底默认（readNbt 返回 null / 新实体 define 时）。 */
@@ -139,7 +149,7 @@ public final class ResidentSnapshot {
                 Hobbies.Food.SWEET, ProfessionType.NONE,
                 List.of(), null, null, false, null, null,
                 PersonalityType.OPTIMIST,
-                "", List.of(), Map.of(), -1, -1);
+                "", List.of(), Map.of(), -1, -1, 0, 0);
     }
 
     // ==========================================================
@@ -386,6 +396,8 @@ public final class ResidentSnapshot {
             progressTag.add(t);
         }
         knowledge.put("Progress", progressTag);
+        knowledge.putInt("Literacy", this.literacy);
+        knowledge.putInt("TotalRead", this.totalBooksRead);
         tag.put("Knowledge", knowledge);
         tag.putInt("WritingPercent", this.writingPercent);
         tag.putInt("CopyingPercent", this.copyingPercent);
@@ -402,6 +414,16 @@ public final class ResidentSnapshot {
 
     public Map<String, Long> learnProgress() {
         return this.learnProgress;
+    }
+
+    /** 学识点（读完闲书 +1，学特殊书消耗）。 */
+    public int literacy() {
+        return this.literacy;
+    }
+
+    /** 累计读完的书（闲书 + 技能书）。 */
+    public int totalBooksRead() {
+        return this.totalBooksRead;
     }
 
     /** 写作进度百分比（0~100；-1 = 没有写作中的书）。 */
@@ -453,9 +475,13 @@ public final class ResidentSnapshot {
         String equippedBook = "";
         List<String> learnedBooks = new ArrayList<>();
         Map<String, Long> learnProgress = new HashMap<>();
+        int literacy = 0;
+        int totalBooksRead = 0;
         if (tag.contains("Knowledge", Tag.TAG_COMPOUND)) {
             CompoundTag knowledge = tag.getCompound("Knowledge");
             equippedBook = knowledge.getString("Equipped");
+            literacy = knowledge.getInt("Literacy");
+            totalBooksRead = knowledge.getInt("TotalRead");
             ListTag learnedTag = knowledge.getList("Learned", Tag.TAG_STRING);
             for (int i = 0; i < learnedTag.size(); i++) {
                 learnedBooks.add(learnedTag.getString(i));
@@ -487,7 +513,8 @@ public final class ResidentSnapshot {
                 getEnum(tag, "Personality", PersonalityType.class, PersonalityType.OPTIMIST),
                 equippedBook, learnedBooks, learnProgress,
                 tag.contains("WritingPercent") ? tag.getInt("WritingPercent") : -1,
-                tag.contains("CopyingPercent") ? tag.getInt("CopyingPercent") : -1);
+                tag.contains("CopyingPercent") ? tag.getInt("CopyingPercent") : -1,
+                literacy, totalBooksRead);
     }
 
     private static <E extends Enum<E>> E getEnum(CompoundTag tag, String key,

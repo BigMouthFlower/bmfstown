@@ -75,6 +75,13 @@ public final class ModDataComponents {
                     .networkSynchronized(com.bmf.bmfstown.book.BookContent.STREAM_CODEC)
                     .build());
 
+    /** 抄本标记（v0.10.4）：抄书产物 → 悬浮显示"抄本 · 抄工：X"。 */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<Boolean>> BOOK_COPIED =
+            COMPONENTS.register("book_copied", () -> DataComponentType.<Boolean>builder()
+                    .persistent(com.mojang.serialization.Codec.BOOL)
+                    .networkSynchronized(net.minecraft.network.codec.ByteBufCodecs.BOOL)
+                    .build());
+
     private ModDataComponents() {
     }
 

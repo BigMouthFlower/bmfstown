@@ -26,7 +26,12 @@ public final class WarriorCombatHandler {
             return;
         }
         if (event.getSource().getEntity() instanceof Resident resident && resident.isWarrior()) {
-            resident.addSkillXp(SkillType.COMBAT, Config.WARRIOR_XP_PER_KILL.get());
+            int gain = Config.WARRIOR_XP_PER_KILL.get();
+            resident.addSkillXp(SkillType.COMBAT, gain);
+            // 观察期用 debug（验证完毕调回；需要时临时升 INFO）
+            BmfTown.LOGGER.debug("[BmfTown][调试] {} 击杀 {}：格斗经验 +{}（累计 {}）",
+                    resident.getName().getString(), event.getEntity().getType().toShortString(),
+                    gain, resident.getArchive().skillXp(SkillType.COMBAT));
         }
         // 学者实践观察（v0.11）：跟随中的学者看到战士杀敌 → 书上计数 +1
         if (event.getSource().getEntity() instanceof Resident resident && resident.isWarrior()

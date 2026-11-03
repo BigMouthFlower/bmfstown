@@ -312,12 +312,16 @@ public class ScholarGoal extends Goal {
                     return;
                 }
                 BookContent src = source.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+                // 抄本批注（v0.10.4 用户定稿）：**抄工自己的批注 perk 也生效**——
+                // 底本带批注 或 抄工有批注天赋，抄本就是批注本（耗时 ×1.5 随之走）
+                boolean annotatedCopy = annotated || src.annotated();
                 long target = Math.max(200L, Math.round(
-                        BookDrafting.copyTargetTicks() * (src.annotated() ? 1.5D : 1.0D)));
-                // 副本作者链只记抄工（这本抄本是他抄的；底本作者留在原书上）
-                content = new BookContent(townId,
-                        java.util.List.of(this.resident.getName().getString()),
-                        src.draft(), 0L, target, true, src.annotated());
+                        BookDrafting.copyTargetTicks() * (annotatedCopy ? 1.5D : 1.0D)));
+                // 抄本作者链：底本作者全保留 + 追加抄工（用户定稿：
+                // 抄本要能看出是抄的——作者链续写 + 抄本组件标记）
+                content = new BookContent(townId, src.authors(), src.draft(),
+                        0L, target, true, annotatedCopy)
+                        .withAdditionalAuthor(this.resident.getName().getString());
             } else {
                 // ---- 写书：奖池/闲书抽奖（原有链路） ----
                 if (!consumeFromInventory(Items.BOOK)
@@ -340,6 +344,9 @@ public class ScholarGoal extends Goal {
             }
             ItemStack stack = new ItemStack(com.bmf.bmfstown.ModItems.WRITING_BOOK.get());
             stack.set(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get(), content);
+            if (copying()) {
+                stack.set(com.bmf.bmfstown.ModDataComponents.BOOK_COPIED.get(), true);
+            }
             setActiveWip(stack);
         }
         this.phase = Phase.WRITE;
@@ -743,6 +750,12 @@ public class ScholarGoal extends Goal {
      * 注意走 {@code resident.addSkillXp}：分工锁涨在这里统一拦截。
      */
     private void grantCompletionXp(BookContent content, ServerLevel level) {
+        // 发现广播（永久闩锁，同镇只播一次）：强化书首次写出成书。
+        // 解锁书的发现即解锁本身（unlockIfNew 自带公告），不在这重播。
+        if (content.draft() instanceof BookDraft.Perk p) {
+            com.bmf.bmfstown.book.BookBroadcast.discovered(
+                    level, content.townId(), p.perkId());
+        }
         this.resident.addSkillXp(this.resident.getProfession().mainSkill(), 30);
         if (this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "dialectics")
                 && content.draft() instanceof BookDraft.Perk p) {

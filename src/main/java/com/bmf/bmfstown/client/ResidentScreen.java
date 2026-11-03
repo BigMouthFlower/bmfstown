@@ -221,8 +221,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     public void onClose() {
         int mode = REOPEN_TARGET;
         int viewer = GATTACA_VIEWER_ID;
+        int practiceViewer = PRACTICE_VIEWER_ID;
         REOPEN_TARGET = 0;
         GATTACA_VIEWER_ID = -1;
+        PRACTICE_VIEWER_ID = -1;
         super.onClose();
         if (this.minecraft == null) {
             return;
@@ -231,7 +233,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             case 1 -> this.minecraft.setScreen(new TownHandbookScreen());
             case 2 -> this.minecraft.setScreen(GattacaSelectScreen.open(viewer));
             case 3 -> ModNetworking.sendToServer(
-                    new ModNetworking.OpenResidentFromHandbookPayload(viewer, 0));
+                    new ModNetworking.OpenResidentFromHandbookPayload(
+                            viewer >= 0 ? viewer : practiceViewer, 0));
             default -> { }
         }
     }
@@ -617,6 +620,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         // 只在手册入口（1=传送）和 GATTACA 查看入口（2=伪装）出现；
         // 右键脸贴脸打开时没有意义，不渲染（用户实测反馈）
         String tpLabel = REOPEN_TARGET == 2 ? I18n.get("gui.bmfstown.resident.disguise_btn")
+                : REOPEN_TARGET == 4 ? I18n.get("gui.bmfstown.resident.practice_btn")
                 : REOPEN_TARGET == 1 ? I18n.get("gui.bmfstown.resident.tp_btn")
                 : null;
         if (tpLabel == null) {
@@ -1553,10 +1557,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 gfx.fill(barX, barY, barX + filled, barY + barH, 0xFF7EFC20);
             }
 
-            // ---- 效率行（v0.8.1）：实时公式 = 熟练度 × 强壮 × 心情，
-            //      每段可悬停看"这一段为什么是这个数"。
-            //      算式与服务端 Resident.professionEfficiency 共用
-            //      EfficiencyMath——面板展示的就是实际生效的数值。
+            // ---- 效率行（v0.8.1 建立，v0.10.4 全因素化）：实时公式逐段连乘，
+            //      每段可悬停看"这一段为什么是这个数"。算式与服务端
+            //      （Resident.professionEfficiency / ScholarGoal.efficiency /
+            //      WorkerGoal.craftTicks / tick 层活字印刷）逐段对齐——
+            //      面板展示的就是实际生效的数值，没生效的因素不显示。
             this.effParts.clear();
             var profile = resident.getArchive();
             int effY = textY + 20;
@@ -1570,14 +1575,16 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             ex = addEffPart(gfx, ex, effY, basePct + "%", tierColor(tier),
                     List.of(Component.translatable("gui.bmfstown.resident.work.eff_base",
                             lv, I18n.get("gui.bmfstown.resident.tier." + tier), basePct)));
+            double eff = base;
 
             double mood = profile.mood();
-            if (resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong")) {
+            if (hasPerk(profile, com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong")) {
                 double sm = com.bmf.bmfstown.entity.profile.EfficiencyMath.strongMultiplier();
                 int strongPct = (int) Math.round((sm - 1.0) * 100);
                 ex = drawSegment(gfx, ex, effY, " ", 0x555555);
                 ex = addEffPart(gfx, ex, effY, "× " + sm, 0x2E7D2E,
                         List.of(Component.translatable("gui.bmfstown.resident.work.eff_strong", strongPct)));
+                eff *= sm;
             }
 
             double mm = com.bmf.bmfstown.entity.profile.EfficiencyMath.moodMultiplier(mood);
@@ -1587,6 +1594,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 ex = drawSegment(gfx, ex, effY, " ", 0x555555);
                 ex = addEffPart(gfx, ex, effY, "× " + mm, 0xB02020,
                         List.of(Component.translatable("gui.bmfstown.resident.work.eff_mood", threshold, mmPct)));
+                eff *= mm;
             }
 
             double ws = 1.0;
@@ -1602,17 +1610,107 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     ex = addEffPart(gfx, ex, effY, "× " + ws, ws > 1.0 ? 0x2E7D2E : 0xB02020,
                             List.of(Component.translatable(
                                     "gui.bmfstown.resident.work.eff_wspeed", wsPct)));
+                    eff *= ws;
+                }
+                // 特殊书研读增益（天工开物/考工记：合成速度）
+                int craftBonus = equippedLearnedBonus(profile,
+                        com.bmf.bmfstown.book.SpecialBookEffect.Type.CRAFT_SPEED);
+                if (craftBonus != 0) {
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(1 + craftBonus / 100.0),
+                            0x2E7D2E,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_craftspeed",
+                                    specialBookName(profile.equippedBookId()), craftBonus)));
+                    eff *= 1 + craftBonus / 100.0;
+                }
+            } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+                // ---- 学者全因素（v0.10.4）：与服务端 ScholarGoal.efficiency
+                //      + tick 层活字印刷逐段对齐 ----
+                var wipContent = activeWipContent();
+                // 辩证法：写强化书时对应学科的效率二次乘入（含该学科自身心情系数）
+                if (hasPerk(profile, com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "dialectics")
+                        && wipContent != null
+                        && wipContent.draft() instanceof com.bmf.bmfstown.book.BookDraft.Perk p) {
+                    var prof = com.bmf.bmfstown.entity.profile.ProfessionType.byName(p.professionId());
+                    if (prof.isReal() && prof.mainSkill() != null) {
+                        double discipline = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
+                                profile.skillXp(prof.mainSkill()), mood, false);
+                        eff *= discipline;
+                        ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                        ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(discipline),
+                                discipline >= 1.0 ? 0x2E7D2E : 0xB02020,
+                                List.of(Component.translatable(
+                                        "gui.bmfstown.resident.work.eff_dialectics",
+                                        I18n.get("profession.bmfstown." + prof.getSerializedName()),
+                                        (int) Math.round(discipline * 100))));
+                    }
+                }
+                // 分工：写书效率 +20%（可配）
+                if (hasPerk(profile, com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "division")) {
+                    double dv = 1.0 + com.bmf.bmfstown.config.Config.SCHOLAR_DIVISION_BONUS.get() / 100.0;
+                    eff *= dv;
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(dv), 0x2E7D2E,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_division",
+                                    com.bmf.bmfstown.config.Config.SCHOLAR_DIVISION_BONUS.get())));
+                }
+                // 过拟合：每门已学知识 +10%（可配）
+                if (hasPerk(profile, com.bmf.bmfstown.entity.profile.Perks.NODE_S_MASTER, "overfit")) {
+                    int learnedCount = profile.learnedBooks().size();
+                    double ov = 1.0 + learnedCount
+                            * com.bmf.bmfstown.config.Config.SCHOLAR_OVERFIT_BONUS.get() / 100.0;
+                    eff *= ov;
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(ov), 0x2E7D2E,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_overfit", learnedCount,
+                                    com.bmf.bmfstown.config.Config.SCHOLAR_OVERFIT_BONUS.get())));
+                }
+                // 特殊书研读增益（梦溪笔谈：写书速度）
+                int writeBonus = equippedLearnedBonus(profile,
+                        com.bmf.bmfstown.book.SpecialBookEffect.Type.WRITE_SPEED);
+                if (writeBonus != 0) {
+                    eff *= 1 + writeBonus / 100.0;
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(1 + writeBonus / 100.0),
+                            0x2E7D2E,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_writespeed",
+                                    specialBookName(profile.equippedBookId()), writeBonus)));
+                }
+                // 活字印刷术：抄书效率 +50%（tick 层乘区，仅抄书模式）
+                if (resident.getWorkMode() == com.bmf.bmfstown.entity.WorkMode.COPY
+                        && hasPerk(profile,
+                                com.bmf.bmfstown.entity.profile.Perks.NODE_S_LEGEND, "movabletype")) {
+                    eff *= 1.5;
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    ex = addEffPart(gfx, ex, effY, "× 1.5", 0x2E7D2E,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_movabletype")));
                 }
             }
 
-            double eff = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(xp, mood,
-                    resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong"))
-                    * ws;
+            eff = Math.max(0.1, eff); // 与服务端同一下限
             int effPct = (int) Math.round(eff * 100);
             int effColor = eff >= 1.0 ? 0x2E7D2E : 0xB02020;   // 回本点 Lv.5=100%
             ex = drawSegment(gfx, ex, effY, " ", 0x555555);
-            addEffPart(gfx, ex, effY, "= " + effPct + "%", effColor,
+            ex = addEffPart(gfx, ex, effY, "= " + effPct + "%", effColor,
                     List.of(Component.translatable("gui.bmfstown.resident.work.eff_total", effPct)));
+            // 信息段（**不乘进工作效率**）：战士的特殊书近战伤害作用于攻击力，
+            // 与"工作效率"是两个维度——只展示，不参与连乘（用户 21:14 要求可见）
+            if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR) {
+                int melee = equippedLearnedBonus(profile,
+                        com.bmf.bmfstown.book.SpecialBookEffect.Type.MELEE_DAMAGE);
+                if (melee != 0) {
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    addEffPart(gfx, ex, effY, "⚔+" + melee + "%", 0xC08040,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_melee_info",
+                                    specialBookName(profile.equippedBookId()), melee)));
+                }
+            }
 
             // 悬停提示：鼠标落在哪段公式上，就显示"这一段为什么是这个数"。
             // 坐标口径（1.21.1 实测）：renderLabels 收到的是绝对鼠标坐标，
@@ -1702,10 +1800,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 爱好页 GATTACA"伪装"按钮热区（渲染时更新；null = 本帧无/不可用）。 */
     private int[] gattacaBtnRel;
 
+    /** 工作页"跟随见习"按钮（perk 书卡点时出现；rel 坐标，非空 = 可点）。 */
+    private int[] practiceBtnRel;
+
     /** 关闭回跳目标：0=游戏 1=城镇手册 2=GATTACA 选择列表 3=回观察者自己的 UI。 */
     public static int REOPEN_TARGET = 0;
     /** GATTACA 查看模式：观察者（GATTACA 本尊）实体 ID；-1 = 非查看模式。 */
     public static int GATTACA_VIEWER_ID = -1;
+
+    /**
+     * 跟随见习查看链：当前正在被玩家指定跟随对象的<b>卡点学者</b>实体 id。
+     * 从跟随见习选人列表点人后设置（对方面板的"跟随见习"按钮判定与
+     * follow 指令都靠它）；与 GATTACA_VIEWER_ID 同一套生命周期。
+     */
+    public static int PRACTICE_VIEWER_ID = -1;
 
     /**
      * 切换到非容器 Screen 前调用：显式关闭容器菜单。
@@ -2079,7 +2187,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     && mouseY >= this.topPos + tb[1] && mouseY < this.topPos + tb[1] + tb[3]) {
                 Resident r = this.menu.getResident();
                 if (r != null) {
-                    if (REOPEN_TARGET == 2 && GATTACA_VIEWER_ID >= 0) {
+                    if (REOPEN_TARGET == 4 && PRACTICE_VIEWER_ID >= 0) {
+                        // 跟随见习：指定卡点学者的跟随对象，回学者自己的面板
+                        ModNetworking.sendToServer(new ModNetworking.PracticeFollowPayload(
+                                PRACTICE_VIEWER_ID, r.getId()));
+                        REOPEN_TARGET = 3;
+                        onClose();
+                    } else if (REOPEN_TARGET == 2 && GATTACA_VIEWER_ID >= 0) {
                         // 伪装：复制对方数据，关当前查看回观察者自己的 UI
                         ModNetworking.sendToServer(new ModNetworking.GattacaMimicPayload(
                                 GATTACA_VIEWER_ID, r.getId()));
@@ -2209,6 +2323,22 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 if (mouseX >= toggleX && mouseX < toggleX + this.imageWidth - 90
                         && mouseY >= toggleY && mouseY < toggleY + WORK_BTN_H) {
                     clickMenu(ResidentMenu.BTN_TOGGLE_COPY);
+                    return true;
+                }
+            }
+            // ---- 学者：跟随见习按钮（perk 书卡点时出现）→ 打开对口选人列表 ----
+            if (this.practiceBtnRel != null) {
+                int[] pb = this.practiceBtnRel;
+                if (mouseX >= this.leftPos + pb[0] && mouseX < this.leftPos + pb[0] + pb[2]
+                        && mouseY >= this.topPos + pb[1] && mouseY < this.topPos + pb[1] + pb[3]) {
+                    Resident r = this.menu.getResident();
+                    var wipContent = this.menu.getSlot(ResidentMenu.WIP_SLOT_INDEX).getItem()
+                            .get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+                    if (r != null && this.minecraft != null && wipContent != null
+                            && wipContent.draft() instanceof com.bmf.bmfstown.book.BookDraft.Perk p) {
+                        closeContainerBeforeSwitch();
+                        this.minecraft.setScreen(PracticeSelectScreen.open(r.getId(), p.professionId()));
+                    }
                     return true;
                 }
             }
@@ -2513,6 +2643,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 0xFF373737);
     }
 
+    /** 知识页已学列表的顶部（文字层与命中检测共用——防两处漂移错行）。 */
+    private static int knowledgeListTop() {
+        return ResidentMenu.PANEL_Y + 3 * ROW_H + 6;
+    }
+
     /** 知识页命中检测：鼠标所在已学行下标（null = 不在任何行上）。 */
     private int[] knowledgeRowAt(double mouseX, double mouseY) {
         var snapshot = this.menu.getResident() != null
@@ -2526,7 +2661,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         }
         int listX = this.leftPos + 4;
         int listW = this.imageWidth - 8;
-        int rowTop = this.topPos + ResidentMenu.PANEL_Y + ROW_H + 4;
+        int rowTop = this.topPos + knowledgeListTop();
         int rel = (int) (mouseY - rowTop);
         if (mouseX >= listX && mouseX < listX + listW && rel >= 0 && rel < learned.size() * ROW_H) {
             return new int[]{rel / ROW_H};
@@ -2534,7 +2669,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return null;
     }
 
-    /** 知识页内容：装备中的书 + 已学列表（研读进度括号）。 */
+    /** 知识页内容：生效中的书 + 学识统计 + 已学列表（点击切换生效）。 */
     private void renderKnowledgePageText(GuiGraphics gfx, double mouseX, double mouseY) {
         Resident resident = this.menu.getResident();
         var snapshot = resident != null ? resident.getArchive() : null;
@@ -2544,7 +2679,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         int textX = TEXT_PAD;
         int y = ResidentMenu.PANEL_Y + 4;
 
-        // ---- 书槽行：当前装备 ----
+        // ---- 生效行：单选槽（v0.10.4 学识制：已学多本共存、同时生效一本） ----
         String equipped = snapshot.equippedBookId();
         String equippedName = equipped.isEmpty()
                 ? I18n.get("gui.bmfstown.resident.knowledge.none")
@@ -2554,13 +2689,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 textX, y, 0x303030, false);
         y += ROW_H;
 
+        // ---- 统计行：可用学识 + 累计阅读（v0.10.4 学识制） ----
+        gfx.drawString(this.font,
+                I18n.get("gui.bmfstown.resident.knowledge.stats",
+                        snapshot.literacy(), snapshot.totalBooksRead()),
+                textX, y, 0x606060, false);
+        y += ROW_H;
+
         // ---- 提示行 ----
         gfx.drawString(this.font,
                 I18n.get("gui.bmfstown.resident.knowledge.hint"),
                 textX, y, 0x606060, false);
         y += ROW_H + 2;
 
-        // ---- 已学列表（点击装备）----
+        // ---- 已学列表（点击切换生效；与 knowledgeListTop 对齐） ----
         var learned = snapshot.learnedBooks();
         if (learned.isEmpty()) {
             gfx.drawString(this.font,
@@ -2568,15 +2710,18 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     textX, y, 0x808080, false);
             return;
         }
+        int listY = knowledgeListTop();
         for (int i = 0; i < learned.size(); i++) {
             String id = learned.get(i);
-            int rowY = y + i * ROW_H;
+            int rowY = listY + i * ROW_H;
             boolean equippedNow = id.equals(equipped);
             int[] row = knowledgeRowAt(mouseX, mouseY);
             boolean hover = row != null && row[0] == i && !equippedNow;
             String label = specialBookName(id)
                     + (equippedNow ? I18n.get("gui.bmfstown.resident.knowledge.equippedMark") : "");
-            gfx.fill(this.leftPos + 4, rowY - 1, this.leftPos + this.imageWidth - 4,
+            // 本方法在 translate(leftPos, topPos) 后的相对坐标系里绘制——
+            // fill 不能再加 leftPos（否则高亮横飞出面板，用户 21:07 截图实锤）
+            gfx.fill(4, rowY - 1, this.imageWidth - 4,
                     rowY + ROW_H - 2, hover ? 0xFFB8B8B8 : equippedNow ? 0xFFDCDCDC : 0x00000000);
             gfx.drawString(this.font, label, textX + 2, rowY, 0x303030, false);
         }
@@ -2587,6 +2732,70 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         String key = "book.bmfstown.special." + id + ".name";
         String text = I18n.get(key);
         return text.equals(key) ? id : text;
+    }
+
+    /**
+     * 客户端 perk 判别——<b>必须走快照</b>：{@code resident.hasPerk} 读
+     * {@code growth}（服务端域对象，客户端恒空），用它判别在客户端
+     * 永远 false（效率行"强壮/学者天赋"段消失的根因）。
+     */
+    private static boolean hasPerk(com.bmf.bmfstown.entity.domain.ResidentSnapshot snapshot,
+            String node, String branch) {
+        String choice = snapshot.perkChoice(
+                com.bmf.bmfstown.entity.profile.Perks.ownerOf(node), node);
+        return branch.equals(choice);
+    }
+
+    /**
+     * 当前生效的已学书提供的某类效果加成（%）——客户端镜像
+     * {@code Resident.learnedEffectBonus}：单选槽（生效中的那本已学书）。
+     * 登记表在 mod 构造时双侧填充，客户端可直接读。
+     */
+    private static int equippedLearnedBonus(com.bmf.bmfstown.entity.domain.ResidentSnapshot snapshot,
+            com.bmf.bmfstown.book.SpecialBookEffect.Type type) {
+        String id = snapshot.equippedBookId();
+        if (id.isEmpty() || !snapshot.learnedBooks().contains(id)) {
+            return 0;
+        }
+        var book = com.bmf.bmfstown.book.SpecialBookRegistry.byId(id);
+        if (book == null) {
+            return 0;
+        }
+        int sum = 0;
+        for (var effect : book.effects()) {
+            if (effect.type() == type) {
+                sum += effect.amount();
+            }
+        }
+        return sum;
+    }
+
+    /**
+     * 当前模式的 WIP 书内容（镜像服务端 bookprogress 命令的取槽口径）：
+     * 抄书模式看抄写槽、写书模式看写作槽；当前槽空则看另一个槽。
+     */
+    private com.bmf.bmfstown.book.BookContent activeWipContent() {
+        if (this.menu.getResident() == null) {
+            return null;
+        }
+        boolean copying = this.menu.getResident().getWorkMode()
+                == com.bmf.bmfstown.entity.WorkMode.COPY;
+        var wip = this.menu.getSlot(copying
+                ? ResidentMenu.COPY_SLOT_INDEX : ResidentMenu.WIP_SLOT_INDEX).getItem();
+        if (wip.isEmpty()) {
+            wip = this.menu.getSlot(copying
+                    ? ResidentMenu.WIP_SLOT_INDEX : ResidentMenu.COPY_SLOT_INDEX).getItem();
+        }
+        return wip.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+    }
+
+    /** 乘数显示格式：1.5 → "1.5"，1.25 → "1.25"，1.0 → "1"（不出 1.2500000001）。 */
+    private static String fmtFactor(double factor) {
+        double rounded = Math.round(factor * 100.0) / 100.0;
+        if (rounded == Math.floor(rounded)) {
+            return String.valueOf((long) rounded);
+        }
+        return String.valueOf(rounded);
     }
 
     /**
@@ -2602,6 +2811,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             } catch (NumberFormatException ignored) {
                 // 坏数据退回直译
             }
+        }
+        if (t.arg() != null && t.arg().startsWith("book:")) {
+            // 特殊书想法：按登记表 lang 键现译书名（"他学会了《X》"）
+            return I18n.get(t.key(),
+                    specialBookName(t.arg().substring("book:".length())));
         }
         return t.arg() != null && !t.arg().isEmpty()
                 ? I18n.get(t.key(), t.arg()) : I18n.get(t.key());

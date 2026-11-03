@@ -432,6 +432,28 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：跟随见习确认（卡点学者在选人列表查看某人 UI 后点"跟随见习"）。
+     * 服务端校验领域对口后，让学者跟随目标实践（观察计数走 PracticeObserver）。
+     */
+    public record PracticeFollowPayload(int scholarId, int targetId)
+            implements CustomPacketPayload {
+
+        public static final Type<PracticeFollowPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "practice_follow"));
+
+        public static final StreamCodec<ByteBuf, PracticeFollowPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, PracticeFollowPayload::scholarId,
+                        ByteBufCodecs.VAR_INT, PracticeFollowPayload::targetId,
+                        PracticeFollowPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：把玩家传送到目标镇民身边（资料页"传送"按钮）。
      */
     public record TeleportToResidentPayload(int entityId)
@@ -830,6 +852,42 @@ public final class ModNetworking {
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.gattaca.mimic",
                     observer.getName().getString(),
+                    target.getName().getString()), false);
+        });
+    }
+
+    /** 跟随见习确认：校验学者身份与领域对口后指定跟随目标。 */
+    private static void handlePracticeFollow(PracticeFollowPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.scholarId())
+                    instanceof com.bmf.bmfstown.entity.Resident scholar)
+                    || !(serverPlayer.level().getEntity(payload.targetId())
+                    instanceof com.bmf.bmfstown.entity.Resident target)) {
+                return;
+            }
+            if (scholar.getProfession() != com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
+                return;
+            }
+            var content = scholar.getWritingBook()
+                    .get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
+            if (!(content != null
+                    && content.draft() instanceof com.bmf.bmfstown.book.BookDraft.Perk perk
+                    && content.isStuck())) {
+                return; // 没有卡点的 perk 书：拒绝（客户端按钮应不可用）
+            }
+            if (target.getProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.NONE
+                    || !perk.professionId().equals(
+                            target.getProfession().getSerializedName())) {
+                return; // 领域不对口：拒绝（客户端清单已过滤，这里双保险）
+            }
+            scholar.setFollowResidentId(target.getUUID());
+            scholar.syncClient();
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.practice.follow",
+                    scholar.getName().getString(),
                     target.getName().getString()), false);
         });
     }
@@ -1448,6 +1506,8 @@ public final class ModNetworking {
                 ModNetworking::handleCensusData);
         registrar.playToServer(PerkChoosePayload.TYPE, PerkChoosePayload.STREAM_CODEC,
                 ModNetworking::handlePerkChoose);
+        registrar.playToServer(PracticeFollowPayload.TYPE, PracticeFollowPayload.STREAM_CODEC,
+                ModNetworking::handlePracticeFollow);
         registrar.playToServer(HandbookAppendZonePayload.TYPE, HandbookAppendZonePayload.STREAM_CODEC,
                 ModNetworking::handleHandbookAppendZone);
         registrar.playToClient(ZoneSelectSyncPayload.TYPE, ZoneSelectSyncPayload.STREAM_CODEC,

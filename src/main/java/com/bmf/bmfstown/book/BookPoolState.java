@@ -45,6 +45,9 @@ public final class BookPoolState extends SavedData {
     /** 城镇 id → 已抽中的书 id（按抽出顺序，供查询/图鉴）。 */
     private final Map<UUID, Set<String>> drawn = new HashMap<>();
 
+    /** 城镇 id → 已"发现"（写出过成书）的书 id——发现广播的永久闩锁。 */
+    private final Map<UUID, Set<String>> discovered = new HashMap<>();
+
     // ==========================================================
     //  存取入口
     // ==========================================================
@@ -144,6 +147,22 @@ public final class BookPoolState extends SavedData {
         this.setDirty();
     }
 
+    /**
+     * 标记一本书为"已发现"（写出成书的瞬间）：首次返回 true——
+     * 调用方据此发一次性的发现广播（永久闩锁，同镇不重播）。
+     */
+    public boolean markDiscovered(UUID townId, String bookId) {
+        if (bookId == null) {
+            return false;
+        }
+        boolean first = discovered.computeIfAbsent(townId, k -> new HashSet<>())
+                .add(bookId);
+        if (first) {
+            this.setDirty();
+        }
+        return first;
+    }
+
     // ==========================================================
     //  落档
     // ==========================================================
@@ -154,6 +173,7 @@ public final class BookPoolState extends SavedData {
         Set<UUID> allTowns = new HashSet<>();
         allTowns.addAll(this.remaining.keySet());
         allTowns.addAll(this.drawn.keySet());
+        allTowns.addAll(this.discovered.keySet());
         for (UUID townId : allTowns) {
             CompoundTag t = new CompoundTag();
             t.putUUID("Town", townId);
@@ -167,6 +187,11 @@ public final class BookPoolState extends SavedData {
                 drw.add(StringTag.valueOf(id));
             }
             t.put("Drawn", drw);
+            ListTag dis = new ListTag();
+            for (String id : this.discovered.getOrDefault(townId, Set.of())) {
+                dis.add(StringTag.valueOf(id));
+            }
+            t.put("Discovered", dis);
             towns.add(t);
         }
         tag.put("Towns", towns);
@@ -189,8 +214,14 @@ public final class BookPoolState extends SavedData {
             for (int j = 0; j < drwTag.size(); j++) {
                 drw.add(drwTag.getString(j));
             }
+            Set<String> dis = new HashSet<>();
+            ListTag disTag = t.getList("Discovered", Tag.TAG_STRING);
+            for (int j = 0; j < disTag.size(); j++) {
+                dis.add(disTag.getString(j));
+            }
             state.remaining.put(townId, rem);
             state.drawn.put(townId, drw);
+            state.discovered.put(townId, dis);
         }
         return state;
     }

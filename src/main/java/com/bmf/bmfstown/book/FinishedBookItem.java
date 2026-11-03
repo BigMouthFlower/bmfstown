@@ -49,6 +49,13 @@ public class FinishedBookItem extends Item {
                     Component.literal(String.join("、", content.authors()))
                             .withStyle(ChatFormatting.GRAY)).withStyle(ChatFormatting.DARK_GRAY));
         }
+        // 抄本标记（v0.10.4）：抄工 = 作者链末位（抄书时追加在最后）
+        if (Boolean.TRUE.equals(stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_COPIED.get()))
+                && content != null && !content.authors().isEmpty()) {
+            tooltip.add(Component.translatable("book.bmfstown.copied",
+                    content.authors().get(content.authors().size() - 1))
+                    .withStyle(ChatFormatting.DARK_GRAY, ChatFormatting.ITALIC));
+        }
         super.appendHoverText(stack, context, tooltip, flag);
     }
 }

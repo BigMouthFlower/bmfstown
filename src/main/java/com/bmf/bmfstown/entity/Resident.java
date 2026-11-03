@@ -153,9 +153,6 @@ public class Resident extends PathfinderMob {
     /** 抄写中的书（学者抄书模式的过程物，v0.10.3；生命周期与写作中的书完全一致）。 */
     private ItemStack copyingBook = ItemStack.EMPTY;
 
-    /** 研读书（知识页研读槽，v0.10.3）：特殊书放入即自动研读，学成留在槽=装备生效。 */
-    private ItemStack studyBook = ItemStack.EMPTY;
-
     /** 跟随目标镇民（学者实践观察用；null = 没在跟随）。 */
     @Nullable
     private UUID followResidentId;
@@ -554,33 +551,6 @@ public class Resident extends PathfinderMob {
         this.copyingBook = stack.copy();
     }
 
-    /** 研读书（知识页研读槽：特殊书放入即自动研读，学成留槽=装备生效）。 */
-    public ItemStack getStudyBook() {
-        return this.studyBook;
-    }
-
-    public void setStudyBook(ItemStack stack) {
-        this.studyBook = stack.copy();
-        // 槽与知识域装备位联动：放入特殊书 = 开始研读；取出 = 卸下
-        BookContent c = this.studyBook.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-        String bookId = c == null ? null : c.draft().bookId();
-        if (bookId != null) {
-            this.knowledge.equip(bookId);
-        } else {
-            this.knowledge.unequip();
-        }
-    }
-
-    /** 研读书的研读倍率（批注本 1.5，普通 1.0；只对槽内书与装备位一致时生效）。 */
-    private double studyGain() {
-        BookContent c = this.studyBook.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-        if (c == null || !c.annotated()) {
-            return 1.0D;
-        }
-        String bookId = c.draft().bookId();
-        return bookId != null && bookId.equals(this.knowledge.equippedBookId()) ? 1.5D : 1.0D;
-    }
-
     /** WIP 书的进度百分比（-1 = 空手）。 */
     private static int wipPercent(ItemStack stack) {
         BookContent c = stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
@@ -891,10 +861,7 @@ public class Resident extends PathfinderMob {
             this.spawnAtLocation(this.copyingBook);
             this.copyingBook = ItemStack.EMPTY;
         }
-        if (!this.studyBook.isEmpty()) {
-            this.spawnAtLocation(this.studyBook);
-            this.studyBook = ItemStack.EMPTY;
-        }
+
         // ---- 背包 27 格 ----
         for (int i = 0; i < this.inventory.getContainerSize(); i++) {
             ItemStack stack = this.inventory.getItem(i);
@@ -1157,9 +1124,7 @@ public class Resident extends PathfinderMob {
         if (!this.copyingBook.isEmpty()) {
             tag.put("CopyingBook", this.copyingBook.save(this.registryAccess()));
         }
-        if (!this.studyBook.isEmpty()) {
-            tag.put("StudyBook", this.studyBook.save(this.registryAccess()));
-        }
+
         if (this.followResidentId != null) {
             tag.putUUID("FollowResident", this.followResidentId);
         }
@@ -1216,10 +1181,7 @@ public class Resident extends PathfinderMob {
             ItemStack.parse(this.registryAccess(), tag.getCompound("CopyingBook"))
                     .ifPresent(this::setCopyingBook);
         }
-        if (tag.contains("StudyBook", Tag.TAG_COMPOUND)) {
-            ItemStack.parse(this.registryAccess(), tag.getCompound("StudyBook"))
-                    .ifPresent(this::setStudyBook);
-        }
+
         this.followResidentId = tag.hasUUID("FollowResident")
                 ? tag.getUUID("FollowResident") : null;
 
@@ -1296,8 +1258,6 @@ public class Resident extends PathfinderMob {
         if (this.hungerTickAccumulator >= ticksPerPoint) {
             this.hungerTickAccumulator = 0;
             HungerSystem.tickHunger(this, ticksPerPoint);
-        // 知识域：研读槽中的特殊书研读累计（批注本 1.5 倍速——批注 perk 接通点）
-        this.knowledge.tick(this.studyGain());
         }
 
         // ---- 2. 进食 ----
@@ -3369,7 +3329,7 @@ public class Resident extends PathfinderMob {
                 this.status.noteKill(this, killLevel);
             }
             if (target instanceof net.minecraft.world.entity.LivingEntity living) {
-                // 观察期用 INFO（用户要肉眼对比不同等级战士的伤害系数）
+                // 观察期用 debug（调回默认级；需要肉眼对比时临时升 INFO）
                 LOGGER.debug("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
                         this.getName().getString(), target.getType().toShortString(), hit,
                         String.format("%.1f", attackAttr == null ? 0.0 : attackAttr.getValue() / efficiency),

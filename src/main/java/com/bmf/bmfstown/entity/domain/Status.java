@@ -1040,6 +1040,13 @@ public final class Status {
                 Thought.MARK_NONE, "idle:" + bookSeed);
     }
 
+    /** 学成一门特殊书（图书馆读完 learnTicks）：想法留名（无心情——收益是效果本身）。 */
+    public void skillBookLearned(ServerLevel level, String bookId) {
+        // arg 协议："book:<id>"——客户端按登记表 lang 键现译书名
+        addThought(level, TONE_POSITIVE, "mood.bmfstown.thought.learned",
+                Thought.MARK_NONE, "book:" + bookId);
+    }
+
     private void addThought(ServerLevel level, int tone, String key, int marker) {
         addThought(level, tone, key, marker, null);
     }

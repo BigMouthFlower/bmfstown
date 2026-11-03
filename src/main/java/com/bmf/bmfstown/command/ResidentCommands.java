@@ -291,6 +291,12 @@ public final class ResidentCommands {
             }
             resident.getKnowledge().forceLearn(bookId);
             resident.syncClient();
+            if (resident.level() instanceof net.minecraft.server.level.ServerLevel sl) {
+                com.bmf.bmfstown.book.BookBroadcast.discovered(
+                        sl, resident.getIdentity().townId(), bookId);
+                com.bmf.bmfstown.book.BookBroadcast.learned(
+                        sl, resident.getName().getString(), bookId);
+            }
             ctx.getSource().sendSuccess(() -> Component.literal(
                     resident.getName().getString() + " 已学会并装备《" + bookId + "》"), false);
             changed++;

@@ -268,27 +268,12 @@ public class ResidentMenu extends AbstractContainerMenu {
     /** 工作页：写书/抄书模式切换（仅学者；服务端 toggle）。 */
     public static final int BTN_TOGGLE_COPY = 901;
 
-    /**
-     * 知识页研读槽坐标（真槽位）：特殊书放入即自动研读，学成留槽=装备生效，
-     * 取出=卸下（效果随装备位走）。只收特殊书成书（闲书拒收）。
-     */
-    public static final int STUDY_SLOT_X = GUI_WIDTH - 26;
-    public static final int STUDY_SLOT_Y = PANEL_Y;
-    public static final int STUDY_SLOT_INDEX = COPY_SLOT_INDEX + 1;
 
     /** 判别一个槽位是不是学者书稿槽（跨包给 Screen 豁免渲染/点击规则用）。 */
     public static boolean isWipSlot(Slot slot) {
         return slot instanceof WipSlot;
     }
 
-    /** 物品是否为"特殊书成书"（perk/解锁书；闲书不算）。 */
-    public static boolean isSpecialBook(ItemStack stack) {
-        if (!stack.is(com.bmf.bmfstown.ModItems.FINISHED_BOOK.get())) {
-            return false;
-        }
-        BookContent c = stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-        return c != null && c.draft().bookId() != null;
-    }
 
     /**
      * 客户端点了按钮，服务端在这里处理。
@@ -395,10 +380,20 @@ public class ResidentMenu extends AbstractContainerMenu {
             return true;
         }
 
-        // ---- 知识页：装备已学书（v0.11）----
+        // ---- 知识页：装备已学书（v0.11）；再点当前生效的 = 取消生效
+        //      （v0.10.4 用户定稿：要能回到"不掌握知识生效"的空挡状态）----
         if (id >= BTN_KNOWLEDGE_BASE && id < BTN_KNOWLEDGE_BASE + 100) {
             int index = id - BTN_KNOWLEDGE_BASE;
-            this.resident.getKnowledge().equipByIndex(index);
+            var knowledge = this.resident.getKnowledge();
+            java.util.List<String> sorted = knowledge.learnedSorted();
+            if (index < 0 || index >= sorted.size()) {
+                return true; // 列表刚变过：忽略
+            }
+            if (sorted.get(index).equals(knowledge.equippedBookId())) {
+                knowledge.unequip(); // 再点已生效的 = 卸下
+            } else {
+                knowledge.equipByIndex(index);
+            }
             this.resident.syncClient();
             return true;
         }
@@ -695,9 +690,6 @@ public class ResidentMenu extends AbstractContainerMenu {
                 new WipBridgeContainer(this.resident, false), 0, WIP_SLOT_X, WIP_SLOT_Y));
         this.addSlot(new WipSlot(
                 new WipBridgeContainer(this.resident, true), 0, COPY_SLOT_X, WIP_SLOT_Y));
-        // ---- 知识页研读槽：特殊书放入即自动研读（v0.10.3，与闲暇无关） ----
-        this.addSlot(new StudySlot(
-                new StudyBridgeContainer(this.resident), 0, STUDY_SLOT_X, STUDY_SLOT_Y));
 
         // ---- 登记数据槽 ----
         // 服务端把"实时读实体"的那份登记进来；客户端把哑容器登记进来。
@@ -818,8 +810,7 @@ public class ResidentMenu extends AbstractContainerMenu {
 
         boolean inResidentArea = index < PLAYER_INV_START;
 
-        if (inResidentArea || index == WIP_SLOT_INDEX || index == COPY_SLOT_INDEX
-                || index == STUDY_SLOT_INDEX) {
+        if (inResidentArea || index == WIP_SLOT_INDEX || index == COPY_SLOT_INDEX) {
             // 镇民区域 / 书稿槽 → 玩家背包（从玩家背包第一格开始找位置）
             if (!this.moveItemStackTo(original, PLAYER_INV_START, this.slots.size(), true)) {
                 return ItemStack.EMPTY;
@@ -831,10 +822,6 @@ public class ResidentMenu extends AbstractContainerMenu {
             if (original.is(com.bmf.bmfstown.ModItems.WRITING_BOOK.get())) {
                 // 先试写作槽、再试抄写槽（空槽才收）
                 moved = this.moveItemStackTo(original, WIP_SLOT_INDEX, COPY_SLOT_INDEX + 1, false);
-            }
-            if (!moved && isSpecialBook(original)) {
-                // 特殊书成书 → 优先进研读槽（空槽才收）
-                moved = this.moveItemStackTo(original, STUDY_SLOT_INDEX, STUDY_SLOT_INDEX + 1, false);
             }
             if (!moved && this.isEquipment(original)) {
                 moved = this.moveItemStackTo(original, EQUIP_START, EQUIP_START + EQUIP_ORDER.length, false);
@@ -1048,136 +1035,6 @@ public class ResidentMenu extends AbstractContainerMenu {
             return CLIENT_PAGE == PAGE_WORK
                     && ResidentMenu.this.resident != null
                     && ResidentMenu.this.resident.getProfession() == ProfessionType.SCHOLAR;
-        }
-    }
-
-    /**
-     * 研读槽桥接容器：读写直通 {@code resident.studyBook}。
-     * setItem 联动知识域装备位——放入特殊书 = knowledge.equip(id) 开始研读；
-     * 取出 = unequip（效果随装备位走，见 {@code learnedEffectBonus}）。
-     */
-    private static class StudyBridgeContainer implements Container {
-        @Nullable
-        private final Resident resident;
-
-        StudyBridgeContainer(@Nullable Resident resident) {
-            this.resident = resident;
-        }
-
-        private boolean isSpecialBook(ItemStack stack) {
-            BookContent c = stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-            return c != null && c.draft().bookId() != null;
-        }
-
-        @Override
-        public int getContainerSize() {
-            return 1;
-        }
-
-        @Override
-        public boolean isEmpty() {
-            return this.resident == null || this.resident.getStudyBook().isEmpty();
-        }
-
-        @Override
-        public ItemStack getItem(int slot) {
-            return this.resident == null ? ItemStack.EMPTY : this.resident.getStudyBook();
-        }
-
-        @Override
-        public ItemStack removeItem(int slot, int amount) {
-            if (this.resident == null) {
-                return ItemStack.EMPTY;
-            }
-            ItemStack book = this.resident.getStudyBook();
-            if (book.isEmpty()) {
-                return ItemStack.EMPTY;
-            }
-            ItemStack take = book.split(Math.min(amount, book.getCount()));
-            if (book.isEmpty()) {
-                this.resident.setStudyBook(ItemStack.EMPTY);
-            }
-            this.resident.syncClient();
-            return take;
-        }
-
-        @Override
-        public ItemStack removeItemNoUpdate(int slot) {
-            if (this.resident == null) {
-                return ItemStack.EMPTY;
-            }
-            ItemStack book = this.resident.getStudyBook();
-            this.resident.setStudyBook(ItemStack.EMPTY);
-            return book;
-        }
-
-        @Override
-        public void setItem(int slot, ItemStack stack) {
-            if (this.resident == null) {
-                return;
-            }
-            // 只收特殊书成书；空 = 取出卸下
-            if (stack.isEmpty() || isSpecialBook(stack)) {
-                this.resident.setStudyBook(stack.copy());
-                this.resident.syncClient();
-            }
-        }
-
-        @Override
-        public void setChanged() {
-            if (this.resident != null) {
-                this.resident.syncClient();
-            }
-        }
-
-        @Override
-        public boolean stillValid(Player player) {
-            return true; // 距离校验由菜单 stillValid 统一做
-        }
-
-        @Override
-        public void clearContent() {
-            if (this.resident != null) {
-                this.resident.setStudyBook(ItemStack.EMPTY);
-            }
-        }
-
-        @Override
-        public int getMaxStackSize() {
-            return 1;
-        }
-
-        @Override
-        public boolean canPlaceItem(int slot, ItemStack stack) {
-            return isSpecialBook(stack);
-        }
-    }
-
-    /**
-     * 知识页研读槽：只在知识页激活；只收特殊书成书（闲书拒收——
-     * 闲书走图书馆闲暇阅读，两套系统物理隔离）。
-     */
-    private static class StudySlot extends Slot {
-        StudySlot(Container container, int index, int x, int y) {
-            super(container, index, x, y);
-        }
-
-        private static boolean acceptable(ItemStack stack) {
-            if (!stack.is(com.bmf.bmfstown.ModItems.FINISHED_BOOK.get())) {
-                return false;
-            }
-            BookContent c = stack.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
-            return c != null && c.draft().bookId() != null;
-        }
-
-        @Override
-        public boolean mayPlace(ItemStack stack) {
-            return acceptable(stack);
-        }
-
-        @Override
-        public boolean isActive() {
-            return CLIENT_PAGE == PAGE_KNOWLEDGE;
         }
     }
 

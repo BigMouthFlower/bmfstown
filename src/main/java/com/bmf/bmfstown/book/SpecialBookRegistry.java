@@ -55,12 +55,21 @@ public final class SpecialBookRegistry {
     }
 
     /**
-     * 书目登记点（启动时调用一次）。<b>保持为空</b>——特殊书书单用户
-     * 还没定稿，空池 = 回退闲书（与"抽光"同一效果，用户定稿）。
-     * 效果框架（{@link SpecialBookEffect}）与研读/装备链路已就绪，
-     * 书单定稿后在这里 define 即生效。
+     * 书目登记点（启动时调用一次）。正式书单<b>用户还没定稿</b>——
+     * 目前只有一本 ⚠ <b>测试书</b>（用户认可：用于打通学者线实测，
+     * 书单定稿后删除）。空池 = 回退闲书（与"抽光"同一效果）。
+     * 效果框架（{@link SpecialBookEffect}）与研读/单选链路已就绪，
+     * 正式书目在这里 define 即生效。
      */
     public static void bootstrap() {
+        // ---- ⚠ 测试书（测完即删）：战士书，有观察挂点，全链路可测 ----
+        // 覆盖：写书抽取 → 50% 卡点 → 跟随见习 → 观战计数解除 → 写完
+        //       → 架上阅读学成 → 效果单选生效 → 近战伤害 +15% 验数
+        define(new SpecialBook("test_warrior",
+                new BookDraft.Perk("test_warrior", "warrior", 0, 30),
+                6000L, // 研读 6000t（游戏 6 小时 = 现实 5 分钟），几个休闲段可学完
+                java.util.List.of(new SpecialBookEffect(
+                        SpecialBookEffect.Type.MELEE_DAMAGE, 15))));
     }
 
     private SpecialBookRegistry() {

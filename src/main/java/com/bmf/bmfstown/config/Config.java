@@ -636,6 +636,11 @@ public final class Config {
                     "Reading time to finish one idle book (gameTime ticks, finishes within one session)")
             .defineInRange("leisure.idleBookReadTicks", 600, 100, 24000);
 
+    public static final ModConfigSpec.IntValue LEISURE_LITERACY_COST = BUILDER
+            .comment("学一门特殊书（技能书）需要消耗的学识点（学识来自读完闲书）",
+                    "Literacy points consumed to learn one special book (earned by reading idle books)")
+            .defineInRange("leisure.literacyCost", 5, 1, 100);
+
     public static final ModConfigSpec.IntValue LEISURE_MOOD_BONUS = BUILDER
             .comment("读完一本闲书的心情加成（批注本 ×1.5）",
                     "Mood gain from finishing an idle book (annotated copies give 1.5x)")
