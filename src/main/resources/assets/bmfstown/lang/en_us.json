@@ -554,5 +554,14 @@
   "msg.bmfstown.unlock.type.book": "Hidden Volume",
   "msg.bmfstown.book.learned": "%s has learned",
   "book.bmfstown.copied": "Copy · scribed by %s",
-  "gui.bmfstown.resident.work.eff_melee_info": "%s: +%s%% melee damage (affects attack, not the work efficiency shown)"
+  "gui.bmfstown.resident.work.eff_melee_info": "%s: +%s%% melee damage (affects attack, not the work efficiency shown)",
+  "msg.bmfstown.town.not_member": "This place belongs to %s — you are not a member",
+  "msg.bmfstown.town.add_ok": "Added %s to %s member list",
+  "msg.bmfstown.town.remove_ok": "Removed %s from %s",
+  "msg.bmfstown.town.remove_none": "%s has no member named %s",
+  "msg.bmfstown.town.list_head": "%s members (%s): %s",
+  "msg.bmfstown.town.leave_ok": "You left %s",
+  "msg.bmfstown.town.disband_denied": "Only the town founder can disband %s",
+  "msg.bmfstown.town.disband_legacy": "This town has no recorded founder (old save) — delete it via the handbook",
+  "msg.bmfstown.town.disband_ok": "%s has been disbanded"
 }

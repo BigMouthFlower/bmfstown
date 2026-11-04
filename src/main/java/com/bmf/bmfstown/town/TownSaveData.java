@@ -171,6 +171,30 @@ public class TownSaveData extends SavedData {
     // ==========================================================
 
     /** 全部城镇，按创建时间排序（手册里新的排在后面）。 */
+    /** 成员白名单：加入（幂等）。 */
+    public void addMember(Town town, java.util.UUID playerId, String name) {
+        town.addMember(playerId, name);
+        setDirty();
+    }
+
+    /** 成员白名单：按 UUID 移除。返回被移除者的名字，没找到返回 null。 */
+    public String removeMember(Town town, java.util.UUID playerId) {
+        String name = town.removeMember(playerId);
+        if (name != null) {
+            setDirty();
+        }
+        return name;
+    }
+
+    /** 成员白名单：按名字（忽略大小写）移除。 */
+    public String removeMemberByName(Town town, String name) {
+        String removed = town.removeMemberByName(name);
+        if (removed != null) {
+            setDirty();
+        }
+        return removed;
+    }
+
     public List<Town> allTowns() {
         List<Town> list = new ArrayList<>(towns.values());
         list.sort((a, b) -> Long.compare(a.createdAt(), b.createdAt()));
@@ -273,9 +297,14 @@ public class TownSaveData extends SavedData {
      * <p>不用 NBT/JSON 编码器过网络，是因为这个包是"纯展示数据"，
      * 文本行直观、好调试（抓包直接能读），且不受 codec 组合数限制。
      */
-    public String toBlob(net.minecraft.server.level.ServerLevel level) {
+    public String toBlob(net.minecraft.server.level.ServerLevel level, java.util.UUID viewer) {
         StringBuilder sb = new StringBuilder();
+        // 手册只发"你看得见"的城镇：受保护城镇只发给它的成员，
+        // 未启用保护的老城镇（空成员表）对所有人可见（与 isMember 同口径）
         for (Town town : allTowns()) {
+            if (!town.isMember(viewer)) {
+                continue;
+            }
             sb.append("T|").append(town.id()).append('|').append(town.name())
                     .append('|').append(town.dimension()).append('|').append(town.ownerName())
                     .append('|').append(TownWandItem.fmt(town.min()))

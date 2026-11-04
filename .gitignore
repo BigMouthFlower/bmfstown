@@ -40,3 +40,7 @@ src - 副本/
 # WorkBuddy 工作区备忘，不进仓库
 .workbuddy/
 generated-images/
+
+# ===== AI 协作知识库（本地，不同步）=====
+AGENTS.md
+.ai/

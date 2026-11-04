@@ -164,6 +164,25 @@ public final class ResidentCommands {
                 .then(Commands.argument("城镇", StringArgumentType.string())
                         .executes(ctx -> doUnlocks(ctx.getSource(),
                                 StringArgumentType.getString(ctx, "城镇")))));
+        // ---- /bmfstown town add|remove|list|leave|disband ----
+        // 领地权限（v0.11.1）：成员白名单。城镇按**站位**解析（沿用 unlocks
+        // 的惯例）；add 走 GameProfileArgument（离线玩家名也能解析）。
+        root.then(Commands.literal("town")
+                .then(Commands.literal("add")
+                        .then(Commands.argument("玩家", net.minecraft.commands.arguments.GameProfileArgument.gameProfile())
+                                .executes(ctx -> townAdd(ctx.getSource(),
+                                        net.minecraft.commands.arguments.GameProfileArgument
+                                                .getGameProfiles(ctx, "玩家")))))
+                .then(Commands.literal("remove")
+                        .then(Commands.argument("名字", StringArgumentType.word())
+                                .executes(ctx -> townRemove(ctx.getSource(),
+                                        StringArgumentType.getString(ctx, "名字")))))
+                .then(Commands.literal("list")
+                        .executes(ctx -> townList(ctx.getSource())))
+                .then(Commands.literal("leave")
+                        .executes(ctx -> townLeave(ctx.getSource())))
+                .then(Commands.literal("disband")
+                        .executes(ctx -> townDisband(ctx.getSource()))));
 
         // ---- /bmfstown snowfall <秒> [半径] ----
         // 魔法降雪调试命令：以玩家为中心限时局部下雪（任何群系）。
@@ -427,6 +446,131 @@ public final class ResidentCommands {
      * 传 null → 按执行者站立位置解析（站在哪个镇就是哪个镇）。
      * 失败时已向执行者发送原因，返回 null。
      */
+    // ==========================================================
+    //  领地权限：成员白名单命令（v0.11.1）
+    // ==========================================================
+
+    /** 解析执行者脚下的城镇 + 校验成员身份；失败已发提示，返回 null。 */
+    private static com.bmf.bmfstown.town.Town memberTown(CommandSourceStack source) {
+        com.bmf.bmfstown.town.Town town = resolveTown(source, null);
+        if (town == null) {
+            return null;
+        }
+        net.minecraft.server.level.ServerPlayer player;
+        try {
+            player = source.getPlayerOrException();
+        } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+            source.sendFailure(Component.literal("该命令需要玩家执行"));
+            return null;
+        }
+        // 空成员表 = 未启用保护的老城镇：任何人可执行 add（首个 add 启用保护）
+        if (!town.isMember(player.getUUID())) {
+            source.sendFailure(Component.translatable(
+                    "msg.bmfstown.town.not_member", town.name()));
+            return null;
+        }
+        return town;
+    }
+
+    private static int townAdd(CommandSourceStack source,
+            java.util.Collection<com.mojang.authlib.GameProfile> profiles) {
+        com.bmf.bmfstown.town.Town town = memberTown(source);
+        if (town == null) {
+            return 0;
+        }
+        for (com.mojang.authlib.GameProfile profile : profiles) {
+            com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).addMember(
+                    town, profile.getId(), profile.getName());
+            source.sendSuccess(() -> Component.translatable(
+                    "msg.bmfstown.town.add_ok", profile.getName(), town.name()), false);
+        }
+        return profiles.size();
+    }
+
+    private static int townRemove(CommandSourceStack source, String name) {
+        com.bmf.bmfstown.town.Town town = memberTown(source);
+        if (town == null) {
+            return 0;
+        }
+        String removed = com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).removeMemberByName(town, name);
+        if (removed == null) {
+            source.sendFailure(Component.translatable(
+                    "msg.bmfstown.town.remove_none", town.name(), name));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.translatable(
+                "msg.bmfstown.town.remove_ok", removed, town.name()), false);
+        return 1;
+    }
+
+    private static int townList(CommandSourceStack source) {
+        com.bmf.bmfstown.town.Town town = memberTown(source);
+        if (town == null) {
+            return 0;
+        }
+        String names = String.join("、", town.members().values());
+        source.sendSuccess(() -> Component.translatable(
+                "msg.bmfstown.town.list_head", town.name(),
+                town.members().size(), names.isEmpty() ? "（无）" : names), false);
+        return town.members().size();
+    }
+
+    private static int townLeave(CommandSourceStack source) {
+        com.bmf.bmfstown.town.Town town = resolveTown(source, null);
+        if (town == null) {
+            return 0;
+        }
+        net.minecraft.server.level.ServerPlayer player;
+        try {
+            player = source.getPlayerOrException();
+        } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+            source.sendFailure(Component.literal("该命令需要玩家执行"));
+            return 0;
+        }
+        String removed = com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).removeMember(
+                town, player.getUUID());
+        if (removed == null) {
+            source.sendFailure(Component.translatable(
+                    "msg.bmfstown.town.not_member", town.name()));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.translatable(
+                "msg.bmfstown.town.leave_ok", town.name()), false);
+        return 1;
+    }
+
+    private static int townDisband(CommandSourceStack source) {
+        com.bmf.bmfstown.town.Town town = resolveTown(source, null);
+        if (town == null) {
+            return 0;
+        }
+        net.minecraft.server.level.ServerPlayer player;
+        try {
+            player = source.getPlayerOrException();
+        } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
+            source.sendFailure(Component.literal("该命令需要玩家执行"));
+            return 0;
+        }
+        if (town.ownerId() == null) {
+            // 老城镇没登记创建者：解散权无从判定，引导走手册删除（原有能力不变）
+            source.sendFailure(Component.translatable("msg.bmfstown.town.disband_legacy"));
+            return 0;
+        }
+        if (!town.ownerId().equals(player.getUUID())) {
+            source.sendFailure(Component.translatable(
+                    "msg.bmfstown.town.disband_denied", town.name()));
+            return 0;
+        }
+        boolean ok = com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).remove(
+                town.id().toString(), null);
+        if (ok) {
+            com.bmf.bmfstown.network.ModNetworking.sendHandbookSync(player, false);
+            source.sendSuccess(() -> Component.translatable(
+                    "msg.bmfstown.town.disband_ok", town.name()), true);
+        }
+        return ok ? 1 : 0;
+    }
+
     private static com.bmf.bmfstown.town.Town resolveTown(
             net.minecraft.commands.CommandSourceStack source,
             @javax.annotation.Nullable String townText) {

@@ -754,6 +754,20 @@ public class Resident extends PathfinderMob {
         return this.getProfession() == ProfessionType.WARRIOR;
     }
 
+    /**
+     * 渲染距离（v0.11.0）：原版默认公式 = <b>判定盒宽 × 64</b> 的平方——
+     * 我们的盒宽 0.5（比村民 0.6 瘦身）会把渲染距离压到 **32 格**，比狐狸
+     * （38 格）、马（102 格）都近，中距离上"凭空消失"（用户 21:44 实测）。
+     * 跟踪距离（clientTrackingRange 10 chunks = 160 格）本来就很远，
+     * 这里固定按 64 格渲染（与原版 1.0 盒宽实体同档），尊重"实体渲染距离"
+     * 视频选项（viewScale）。
+     */
+    @Override
+    public boolean shouldRenderAtSqrDistance(double distance) {
+        double range = 64.0D * net.minecraft.world.entity.Entity.getViewScale();
+        return distance < range * range;
+    }
+
     /** 工人 Goal 引用（注册时挂上；面板状态显示用）。 */
     @Nullable
     private WorkerGoal workerGoal;

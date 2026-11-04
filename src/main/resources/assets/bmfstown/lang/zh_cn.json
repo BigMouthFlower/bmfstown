@@ -554,5 +554,14 @@
   "msg.bmfstown.unlock.type.book": "隐藏书籍",
   "msg.bmfstown.book.learned": "%s 学会了",
   "book.bmfstown.copied": "抄本 · 抄工：%s",
-  "gui.bmfstown.resident.work.eff_melee_info": "《%s》近战伤害 +%s%%（作用于攻击力，不含在左侧工作效率内）"
+  "gui.bmfstown.resident.work.eff_melee_info": "《%s》近战伤害 +%s%%（作用于攻击力，不含在左侧工作效率内）",
+  "msg.bmfstown.town.not_member": "这里属于《%s》——你不是成员",
+  "msg.bmfstown.town.add_ok": "已将 %s 加入《%s》成员名单",
+  "msg.bmfstown.town.remove_ok": "已将 %s 移出《%s》",
+  "msg.bmfstown.town.remove_none": "《%s》没有叫 %s 的成员",
+  "msg.bmfstown.town.list_head": "《%s》成员（%s）：%s",
+  "msg.bmfstown.town.leave_ok": "你已退出《%s》",
+  "msg.bmfstown.town.disband_denied": "只有城镇创建者能解散《%s》",
+  "msg.bmfstown.town.disband_legacy": "该城镇未登记创建者（旧档），请通过手册删除",
+  "msg.bmfstown.town.disband_ok": "《%s》已解散"
 }

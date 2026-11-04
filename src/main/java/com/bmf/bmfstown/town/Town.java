@@ -44,6 +44,16 @@ public class Town {
     /** 创建时间戳——手册里"新的排在后面"就靠它排序。 */
     private final long createdAt;
 
+    /**
+     * 成员白名单（v0.11.1 领地权限）：UUID → 最近一次记录的名字。
+     * 成员与创建者**完全同权**（子区域增删改/容器/门/破坏放置），唯一例外
+     * 是解散城镇只归创建者。**空表 = 未启用保护**（老城镇向后兼容——
+     * 保护随第一次 `/bmfstown town add` 启用）。
+     */
+    private final java.util.Map<UUID, String> members = new java.util.HashMap<>();
+    /** 创建者 UUID（解散权限判定）。老档没有此字段（null）——解散回退为全体成员。 */
+    private java.util.UUID ownerId;
+
     public Town(UUID id, String name, String ownerName, String dimension,
                 BlockPos min, BlockPos max) {
         this(id, name, ownerName, dimension, min, max, System.currentTimeMillis());
@@ -81,6 +91,54 @@ public class Town {
 
     public String ownerName() {
         return ownerName;
+    }
+
+    // ==========================================================
+    //  成员白名单（v0.11.1 领地权限）
+    // ==========================================================
+
+    public java.util.UUID ownerId() {
+        return this.ownerId;
+    }
+
+    public void setOwnerId(java.util.UUID ownerId) {
+        this.ownerId = ownerId;
+    }
+
+    /** 是否为成员。空表 = 未启用保护，视为"谁都是成员"（老城镇兼容）。 */
+    public boolean isMember(java.util.UUID playerId) {
+        return this.members.isEmpty() || this.members.containsKey(playerId);
+    }
+
+    /** 保护是否已启用（成员表非空）。 */
+    public boolean protectionEnabled() {
+        return !this.members.isEmpty();
+    }
+
+    /** 成员名单只读视图（命令 list 展示用）。 */
+    public java.util.Map<UUID, String> members() {
+        return java.util.Collections.unmodifiableMap(this.members);
+    }
+
+    /** 加入成员（重复幂等）。 */
+    public void addMember(java.util.UUID playerId, String name) {
+        this.members.put(playerId, name);
+    }
+
+    /** 按 UUID 移除成员：返回被移除者的名字，没找到返回 null。 */
+    public String removeMember(java.util.UUID playerId) {
+        return this.members.remove(playerId);
+    }
+
+    /** 按名字（忽略大小写）移除成员：返回被移除者的名字，没找到返回 null。 */
+    public String removeMemberByName(String name) {
+        for (java.util.Map.Entry<UUID, String> e : this.members.entrySet()) {
+            if (e.getValue().equalsIgnoreCase(name)) {
+                this.members.remove(e.getKey());
+                return e.getValue();
+            }
+        }
+        return null;
     }
 
     public String dimension() {
@@ -232,6 +290,17 @@ public class Town {
             blockList.add(block.save());
         }
         tag.put("TownBlocks", blockList);
+        if (this.ownerId != null) {
+            tag.putUUID("OwnerId", this.ownerId);
+        }
+        ListTag memberList = new ListTag();
+        for (java.util.Map.Entry<UUID, String> e : this.members.entrySet()) {
+            CompoundTag m = new CompoundTag();
+            m.putUUID("Id", e.getKey());
+            m.putString("Name", e.getValue());
+            memberList.add(m);
+        }
+        tag.put("Members", memberList);
         return tag;
     }
 
@@ -264,6 +333,12 @@ public class Town {
         ListTag blockList = tag.getList("TownBlocks", Tag.TAG_COMPOUND);
         for (int i = 0; i < blockList.size(); i++) {
             town.townBlocks.add(TownZone.load(blockList.getCompound(i)));
+        }
+        town.ownerId = tag.hasUUID("OwnerId") ? tag.getUUID("OwnerId") : null;
+        ListTag memberList = tag.getList("Members", Tag.TAG_COMPOUND);
+        for (int i = 0; i < memberList.size(); i++) {
+            CompoundTag m = memberList.getCompound(i);
+            town.members.put(m.getUUID("Id"), m.getString("Name"));
         }
         // 老档自动归块（v0.9.1）：归属为空（区块功能实装前画的功能区）且
         // 几何上完整落在某个追加区块内 → 自动归到那个区块。主外框内的保持主区块。

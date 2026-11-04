@@ -56,6 +56,9 @@ public final class TownManager {
         Town town = new Town(UUID.randomUUID(), name,
                 player.getName().getString(),
                 level.dimension().location().toString(), a, b);
+        // 领地权限（v0.11.1）：建镇人 = 创建者（唯一可解散），也是初始成员
+        town.setOwnerId(player.getUUID());
+        town.addMember(player.getUUID(), player.getName().getString());
         data.add(town);
 
         player.displayClientMessage(Component.translatable(
@@ -143,6 +146,11 @@ public final class TownManager {
                     "msg.bmfstown.town.gone"), true);
             return;
         }
+        if (!town.isMember(player.getUUID())) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.town.not_member", town.name()), true);
+            return;
+        }
         if (!town.dimension().equals(player.serverLevel().dimension().location().toString())) {
             player.displayClientMessage(Component.translatable(
                     "msg.bmfstown.zoneblock.wrong_dim"), true);
@@ -166,6 +174,13 @@ public final class TownManager {
         ServerLevel level = player.serverLevel();
         TownSaveData data = TownSaveData.get(level);
         Town town = data.findTown(townId.toString());
+        if (town != null && !town.isMember(player.getUUID())) {
+            ZoneSelectSessions.cancel(player.getUUID());
+            ModNetworking.sendZoneSelectSync(player, false);
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.town.not_member", town.name()), true);
+            return;
+        }
         if (town == null) {
             ZoneSelectSessions.cancel(player.getUUID());
             ModNetworking.sendZoneSelectSync(player, false);
@@ -236,16 +251,35 @@ public final class TownManager {
 
         TownSaveData data = TownSaveData.get(player.serverLevel());
         if (targetId.startsWith("T:")) {
+            // 领地权限：城镇/子区域/区块的改名都要求是该镇成员
+            Town town = data.findTown(targetId.substring(2));
+            if (town != null && !town.isMember(player.getUUID())) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.town.not_member", town.name()), false);
+                return;
+            }
             if (!data.rename(targetId.substring(2), null, clean)) {
                 return; // 目标已不存在（可能被别人删了），静默忽略
             }
         } else if (targetId.startsWith("Z:")) {
             // 改子区域：townId 不参与查找，按 zoneId 全域找
+            Town host = findZoneHost(data, targetId.substring(2));
+            if (host != null && !host.isMember(player.getUUID())) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.town.not_member", host.name()), false);
+                return;
+            }
             if (!data.rename("-", targetId.substring(2), clean)) {
                 return;
             }
         } else if (targetId.startsWith("B:")) {
             // 改城镇区块名（v0.9.1）：townId 不参与查找，全域按区块 id 找
+            Town host = findBlockHost(data, targetId.substring(2));
+            if (host != null && !host.isMember(player.getUUID())) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.town.not_member", host.name()), false);
+                return;
+            }
             if (!data.renameBlockAny(targetId.substring(2), clean)) {
                 return;
             }
@@ -258,15 +292,55 @@ public final class TownManager {
     public static void delete(ServerPlayer player, String targetId) {
         TownSaveData data = TownSaveData.get(player.serverLevel());
         boolean ok = false;
+        // 领地权限（v0.11.1）：手册删除与命令解散**同一套规则**——
+        // 删城镇 = 仅创建者（老档无记录则不设防，与旧版行为一致）；
+        // 删子区域/区块 = 该镇成员。否则外人拿手册就能端掉受保护城镇。
         if (targetId.startsWith("T:")) {
+            Town town = data.findTown(targetId.substring(2));
+            if (town != null) {
+                if (town.ownerId() != null
+                        && !town.ownerId().equals(player.getUUID())) {
+                    player.displayClientMessage(Component.translatable(
+                            "msg.bmfstown.town.disband_denied", town.name()), false);
+                    return;
+                }
+                if (!town.isMember(player.getUUID())) {
+                    player.displayClientMessage(Component.translatable(
+                            "msg.bmfstown.town.not_member", town.name()), false);
+                    return;
+                }
+            }
             ok = data.remove(targetId.substring(2), null);
         } else if (targetId.startsWith("Z:")) {
+            java.util.UUID zoneId = java.util.UUID.fromString(targetId.substring(2));
+            Town host = null;
+            for (Town town : data.allTowns()) {
+                for (TownZone zone : town.allZones()) {
+                    if (zone.id().equals(zoneId)) {
+                        host = town;
+                        break;
+                    }
+                }
+                if (host != null) {
+                    break;
+                }
+            }
+            if (host != null && !host.isMember(player.getUUID())) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.town.not_member", host.name()), false);
+                return;
+            }
             ok = data.remove("-", targetId.substring(2));
         } else if (targetId.startsWith("B:")) {
             // 删城镇区块：区块下还挂着功能区时拒绝并提示
             for (Town town : data.allTowns()) {
                 for (TownZone block : town.townBlocks()) {
                     if (targetId.substring(2).equals(block.id().toString())) {
+                        if (!town.isMember(player.getUUID())) {
+                            player.displayClientMessage(Component.translatable(
+                                    "msg.bmfstown.town.not_member", town.name()), false);
+                            return;
+                        }
                         if (town.countZonesInBlock(block.id()) > 0) {
                             player.displayClientMessage(Component.translatable(
                                     "msg.bmfstown.zoneblock.has_children"), false);
@@ -284,4 +358,41 @@ public final class TownManager {
             ModNetworking.sendHandbookSync(player, false);
         }
     }
+
+    /** 反查子区域宿主城镇（找不到返回 null）。 */
+    private static Town findZoneHost(TownSaveData data, String zoneIdText) {
+        java.util.UUID zoneId;
+        try {
+            zoneId = java.util.UUID.fromString(zoneIdText);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        for (Town town : data.allTowns()) {
+            for (TownZone zone : town.allZones()) {
+                if (zone.id().equals(zoneId)) {
+                    return town;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** 反查城镇区块宿主城镇（找不到返回 null）。 */
+    private static Town findBlockHost(TownSaveData data, String blockIdText) {
+        java.util.UUID blockId;
+        try {
+            blockId = java.util.UUID.fromString(blockIdText);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        for (Town town : data.allTowns()) {
+            for (TownZone block : town.townBlocks()) {
+                if (block.id().equals(blockId)) {
+                    return town;
+                }
+            }
+        }
+        return null;
+    
+}
 }
