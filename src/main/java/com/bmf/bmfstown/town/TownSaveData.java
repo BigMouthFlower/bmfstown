@@ -308,8 +308,12 @@ public class TownSaveData extends SavedData {
             sb.append("T|").append(town.id()).append('|').append(town.name())
                     .append('|').append(town.dimension()).append('|').append(town.ownerName())
                     .append('|').append(TownWandItem.fmt(town.min()))
-                    .append('|').append(TownWandItem.fmt(town.max()))
-                    .append('\n');
+                    .append('|').append(TownWandItem.fmt(town.max()));
+            // 工坊登记表（v0.12 城镇级）：容器/工作站坐标 CSV（打包 long 十进制逗号分隔）
+            Town.WorkshopRegister reg = town.workshop();
+            sb.append('|').append(csvLongs(reg.containers))
+                    .append('|').append(csvLongs(reg.stations));
+            sb.append('\n');
             // 追加区块行（v0.9.1 不连续选区）：B|城镇ID|区块ID|名字|min|max
             // 0 号主区块就是 T 行的 min/max 本体，不重复发
             for (TownZone block : town.townBlocks()) {
@@ -367,6 +371,21 @@ public class TownSaveData extends SavedData {
                     sb.append('\n');
                 }
             }
+        }
+        return sb.toString();
+    }
+
+    /** long 集合 → 十进制逗号分隔（空集合 = 空段，split(-1) 保位）。 */
+    private static String csvLongs(java.util.Collection<Long> values) {
+        if (values.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Long v : values) {
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(v);
         }
         return sb.toString();
     }

@@ -135,6 +135,10 @@ public final class TownManager {
      * 不依赖潜行竞速）。之后空手右键两个角 → {@link #confirmAppendBlock}；Shift+右键方块也可取消。
      */
     public static void startAppendBlock(ServerPlayer player, String townIdText) {
+        // 与工坊登记会话互斥（都拦手册右键）
+        if (RegisterSessions.cancel(player.getUUID())) {
+            ModNetworking.sendRegisterSessionSync(player, false, "");
+        }
         if (ZoneSelectSessions.cancel(player.getUUID())) {
             player.displayClientMessage(Component.translatable(
                     "msg.bmfstown.zoneblock.canceled"), true);
@@ -232,6 +236,52 @@ public final class TownManager {
             }
         }
         return false;
+    }
+
+    // ==========================================================
+    //  工坊登记会话（v0.12 工人重做，城镇级）
+    // ==========================================================
+
+    /**
+     * 手册城镇页「登记方块」按钮：开启（或取消）登记会话。
+     * 会话中手持手册在**城镇范围内**右键箱子=登记仓储、右键工作台=登记岗位
+     * （再点取消）；收起手册结束。不依赖任何子区域（用户拍板：工坊区是纯手续）。
+     * 与追加区块选区会话互斥。
+     */
+    public static void toggleRegisterSession(ServerPlayer player, String townIdText) {
+        // 再点一次按钮 = 结束会话（可靠的取消通道，与追加选区同款）
+        if (RegisterSessions.cancel(player.getUUID())) {
+            ModNetworking.sendRegisterSessionSync(player, false, "");
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.register.canceled"), true);
+            return;
+        }
+        Town town = TownSaveData.get(player.serverLevel()).findTown(townIdText);
+        if (town == null) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.town.gone"), true);
+            return;
+        }
+        if (!town.isMember(player.getUUID())) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.town.not_member", town.name()), true);
+            return;
+        }
+        if (!town.dimension().equals(player.serverLevel().dimension().location().toString())) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.zoneblock.wrong_dim"), true);
+            return;
+        }
+        // 与选区会话互斥（两个会话都要拦右键，同开必乱）
+        if (ZoneSelectSessions.cancel(player.getUUID())) {
+            ModNetworking.sendZoneSelectSync(player, false);
+        }
+        RegisterSessions.start(player.getUUID(), town.id());
+        ModNetworking.sendRegisterSessionSync(player, true, town.id().toString());
+        player.displayClientMessage(Component.translatable(
+                "msg.bmfstown.register.started", town.name()), false);
+        player.displayClientMessage(Component.translatable(
+                "msg.bmfstown.register.hint"), false);
     }
 
     // ==========================================================

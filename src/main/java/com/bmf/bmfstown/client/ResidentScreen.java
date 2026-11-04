@@ -1483,25 +1483,23 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.census_hint"),
                     5, bw, guardY + 3, 0x707070);
         } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
-            // 工人：设置工坊（左半）+ 开工开关（右半）；下行产物标签 + 订单格
+            // 工人：开工开关（全宽，v0.12 工坊区自动认领后无"设置工坊"）；
+            // 岗位从绑定城镇的登记工坊区自动认领，玩家只管登记方块和下订单
             boolean enabled = resident.workerEnabledSynced();
-            int half = bw / 2 - 2;
-            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.set_bench"),
-                    5, half, followY + 3, 0xE0E0E0);
             drawCenteredInPanel(gfx, I18n.get(enabled
                             ? "gui.bmfstown.resident.work.ws_toggle_on"
                             : "gui.bmfstown.resident.work.ws_toggle_off"),
-                    5 + half + 4, half, followY + 3, enabled ? 0xA8FFA8 : 0xE0E0E0);
+                    5, bw, followY + 3, enabled ? 0xA8FFA8 : 0xE0E0E0);
             drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.product_label"),
                     5, bw, guardY + 3, 0xE0E0E0);
-            int bound = resident.workerBoundSynced() ? 1 : 0;
+            int bound = resident.workerClaimedSynced() ? 1 : 0;
             int phase = resident.workerPhaseSynced();
             String orderItem = com.bmf.bmfstown.client.ClientMoodState.workerOrderOf(
                     resident.getUUID());
             var orderStack = new ItemStack(com.bmf.bmfstown.entity.profile.WorkshopCrafts
                     .BuiltInItemKey.item(orderItem));
             drawOrderSlot(gfx, this.imageWidth - 29, guardY - 2, orderStack, mouseX, mouseY);
-            // ---- 状态行（实体同步通道，实时）：绑定 / 订单 / 阶段 ----
+            // ---- 状态行（实体同步通道，实时）：岗位 / 订单 / 阶段 ----
             String boundTxt = I18n.get(bound == 1
                     ? "gui.bmfstown.resident.work.ws_bound"
                     : "gui.bmfstown.resident.work.ws_unbound");
@@ -2297,16 +2295,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     return true;
                 }
                 if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
-                    // 左半 = 设置工坊；右半 = 开工/停工切换
-                    if (mouseX < this.leftPos + 5 + this.imageWidth / 2 - 2) {
-                        if (this.minecraft != null) {
-                            closeContainerBeforeSwitch();
-                            this.minecraft.setScreen(null);
-                        }
-                        WorkshopBenchClient.startPick(r.getId());
-                    } else {
-                        ModNetworking.sendToServer(new ModNetworking.WorkerTogglePayload(r.getId()));
-                    }
+                    // 全宽 = 开工/停工切换（v0.12：工坊由登记表供给，无绑定按钮）
+                    ModNetworking.sendToServer(new ModNetworking.WorkerTogglePayload(r.getId()));
                     return true;
                 }
                 if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H) {

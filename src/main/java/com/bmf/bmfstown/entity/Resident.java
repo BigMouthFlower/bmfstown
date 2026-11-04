@@ -598,7 +598,7 @@ public class Resident extends PathfinderMob {
         boolean hasOrder = !this.jobState.orderItem().isEmpty();
         int value = (hasOrder ? 64 : 0)
                 | (workerEnabledSynced() ? 32 : 0)
-                | (workerBound() ? 16 : 0)
+                | (workerClaimed() ? 16 : 0)
                 | (Math.max(-2, Math.min(13, phase)) + 2);
         this.entityData.set(DATA_WORKER_STATUS, value);
     }
@@ -616,8 +616,8 @@ public class Resident extends PathfinderMob {
         return (this.entityData.get(DATA_WORKER_STATUS) >> 5) - 1;
     }
 
-    /** 客户端读：三件套是否齐备。 */
-    public boolean workerBoundSynced() {
+    /** 客户端读：岗位是否已认领（bit 16；v0.12 语义：工坊区自动认领，非三件套绑定）。 */
+    public boolean workerClaimedSynced() {
         return (this.entityData.get(DATA_WORKER_STATUS) & 16) != 0;
     }
 
@@ -784,10 +784,9 @@ public class Resident extends PathfinderMob {
                 ? this.workerGoal.phaseOrdinal() : -1;
     }
 
-    /** 工人三件套是否齐备（面板状态显示用）。 */
-    public boolean workerBound() {
-        var j = this.jobState;
-        return j.craftTablePos() != 0 && j.inputChestPos() != 0 && j.outputChestPos() != 0;
+    /** 工人是否已认领岗位（面板状态显示用；v0.12 工坊区自动认领）。 */
+    public boolean workerClaimed() {
+        return this.workerGoal != null && this.workerGoal.hasClaim();
     }
 
     /** 是否正在觅食（工人 Goal 据此让位：饿了先吃饭，吃完回来接着干活）。 */

@@ -13,8 +13,9 @@ import java.util.UUID;
  *
  * <h2>六域重构（v0.8.2）</h2>
  * 旧版工人三件套绑定塞在 MoodState 里。现在独立成域，且用通用数据槽：
- * 每个职业的岗位资产自己存自己的键（工人写 craftTable/input/output/order/enabled，
- * 将来矿工写 mineTarget、厨师写 stove），换职业时互不干扰。
+ * 每个职业的岗位资产自己存自己的键（工人写 order/enabled——几何上收到
+ * 镇级工坊区登记表（v0.12），矿工写 mineTarget、厨师写 stove），
+ * 换职业时互不干扰。
  *
  * <p>同时收纳工作模式（战士跟随/站岗选档——用户拍板：这是"这份工作怎么干"，
  * 属于岗位态不属于身份）与战士的岗哨点/跟随目标。
@@ -32,14 +33,14 @@ public final class JobState {
     private BlockPos guardPost;
     private UUID followPlayerId;
 
-    // ---- 工人绑定（通用槽键名；0/""/true = 缺省） ----
+    // ---- 工人（通用槽键名；0/""/true = 缺省） ----
 
     /** 通用数据槽：各职业自己的岗位资产。 */
     private final CompoundTag data = new CompoundTag();
 
-    public static final String KEY_CRAFT_TABLE = "CraftTablePos";
-    public static final String KEY_INPUT_CHEST = "InputChestPos";
-    public static final String KEY_OUTPUT_CHEST = "OutputChestPos";
+    // v0.12 工人重做：三件套（CraftTablePos/InputChestPos/OutputChestPos）已删——
+    // 几何上收到镇级工坊区登记表（Town.WorkshopRegister），NPC 只留订单与开关。
+
     public static final String KEY_ORDER_ITEM = "OrderItem";
     public static final String KEY_WORKER_ENABLED = "WorkerEnabled";
 
@@ -55,18 +56,6 @@ public final class JobState {
 
     public UUID followPlayerId() {
         return this.followPlayerId;
-    }
-
-    public long craftTablePos() {
-        return this.data.getLong(KEY_CRAFT_TABLE);
-    }
-
-    public long inputChestPos() {
-        return this.data.getLong(KEY_INPUT_CHEST);
-    }
-
-    public long outputChestPos() {
-        return this.data.getLong(KEY_OUTPUT_CHEST);
     }
 
     /** 当前订单（产物注册名；空 = 未设订单）。 */
@@ -91,13 +80,6 @@ public final class JobState {
 
     public void setFollowPlayerId(UUID id) {
         this.followPlayerId = id;
-    }
-
-    /** 一键落账工坊三件套（绑定流程完成时服务端调用）。 */
-    public void setWorkshop(long table, long input, long output) {
-        this.data.putLong(KEY_CRAFT_TABLE, table);
-        this.data.putLong(KEY_INPUT_CHEST, input);
-        this.data.putLong(KEY_OUTPUT_CHEST, output);
     }
 
     // ---- 学者图书馆认领（v0.11：自动认领，0 = 未认领）----
@@ -185,14 +167,8 @@ public final class JobState {
         if (tag.contains("Data")) {
             j.data.merge(tag.getCompound("Data"));
         }
-        // 旧版工人绑定在 MoodState 子标签
+        // 旧版工人绑定在 MoodState 子标签（三件套键已废弃不再读；订单/开关保留）
         if (legacy && legacyMoodTag != null && legacyMoodTag.getBoolean("PrefsGenerated")) {
-            j.data.putLong(KEY_CRAFT_TABLE,
-                    legacyMoodTag.contains("CraftTablePos") ? legacyMoodTag.getLong("CraftTablePos") : 0L);
-            j.data.putLong(KEY_INPUT_CHEST,
-                    legacyMoodTag.contains("InputChestPos") ? legacyMoodTag.getLong("InputChestPos") : 0L);
-            j.data.putLong(KEY_OUTPUT_CHEST,
-                    legacyMoodTag.contains("OutputChestPos") ? legacyMoodTag.getLong("OutputChestPos") : 0L);
             j.data.putString(KEY_ORDER_ITEM,
                     legacyMoodTag.contains("OrderItem") ? legacyMoodTag.getString("OrderItem") : "");
             j.data.putBoolean(KEY_WORKER_ENABLED,

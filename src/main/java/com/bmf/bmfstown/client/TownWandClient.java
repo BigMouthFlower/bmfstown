@@ -325,9 +325,27 @@ public final class TownWandClient {
                 ZoneOutliner.renderEdges(pose.last(), edges, savedBox(zone.min(), zone.max()),
                         c[0], c[1], c[2], BORDER_EDGE_ALPHA, ZoneOutliner.EDGE_WIDTH);
             }
+
+            // ---- 工坊登记方块（v0.12，用户追加）：黄=容器，紫=工作站 ----
+            // 与登记会话同一套颜色语言，透明度略降（这是观察态，别抢过会话编辑态）
+            for (Long p : town.workshopContainers()) {
+                ZoneOutliner.renderEdges(pose.last(), edges, blockBox(BlockPos.of(p)),
+                        1.0F, 0.85F, 0.3F, 0.75F, ZoneOutliner.EDGE_WIDTH);
+            }
+            for (Long p : town.workshopStations()) {
+                ZoneOutliner.renderEdges(pose.last(), edges, blockBox(BlockPos.of(p)),
+                        0.75F, 0.5F, 1.0F, 0.75F, ZoneOutliner.EDGE_WIDTH);
+            }
         }
         mc.renderBuffers().bufferSource().endBatch(OutlineRenderTypes.edge());
         pose.popPose();
+    }
+
+    /** 单方块小盒（轻微外扩防 z-fighting）。 */
+    private static net.minecraft.world.phys.AABB blockBox(BlockPos pos) {
+        return new net.minecraft.world.phys.AABB(
+                pos.getX() - 0.02, pos.getY() - 0.02, pos.getZ() - 0.02,
+                pos.getX() + 1.02, pos.getY() + 1.02, pos.getZ() + 1.02);
     }
 
     /** 已保存区域的原语盒：方块坐标含端点，整体外扩防 z-fighting。 */

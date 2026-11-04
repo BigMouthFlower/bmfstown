@@ -363,22 +363,37 @@ public final class ModNetworking {
     }
 
     /**
-     * C → S：工人工坊绑定确认（三步选取完成，一次带齐三件套）。
-     * 服务端复核职业=工人、合成台方块无误后才落账。
+     * C → S：手册城镇页「登记方块」按钮——开启（或取消）工坊登记会话（城镇级）。
+     * 服务端复核城镇存在、成员身份、同维度后开启会话。
      */
-    public record WorkshopBindPayload(int entityId, BlockPos table, BlockPos input,
-                                      BlockPos output) implements CustomPacketPayload {
+    public record HandbookRegisterSessionPayload(String townId) implements CustomPacketPayload {
 
-        public static final Type<WorkshopBindPayload> TYPE = new Type<>(
-                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "workshop_bind"));
+        public static final Type<HandbookRegisterSessionPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "handbook_register_session"));
 
-        public static final StreamCodec<ByteBuf, WorkshopBindPayload> STREAM_CODEC =
+        public static final StreamCodec<ByteBuf, HandbookRegisterSessionPayload> STREAM_CODEC =
                 StreamCodec.composite(
-                        ByteBufCodecs.VAR_INT, WorkshopBindPayload::entityId,
-                        BlockPos.STREAM_CODEC, WorkshopBindPayload::table,
-                        BlockPos.STREAM_CODEC, WorkshopBindPayload::input,
-                        BlockPos.STREAM_CODEC, WorkshopBindPayload::output,
-                        WorkshopBindPayload::new);
+                        ByteBufCodecs.STRING_UTF8, HandbookRegisterSessionPayload::townId,
+                        HandbookRegisterSessionPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /** S → C：工坊登记会话状态（客户端据此在世界里画登记小框）。 */
+    public record RegisterSessionSyncPayload(boolean active, String zoneId)
+            implements CustomPacketPayload {
+
+        public static final Type<RegisterSessionSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "register_session_sync"));
+
+        public static final StreamCodec<ByteBuf, RegisterSessionSyncPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.BOOL, RegisterSessionSyncPayload::active,
+                        ByteBufCodecs.STRING_UTF8, RegisterSessionSyncPayload::zoneId,
+                        RegisterSessionSyncPayload::new);
 
         @Override
         public Type<? extends CustomPacketPayload> type() {
@@ -750,37 +765,6 @@ public final class ModNetworking {
                     resident.getName().getString(),
                     payload.pos().toShortString(),
                     com.bmf.bmfstown.config.Config.WARRIOR_GUARD_RADIUS.get()), true);
-        });
-    }
-
-    /** 工坊绑定：校验职业=工人、合成台方块无误，三件套落账。 */
-    private static void handleWorkshopBind(WorkshopBindPayload payload, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> {
-            Player player = ctx.player();
-            if (!(player instanceof ServerPlayer serverPlayer)) {
-                return;
-            }
-            if (!(serverPlayer.level().getEntity(payload.entityId())
-                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
-                return; // 镇民不在了：静默丢弃
-            }
-            if (resident.getProfession()
-                    != com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
-                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                        "msg.bmfstown.work.need_worker"), true);
-                return;
-            }
-            ServerLevel level = serverPlayer.serverLevel();
-            if (!(level.getBlockState(payload.table())
-                    .is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE))) {
-                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                        "msg.bmfstown.workshop.need_table"), true);
-                return;
-            }
-            resident.getJobState().setWorkshop(
-                    payload.table().asLong(), payload.input().asLong(), payload.output().asLong());
-            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
-                    "msg.bmfstown.workshop.bound", resident.getName().getString()), true);
         });
     }
 
@@ -1213,9 +1197,26 @@ public final class ModNetworking {
         });
     }
 
+    /** 手册城镇页「登记方块」：开关工坊登记会话（城镇级）。 */
+    private static void handleHandbookRegisterSession(HandbookRegisterSessionPayload payload,
+                                                      IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer serverPlayer) {
+                TownManager.toggleRegisterSession(serverPlayer, payload.townId());
+            }
+        });
+    }
+
     private static void handleZoneSelectSync(ZoneSelectSyncPayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() ->
                 com.bmf.bmfstown.client.TownHandbookClient.setZoneSelecting(payload.active()));
+    }
+
+    private static void handleRegisterSessionSync(RegisterSessionSyncPayload payload,
+                                                  IPayloadContext ctx) {
+        ctx.enqueueWork(() ->
+                com.bmf.bmfstown.client.WorkshopRegisterClient.setSession(
+                        payload.active(), payload.zoneId()));
     }
 
     private static void handleSnowfallSync(SnowfallSyncPayload payload, IPayloadContext ctx) {
@@ -1260,6 +1261,11 @@ public final class ModNetworking {
     /** 选区会话状态推送给客户端（会话开始/结束时调）。 */
     public static void sendZoneSelectSync(ServerPlayer player, boolean active) {
         PacketDistributor.sendToPlayer(player, new ZoneSelectSyncPayload(active));
+    }
+
+    /** 工坊登记会话状态推送给客户端（开始/结束/每次登记后调——后者顺带刷小框数据）。 */
+    public static void sendRegisterSessionSync(ServerPlayer player, boolean active, String zoneId) {
+        PacketDistributor.sendToPlayer(player, new RegisterSessionSyncPayload(active, zoneId));
     }
 
     private static void handleHandbookDelete(HandbookDeletePayload payload, IPayloadContext ctx) {
@@ -1481,8 +1487,9 @@ public final class ModNetworking {
                 ModNetworking::handleWorkGuardPost);
         registrar.playToServer(WorkFollowPayload.TYPE, WorkFollowPayload.STREAM_CODEC,
                 ModNetworking::handleWorkFollow);
-        registrar.playToServer(WorkshopBindPayload.TYPE, WorkshopBindPayload.STREAM_CODEC,
-                ModNetworking::handleWorkshopBind);
+        registrar.playToServer(HandbookRegisterSessionPayload.TYPE,
+                HandbookRegisterSessionPayload.STREAM_CODEC,
+                ModNetworking::handleHandbookRegisterSession);
         registrar.playToServer(WorkerOrderPayload.TYPE, WorkerOrderPayload.STREAM_CODEC,
                 ModNetworking::handleWorkerOrder);
         registrar.playToServer(WorkerTogglePayload.TYPE, WorkerTogglePayload.STREAM_CODEC,
@@ -1512,6 +1519,8 @@ public final class ModNetworking {
                 ModNetworking::handleHandbookAppendZone);
         registrar.playToClient(ZoneSelectSyncPayload.TYPE, ZoneSelectSyncPayload.STREAM_CODEC,
                 ModNetworking::handleZoneSelectSync);
+        registrar.playToClient(RegisterSessionSyncPayload.TYPE, RegisterSessionSyncPayload.STREAM_CODEC,
+                ModNetworking::handleRegisterSessionSync);
         registrar.playToClient(SnowfallSyncPayload.TYPE, SnowfallSyncPayload.STREAM_CODEC,
                 ModNetworking::handleSnowfallSync);
         registrar.playToClient(HandbookSyncPayload.TYPE, HandbookSyncPayload.STREAM_CODEC,

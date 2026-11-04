@@ -5,6 +5,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -53,6 +54,26 @@ public class Town {
     private final java.util.Map<UUID, String> members = new java.util.HashMap<>();
     /** 创建者 UUID（解散权限判定）。老档没有此字段（null）——解散回退为全体成员。 */
     private java.util.UUID ownerId;
+
+    /**
+     * 工坊登记表（v0.12 工人重做，用户拍板**城镇级**）：玩家手工登记的方块。
+     * 统一池：容器（取料+入库共用）与岗位（工作站）分开两组坐标，
+     * 但登记动作只有一个——右键什么类型的方块就自动进哪组。
+     * 登记范围 = 城镇区域（主外框或任一追加区块）；不依赖任何子区域——
+     * 工坊区对工人是纯手续（用户 22:40 拍板推翻"区级池"初版）。
+     */
+    public static final class WorkshopRegister {
+        /** 已登记容器（取料与入库统一池），存 BlockPos.asLong()。 */
+        public final java.util.HashSet<Long> containers = new java.util.HashSet<>();
+        /** 已登记工作站（岗位），存 BlockPos.asLong()。 */
+        public final java.util.HashSet<Long> stations = new java.util.HashSet<>();
+
+        public boolean isEmpty() {
+            return containers.isEmpty() && stations.isEmpty();
+        }
+    }
+
+    private final WorkshopRegister workshop = new WorkshopRegister();
 
     public Town(UUID id, String name, String ownerName, String dimension,
                 BlockPos min, BlockPos max) {
@@ -139,6 +160,15 @@ public class Town {
             }
         }
         return null;
+    }
+
+    // ==========================================================
+    //  工坊登记表（v0.12 工人重做，城镇级）
+    // ==========================================================
+
+    /** 本镇的工坊登记表（容器池 + 岗位池）。 */
+    public WorkshopRegister workshop() {
+        return this.workshop;
     }
 
     public String dimension() {
@@ -301,6 +331,13 @@ public class Town {
             memberList.add(m);
         }
         tag.put("Members", memberList);
+        // 工坊登记表（v0.12，城镇级）：容器/岗位坐标（long 数组最省）
+        if (!this.workshop.isEmpty()) {
+            tag.putLongArray("WorkshopContainers", this.workshop.containers.stream()
+                    .mapToLong(Long::longValue).toArray());
+            tag.putLongArray("WorkshopStations", this.workshop.stations.stream()
+                    .mapToLong(Long::longValue).toArray());
+        }
         return tag;
     }
 
@@ -339,6 +376,13 @@ public class Town {
         for (int i = 0; i < memberList.size(); i++) {
             CompoundTag m = memberList.getCompound(i);
             town.members.put(m.getUUID("Id"), m.getString("Name"));
+        }
+        // 工坊登记表（城镇级）；键名带 Z 前缀的旧实验档（区级版，未发布）自动忽略
+        for (long p : tag.getLongArray("WorkshopContainers")) {
+            town.workshop.containers.add(p);
+        }
+        for (long p : tag.getLongArray("WorkshopStations")) {
+            town.workshop.stations.add(p);
         }
         // 老档自动归块（v0.9.1）：归属为空（区块功能实装前画的功能区）且
         // 几何上完整落在某个追加区块内 → 自动归到那个区块。主外框内的保持主区块。

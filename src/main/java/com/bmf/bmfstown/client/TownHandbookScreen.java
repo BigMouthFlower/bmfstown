@@ -227,8 +227,22 @@ public class TownHandbookScreen extends Screen {
             buttons.add(InkButton.danger(bookX + 58, bookY + 148, "永久删除", this::deleteConfirmed));
             buttons.add(new InkButton(bookX + 152, bookY + 148, I18n.get("gui.bmfstown.handbook.delete_cancel"), this::cancelDelete));
         } else {
-            buttons.add(new InkButton(bookX + 58, bookY + 148, I18n.get("gui.bmfstown.handbook.rename"), this::beginRename));
-            buttons.add(new InkButton(bookX + 152, bookY + 148, I18n.get("gui.bmfstown.handbook.delete"), this::beginDelete));
+            // ⚠ 城镇页的行列表是空的（rebuildRows 只填区域/区块子页）——
+            // 目标必须走 currentTarget() 的层级回退（返回城镇本体 T:），不能查 rows
+            Row target = currentTarget();
+            boolean isTownTarget = target != null && target.targetId().startsWith("T:");
+            if (isTownTarget) {
+                // 城镇本体：多一个「登记方块」（城镇级工坊登记，v0.12 修正）
+                buttons.add(new InkButton(bookX + 6, bookY + 148,
+                        I18n.get("gui.bmfstown.handbook.register"), this::beginRegisterSession));
+                buttons.add(new InkButton(bookX + 105, bookY + 148,
+                        I18n.get("gui.bmfstown.handbook.rename"), this::beginRename));
+                buttons.add(new InkButton(bookX + 204, bookY + 148,
+                        I18n.get("gui.bmfstown.handbook.delete"), this::beginDelete));
+            } else {
+                buttons.add(new InkButton(bookX + 58, bookY + 148, I18n.get("gui.bmfstown.handbook.rename"), this::beginRename));
+                buttons.add(new InkButton(bookX + 152, bookY + 148, I18n.get("gui.bmfstown.handbook.delete"), this::beginDelete));
+            }
         }
         rebuildRows();
     }
@@ -452,6 +466,20 @@ public class TownHandbookScreen extends Screen {
         confirmDelete = false;
         this.clearWidgets();
         this.init();
+    }
+
+    /**
+     * 「登记方块」：关手册进世界，在城镇范围内右键箱子/工作台登记。
+     * 会话由服务端管理；再点按钮或收起手册结束。
+     */
+    private void beginRegisterSession() {
+        Row target = currentTarget();
+        if (target == null || !target.targetId().startsWith("T:")) {
+            return;
+        }
+        ModNetworking.sendToServer(new ModNetworking.HandbookRegisterSessionPayload(
+                target.targetId().substring(2)));
+        onClose();
     }
 
     private void endRename() {
