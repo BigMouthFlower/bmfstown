@@ -95,7 +95,8 @@ public class AlchemistGoal extends Goal {
     }
 
     private enum Phase {
-        GO_POST, FETCH_GO, FETCH_TAKE, LOAD, BREW, TAKE, STORE_GO, STORE_PUT
+        GO_POST, FETCH_GO, FETCH_TAKE, WATER_GO, WATER_FILL, LOAD, BREW, TAKE,
+        STORE_GO, STORE_PUT
     }
 
     private final Resident resident;
@@ -103,6 +104,11 @@ public class AlchemistGoal extends Goal {
     // ---- 认领上下文 ----
     private UUID townId;
     private BlockPos standPos;
+    /** 水源站补水（决策 #34）：目标站位（水源方块/含水方块/含水炼药锅）。 */
+    @Nullable
+    private BlockPos waterTarget;
+    /** 缺水瓶时先去容器取空瓶（取完转 WATER_GO）。 */
+    private boolean fetchForWater;
 
     // ---- 订单 ----
     private AlchemyCatalog.Recipe recipe;
@@ -110,8 +116,17 @@ public class AlchemistGoal extends Goal {
     /** 当前生效的订单键（换单检测用：与 JobState 不一致即触发重解析+回台对账）。 */
     private String currentOrderKey = "";
     private Holder<net.minecraft.world.item.alchemy.Potion> finalPotion;
-    /** 本批酿造步骤（粗制地狱疣 → 主料 → 修饰？）。 */
+    /** 本批酿造步骤（粗制地狱疣 → [底药中间步] → 主料 → 修饰？）。 */
     private List<Item> steps = List.of();
+    /** 秘传底药（决策 #33）：底药≠粗制时非空（悬浮=缓降）——瓶内要先酿到这一档。 */
+    @Nullable
+    private Holder<net.minecraft.world.item.alchemy.Potion> baseStepPotion;
+    /** 底药链中间步的投料（底药自身的主料，如缓降=幻翼膜）；无中间步 = null。 */
+    @Nullable
+    private Item baseStepItem;
+    /** 本批选中的等价酿造路径（决策 #37 柔性链）：按箱里现有什么料选，无中间步 = null。 */
+    @Nullable
+    private com.bmf.bmfstown.alchemy.AlchemyCatalog.Chain chosenChain;
     /** 下一个要投进料槽的步骤下标。 */
     private int stepIndex;
     /** 缺某一步的料时的定点补料需求（非空 = 只补这一件，台上的瓶不动）。 */
@@ -191,11 +206,7 @@ public class AlchemistGoal extends Goal {
             return false;
         }
         // 批次链：地狱疣 → 主料 → 药水修饰（红石/荧石）→ 容器修饰（火药→龙息）
-        List<Item> steps = new ArrayList<>();
-        steps.add(Items.NETHER_WART);
-        steps.add(this.recipe.ingredient());
-        steps.addAll(modifierItems(this.orderMod));
-        this.steps = List.copyOf(steps);
+        rebuildSteps(level);
         // 续作优先：已认领的台还活着且认领权在自己手里 → 原台接着用；
         // 只有没台/台被拆/认领已被别人接管才重新认领（防"换台双份原料"）
         if (this.standPos != null && isBrewingStand(level, this.standPos)) {
@@ -274,6 +285,8 @@ public class AlchemistGoal extends Goal {
         }
         this.fetchTarget = null;
         this.storeTarget = null;
+        this.waterTarget = null;
+        this.fetchForWater = false;
         this.brewStallTicks = 0;
         this.stallRetries = 0;
         this.phase = Phase.GO_POST;
@@ -306,6 +319,8 @@ public class AlchemistGoal extends Goal {
             case GO_POST -> tickGoPost(level);
             case FETCH_GO -> tickFetchGo(level);
             case FETCH_TAKE -> tickFetchTake(level);
+            case WATER_GO -> tickWaterGo(level);
+            case WATER_FILL -> tickWaterFill(level);
             case LOAD -> tickLoad(level);
             case BREW -> tickBrew(level);
             case TAKE -> tickTake(level);
@@ -452,35 +467,47 @@ public class AlchemistGoal extends Goal {
         this.recipe = recipe;
         this.orderMod = this.currentOrderKey.split("\\|")[2];
         this.finalPotion = this.recipe.finalPotion(this.orderMod);
-        List<Item> steps = new ArrayList<>();
-        steps.add(Items.NETHER_WART);
-        steps.add(this.recipe.ingredient());
-        steps.addAll(modifierItems(this.orderMod));
-        this.steps = List.copyOf(steps);
+        rebuildSteps(level);
         LOGGER.info("[BmfTown][炼金] {} 订单变更：{}，回台对账复用/回收",
                 this.resident.getName().getString(), this.currentOrderKey);
         this.phase = Phase.GO_POST;
         navigateToStand();
     }
 
-    /** 一条缺料需求：匹配器 + 还差几件（对库存求过差额）。 */
-    private record Need(java.util.function.Predicate<ItemStack> test, int count) {
+    /** 一条缺料需求：匹配器 + 还差几件（对库存求过差额）+ 展示名（播报点名用）。 */
+    private record Need(java.util.function.Predicate<ItemStack> test, int count,
+                        net.minecraft.network.chat.Component label) {
     }
 
-    /** 本周期缺料清单（对库存求差额）：水瓶×3+地狱疣+主料+（修饰）+（烈焰粉缺则 1）。 */
+    /** 物品展示名（translatable 保持不解析，渲染时按玩家语言取词）。 */
+    private static net.minecraft.network.chat.Component itemName(Item item) {
+        return net.minecraft.network.chat.Component.translatable(item.getDescriptionId());
+    }
+
+    /** 本周期缺料清单（对库存求差额）：水瓶×3+地狱疣+[底药中间步]+主料+（修饰）+（烈焰粉缺则 1）。 */
     private List<Need> planNeeds() {
         var inv = this.resident.getInventory();
         List<Need> needs = new ArrayList<>();
-        addNeed(needs, inv, waterBottleTest(), 3);
-        addNeed(needs, inv, stack -> stack.is(Items.NETHER_WART), 1);
-        addNeed(needs, inv, stack -> stack.is(this.recipe.ingredient()), 1);
+        addNeed(needs, inv, waterBottleTest(), 3,
+                net.minecraft.network.chat.Component.translatable("item.minecraft.potion.effect.water"));
+        if (this.recipe.startPotion() == null) {
+            // 水瓶直酿族（虚弱）不进地狱疣步，其余配方恒需 1 根
+            addNeed(needs, inv, stack -> stack.is(Items.NETHER_WART), 1, itemName(Items.NETHER_WART));
+        }
+        if (this.baseStepItem != null) {
+            addNeed(needs, inv, stack -> stack.is(this.baseStepItem), 1,
+                    itemName(this.baseStepItem)); // 底药链（决策 #33）
+        }
+        addNeed(needs, inv, stack -> stack.is(ingredientItem()), 1,
+                itemName(ingredientItem()));
         for (Item mod : modifierItems(this.orderMod)) {
-            addNeed(needs, inv, stack -> stack.is(mod), 1);
+            addNeed(needs, inv, stack -> stack.is(mod), 1, itemName(mod));
         }
         // 冷萃：燃料永不消耗 → 不再索要烈焰粉（2026-11-07 用户实测抓出：
         // 冷萃镇民会因为箱里没烈焰粉而永远"凑不齐料"卡死）
         if (!this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_AL_ADEPT, "cold_brew")) {
-            addNeed(needs, inv, stack -> stack.is(Items.BLAZE_POWDER), 1);
+            addNeed(needs, inv, stack -> stack.is(Items.BLAZE_POWDER), 1,
+                    itemName(Items.BLAZE_POWDER));
         }
         return needs;
     }
@@ -568,12 +595,20 @@ public class AlchemistGoal extends Goal {
         this.lastShortageNotifyMs = now;
         boolean dragonMissing = needs.stream()
                 .anyMatch(n -> n.test().test(new ItemStack(Items.DRAGON_BREATH)));
+        // 点名缺什么（2026-11-07 用户抓出信息断层："等补货"不说缺什么，没法对症下药）
+        StringBuilder missing = new StringBuilder();
+        for (Need n : needs) {
+            if (missing.length() > 0) {
+                missing.append("、");
+            }
+            missing.append(n.label().getString()).append('×').append(n.count());
+        }
         String key = "msg.bmfstown.alchemy.waiting_materials";
         if (dragonMissing) {
             key = "msg.bmfstown.alchemy.waiting_dragon_materials";
         }
         var msg = net.minecraft.network.chat.Component.translatable(key,
-                this.resident.getName().getString());
+                this.resident.getName().getString(), missing.toString());
         for (var p : level.players()) {
             if (p instanceof net.minecraft.server.level.ServerPlayer sp
                     && sp.distanceToSqr(this.resident) < 256.0D) {
@@ -584,7 +619,8 @@ public class AlchemistGoal extends Goal {
 
     /** 缺口 = 需求 − 库存；缺口 ≤ 0 不记。 */
     private void addNeed(List<Need> needs, Container inv,
-            java.util.function.Predicate<ItemStack> test, int want) {
+            java.util.function.Predicate<ItemStack> test, int want,
+            net.minecraft.network.chat.Component label) {
         int have = 0;
         for (int i = 0; i < inv.getContainerSize(); i++) {
             if (test.test(inv.getItem(i))) {
@@ -593,17 +629,66 @@ public class AlchemistGoal extends Goal {
         }
         int deficit = want - have;
         if (deficit > 0) {
-            needs.add(new Need(test, deficit));
+            needs.add(new Need(test, deficit, label));
         }
     }
 
     /** 本周期缺什么料 → 去最近的登记容器拿（统一池）。定点补料模式只补缺的那件。 */
     private void tickFetchGo(ServerLevel level) {
+        // 链路柔性切换（决策 #37）：当前链料背包/容器都找不到、第 0 步未投料
+        // → 换一条有料的等价路径（伤害=剧毒/蜘蛛眼 ↔ 治疗/闪烁西瓜，玩家备哪样走哪样）
+        if (this.baseStepItem != null && this.stepIndex == 0
+                && countIn(this.resident.getInventory(), s -> s.is(this.baseStepItem)) == 0
+                && !itemInAnyContainer(level, this.baseStepItem)) {
+            var stand = standAt(level);
+            if (stand == null || stand.getItem(3).isEmpty()) {
+                rebuildSteps(level);
+                // 定点缺口若指向旧链料（或链已变）就清掉，让下面的 planNeeds 重新求缺口
+                if (this.pendingNeed != null && (this.baseStepItem == null
+                        || !this.pendingNeed.test().test(new ItemStack(this.baseStepItem)))) {
+                    this.pendingNeed = null;
+                }
+            }
+        }
         List<Need> needs = this.pendingNeed != null
                 ? List.of(this.pendingNeed) : planNeeds();
         if (needs.isEmpty()) {
             this.phase = Phase.LOAD;
             return;
+        }
+        // 水源站补水（决策 #34）：水瓶缺口 + 容器里没有水瓶 + 登记了有效水源站
+        // → 拿空瓶去站上就地装水（模拟但材料账做实：炼药锅 1 格水=1 瓶，水源/含水无限）。
+        // 有水瓶优先用水瓶——容器找得到水瓶时绝不走这条路（用户定稿）
+        if (this.pendingNeed == null) {
+            var inv = this.resident.getInventory();
+            int waterHave = countIn(inv, waterBottleTest());
+            if (waterHave < 3 && !waterInAnyContainer(level)
+                    && nearestWaterStation(level) != null) {
+                int deficit = 3 - waterHave;
+                int empties = countIn(inv, stack -> stack.is(Items.GLASS_BOTTLE));
+                if (empties < deficit) {
+                    int emptiesInChests = 0;
+                    for (var pos : validContainers(level)) {
+                        var be = level.getBlockEntity(pos);
+                        if (be instanceof net.minecraft.world.Container c) {
+                            emptiesInChests += countIn(c,
+                                    stack -> stack.is(Items.GLASS_BOTTLE));
+                        }
+                    }
+                    if (empties + emptiesInChests < deficit) {
+                        this.fetchForWater = false; // 空瓶也不够：老实等补料
+                    } else {
+                        this.fetchForWater = true;
+                        this.pendingNeed = new Need(
+                                stack -> stack.is(Items.GLASS_BOTTLE), deficit - empties,
+                                itemName(Items.GLASS_BOTTLE));
+                        needs = List.of(this.pendingNeed); // 本趟只取空瓶
+                    }
+                } else {
+                    this.phase = Phase.WATER_GO; // 空瓶随身够用：直接去装水
+                    return;
+                }
+            }
         }
         // 龙息合成（NPC 专属）：缺口里有龙息、容器找不到，但合成材料齐 → 就地合成
         if (this.pendingNeed == null) {
@@ -632,7 +717,8 @@ public class AlchemistGoal extends Goal {
             var valid = validContainers(level);
             StringBuilder needDesc = new StringBuilder();
             for (Need n : needs) {
-                needDesc.append(n.count()).append("x;");
+                needDesc.append(n.label().getString()).append('×')
+                        .append(n.count()).append(';');
             }
             LOGGER.info("[BmfTown][炼金] {} 凑不齐料，待机等补料（登记容器={}，缺口={}）",
                     this.resident.getName().getString(), valid.size(), needDesc);
@@ -670,14 +756,165 @@ public class AlchemistGoal extends Goal {
             return;
         }
         boolean wasPending = this.pendingNeed != null;
-        for (Need need : planNeeds()) {
+        List<Need> toTake = new ArrayList<>(planNeeds());
+        if (this.pendingNeed != null) {
+            toTake.add(this.pendingNeed); // 空瓶补水缺口（决策 #34）：planNeeds 不含空瓶，必须定点带上
+        }
+        for (Need need : toTake) {
             takeFromChest(chest, need);
         }
         this.pendingNeed = null;
         this.fetchTarget = null;
         // 定点补料：补到就直接回台继续（不做全量凑料核对——瓶还在台上等着）
-        this.phase = wasPending ? Phase.LOAD
+        // 补的是空瓶（水源站补水，决策 #34）→ 转水源站装水
+        this.phase = wasPending
+                ? (this.fetchForWater ? Phase.WATER_GO : Phase.LOAD)
                 : (planNeeds().isEmpty() ? Phase.LOAD : Phase.FETCH_GO);
+        this.fetchForWater = false;
+    }
+
+    // ==========================================================
+    //  水源站补水（决策 #34）：模拟但材料账做实
+    // ==========================================================
+
+    private void tickWaterGo(ServerLevel level) {
+        if (this.waterTarget == null || !isValidWaterStation(level, this.waterTarget)) {
+            this.waterTarget = nearestWaterStation(level);
+            if (this.waterTarget == null) {
+                // 水源站没了（被拆/被舀干）：回常规凑料（缺水瓶就走等料播报）
+                this.retryCooldown = IDLE_RETRY_TICKS;
+                this.phase = Phase.FETCH_GO;
+                return;
+            }
+        }
+        if (!this.resident.blockPosition().closerThan(this.waterTarget, OPEN_RANGE)) {
+            if (this.resident.getNavigation().isDone()) {
+                navigateTo(this.waterTarget);
+                this.retryCooldown = 20;
+            }
+            return;
+        }
+        this.resident.getNavigation().stop();
+        this.phase = Phase.WATER_FILL;
+    }
+
+    /**
+     * 到站装水：空瓶→水瓶逐瓶转化。水源/含水方块无限（不消耗方块）；
+     * 炼药锅按原版口径 **1 格水 = 1 瓶**（level 递减，1 级取完变空锅）——
+     * 材料账与玩家手动右键完全一致，只是不走"对方块使用物品"的真实交互路径
+     * （NPC 寻路到精确点击面成本高、收益为零，模拟的账实相符即可）。
+     */
+    private void tickWaterFill(ServerLevel level) {
+        var inv = this.resident.getInventory();
+        int deficit = 3 - countIn(inv, waterBottleTest());
+        if (deficit <= 0) {
+            this.waterTarget = null;
+            this.phase = Phase.FETCH_GO;
+            return;
+        }
+        BlockState state = level.getBlockState(this.waterTarget);
+        boolean cauldron = state.is(Blocks.WATER_CAULDRON);
+        int level3 = cauldron ? state.getValue(net.minecraft.world.level.block.LayeredCauldronBlock.LEVEL) : 0;
+        int canTake = cauldron ? Math.min(deficit, level3) : deficit;
+        if (canTake <= 0) {
+            // 锅被舀干（非本次操作也可能）：重找下一个水源站
+            this.waterTarget = null;
+            this.retryCooldown = 20;
+            this.phase = Phase.WATER_GO;
+            return;
+        }
+        int filled = 0;
+        for (int i = 0; i < inv.getContainerSize() && filled < canTake; i++) {
+            ItemStack st = inv.getItem(i);
+            if (!st.is(Items.GLASS_BOTTLE)) {
+                continue;
+            }
+            int take = Math.min(st.getCount(), canTake - filled);
+            inv.removeItem(i, take);
+            if (inv.getItem(i).isEmpty()) {
+                inv.setItem(i, ItemStack.EMPTY);
+            }
+            ItemStack water = PotionContents.createItemStack(Items.POTION, Potions.WATER);
+            water.setCount(take);
+            var leftover = inv.addItem(water);
+            if (!leftover.isEmpty()) {
+                this.resident.spawnAtLocation(leftover); // 背包满也不吞水瓶
+            }
+            filled += take;
+        }
+        if (cauldron) {
+            int remain = level3 - filled;
+            level.setBlock(this.waterTarget, remain <= 0
+                    ? Blocks.CAULDRON.defaultBlockState()
+                    : state.setValue(net.minecraft.world.level.block.LayeredCauldronBlock.LEVEL, remain),
+                    net.minecraft.world.level.block.Block.UPDATE_ALL);
+        }
+        LOGGER.info("[BmfTown][炼金] {} 水源站装水 ×{}（{}）",
+                this.resident.getName().getString(), filled,
+                cauldron ? "炼药锅扣格" : "水源/含水方块");
+        this.waterTarget = null;
+        this.phase = Phase.FETCH_GO;
+    }
+
+    /** 统计容器里匹配的物品总数。 */
+    private static int countIn(Container inv, java.util.function.Predicate<ItemStack> test) {
+        int n = 0;
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            if (test.test(inv.getItem(i))) {
+                n += inv.getItem(i).getCount();
+            }
+        }
+        return n;
+    }
+
+    /** 容器池里有没有水瓶（有 → 优先直接取，不走水源站）。 */
+    private boolean waterInAnyContainer(ServerLevel level) {
+        for (var pos : validContainers(level)) {
+            var be = level.getBlockEntity(pos);
+            if (be instanceof Container c && countIn(c, waterBottleTest()) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 最近的有效水源站（水源方块/含水方块/含水炼药锅，登记表实时校验）。 */
+    @Nullable
+    private BlockPos nearestWaterStation(ServerLevel level) {
+        var town = this.resident.boundTown();
+        if (town == null) {
+            return null;
+        }
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        for (long p : town.workshop().waterSources) {
+            BlockPos pos = BlockPos.of(p);
+            if (!isValidWaterStation(level, pos)) {
+                continue;
+            }
+            double d = this.resident.blockPosition().distSqr(pos);
+            if (d < bestD) {
+                bestD = d;
+                best = pos;
+            }
+        }
+        return best;
+    }
+
+    /** 水源站有效性：含水炼药锅 / 水源方块 / 含水方块（state 判定，一行一个口径）。 */
+    private static boolean isValidWaterStation(ServerLevel level, BlockPos pos) {
+        if (!level.isLoaded(pos)) {
+            return false;
+        }
+        BlockState state = level.getBlockState(pos);
+        if (state.is(Blocks.WATER_CAULDRON)) {
+            return true;
+        }
+        if (state.is(Blocks.WATER) && state.getFluidState().isSource()) {
+            return true;
+        }
+        return state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED)
+                && state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED);
     }
 
     /** 把库存里的料装进酿造台（瓶 0-2、地狱疣 3、烈焰粉 4 若空）。 */
@@ -723,7 +960,8 @@ public class AlchemistGoal extends Goal {
                 // 缺这一步的料：**绝不清台**——瓶留在台上，只去补缺的这件
                 // （2026-11-07 修：之前整台回收重凑 = "收走再放回来"整链重来的根源）
                 this.pendingNeed = new Need(
-                        stack -> stack.is(this.steps.get(this.stepIndex)), 1);
+                        stack -> stack.is(this.steps.get(this.stepIndex)), 1,
+                        itemName(this.steps.get(this.stepIndex)));
                 LOGGER.info("[BmfTown][炼金] {} 缺步骤料 {}，只补这一件（台不动）",
                         this.resident.getName().getString(), this.steps.get(this.stepIndex));
                 this.phase = Phase.FETCH_GO;
@@ -789,7 +1027,8 @@ public class AlchemistGoal extends Goal {
                         && findItem(this.resident.getInventory(),
                                 stack -> stack.is(Items.BLAZE_POWDER)) < 0) {
                     this.pendingNeed = new Need(
-                            stack -> stack.is(Items.BLAZE_POWDER), 1);
+                            stack -> stack.is(Items.BLAZE_POWDER), 1,
+                            itemName(Items.BLAZE_POWDER));
                 }
                 if (this.stallRetries >= STALL_RETRIES_MAX) {
                     LOGGER.info("[BmfTown][炼金] {} 连续 {} 次没起酿，整台回收重凑",
@@ -853,10 +1092,14 @@ public class AlchemistGoal extends Goal {
         PurityRules.stamp(extra, rollPurity(), this.resident);
         inv.addItem(extra);
         bottles++;
-        this.resident.addSkillXp(SkillType.CRAFTING, Config.CRAFT_XP_PER_ITEM.get() * bottles);
+        // 经验按链长结算（决策 #33 修订 2026-11-07，用户拍板）：步是整批一次的劳动
+        // （一次投料 3 瓶同时酿），一批只付一次——批经验 = 步数 × 每步经验，不乘瓶数
+        int xp = Config.CRAFT_XP_PER_BREW_STEP.get() * this.steps.size();
+        this.resident.addSkillXp(SkillType.CRAFTING, xp);
         PracticeObserver.observe(level, this.resident, ProfessionType.ALCHEMIST);
-        LOGGER.info("[BmfTown][炼金] {} 整批 {} 瓶入库（订单={}）",
-                this.resident.getName().getString(), bottles, this.currentOrderKey);
+        LOGGER.info("[BmfTown][炼金] {} 整批 {} 瓶入库（订单={}，链长 {} 步，经验 +{}）",
+                this.resident.getName().getString(), bottles, this.currentOrderKey,
+                this.steps.size(), xp);
         this.storeTarget = null;
         this.phase = Phase.STORE_GO;
     }
@@ -934,6 +1177,82 @@ public class AlchemistGoal extends Goal {
         return out;
     }
 
+    /**
+     * 重建本批酿造步链（决策 #33 立项、#36 泛化、#37 柔性链）：
+     * 地狱疣 → [中间底药步] → 主料 → 修饰。
+     * 中间步由目录携带的等价路径（chains）中**按现有库存现选**一条：秘传底药≠粗制
+     * （悬浮=缓降+幻翼膜）与原版两步腐化链（伤害=剧毒/治疗 + 腐蛛眼）走同一消费路径。
+     * 水瓶直酿族（虚弱=水瓶+腐蛛眼）没有地狱疣步——瓶里本就是水，直接上主料。
+     */
+    private void rebuildSteps(ServerLevel level) {
+        List<Item> steps = new ArrayList<>();
+        if (this.recipe.startPotion() != null) {
+            // 水瓶直酿：水瓶不进酿造台变粗制，直接从主料步开始
+            this.baseStepPotion = null;
+            this.baseStepItem = null;
+            this.chosenChain = null;
+            steps.add(ingredientItem());
+            this.steps = List.copyOf(steps);
+            return;
+        }
+        steps.add(Items.NETHER_WART);
+        chooseChain(level);
+        if (this.baseStepItem != null) {
+            steps.add(this.baseStepItem);
+        }
+        steps.add(ingredientItem());
+        steps.addAll(modifierItems(this.orderMod));
+        this.steps = List.copyOf(steps);
+    }
+
+    /**
+     * 柔性选链（决策 #37）：多条等价路径时选"背包或登记容器里已有链料"的那条；
+     * 都没有则回落首选（按注册名排序的第一条，确定可复现）。玩家备哪样走哪样——
+     * 死认一条会把另一条合法料变成"莫名缺料"（2026-11-07 实测）。
+     */
+    private void chooseChain(ServerLevel level) {
+        this.baseStepPotion = null;
+        this.baseStepItem = null;
+        this.chosenChain = null;
+        var chains = this.recipe.chains();
+        if (chains.isEmpty()) {
+            return;
+        }
+        com.bmf.bmfstown.alchemy.AlchemyCatalog.Chain chosen = chains.get(0);
+        for (var c : chains) {
+            if (countIn(this.resident.getInventory(), s -> s.is(c.item())) > 0
+                    || itemInAnyContainer(level, c.item())) {
+                chosen = c;
+                break;
+            }
+        }
+        this.chosenChain = chosen;
+        this.baseStepPotion = chosen.basePotion();
+        this.baseStepItem = chosen.item();
+    }
+
+    /** 最终主料：柔性链时用选中路径的主料（各路径通常相同，但不假设）。 */
+    private Item ingredientItem() {
+        return this.chosenChain != null ? this.chosenChain.ingredient()
+                : this.recipe.ingredient();
+    }
+
+    /** 登记容器池里有没有指定物品（未认领城镇时只按背包口径，返回 false）。 */
+    private boolean itemInAnyContainer(ServerLevel level, Item item) {
+        if (this.townId == null) {
+            // canUse 预检阶段也会走 rebuildSteps→chooseChain，此时还没认领城镇
+            return false;
+        }
+        for (var pos : validContainers(level)) {
+            var be = level.getBlockEntity(pos);
+            if (be instanceof net.minecraft.world.Container c
+                    && countIn(c, s -> s.is(item)) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 组合键中的药水修饰档（none|long|strong）。 */
     private static String potionMod(String combo) {
         for (String part : combo.split("\\+")) {
@@ -963,13 +1282,23 @@ public class AlchemistGoal extends Goal {
         };
     }
 
-    /** 完成某步后瓶内应有的药水：地狱疣→粗制；主料→基础药（秘传=秘传药）；修饰→最终变体。 */
+    /** 完成某步后瓶内应有的药水：地狱疣→粗制；[底药中间步→底药]；主料→基础药（秘传=秘传药）；修饰→最终变体。 */
     @Nullable
     private Holder<Potion> expectedAfterStep(int completedStep) {
+        // 水瓶直酿族（虚弱，决策 #36）：没有地狱疣步，第 0 步就是主料步
+        if (this.recipe.startPotion() != null) {
+            return completedStep == 0
+                    ? this.recipe.base()
+                    : this.recipe.finalPotion(this.orderMod);
+        }
         if (completedStep == 0) {
             return Potions.AWKWARD;
         }
-        if (completedStep == 1) {
+        int ingredientIndex = this.baseStepItem == null ? 1 : 2;
+        if (completedStep < ingredientIndex) {
+            return this.baseStepPotion; // 底药中间步完成 → 瓶内为底药（如缓降/剧毒）
+        }
+        if (completedStep == ingredientIndex) {
             return this.recipe.base();
         }
         // 喷溅/滞留只换容器不换药水 → 预期药水仍是基础档

@@ -118,6 +118,30 @@ public class AlchemyFlowTests {
         });
     }
 
+    /** 水瓶直酿全链（决策 #36）：虚弱=水瓶+腐蛛眼（1.21 底药是水不是粗制）。
+     *  箱里**刻意不给地狱疣**——验证步链跳过地狱疣步、水瓶直接上主料。 */
+    @GameTest(template = "flow11x4x11", timeoutTicks = 24000)
+    public static void weaknessWaterDirectFlow(GameTestHelper helper) {
+        var s = AlchemyScaffold.prepareTown(helper, new BlockPos(1, 0, 1), new BlockPos(9, 0, 9), 1);
+        var chest = s.chest(helper);
+        int slot = 0;
+        for (int i = 0; i < 3 && slot < chest.getContainerSize(); i++, slot++) {
+            chest.setItem(slot, PotionContents.createItemStack(Items.POTION, Potions.WATER));
+        }
+        chest.setItem(slot++, new ItemStack(Items.FERMENTED_SPIDER_EYE));
+        chest.setItem(slot, new ItemStack(Items.BLAZE_POWDER));
+        chest.setChanged();
+        AlchemyScaffold.spawnAlchemist(s, helper,
+                "alch|minecraft:weakness|none", new BlockPos(4, 1, 5));
+        helper.succeedWhen(() -> {
+            if (AlchemyScaffold.countStamped(s, helper, Items.POTION,
+                    net.minecraft.world.effect.MobEffects.WEAKNESS) < 4) {
+                throw new net.minecraft.gametest.framework.GameTestAssertException(
+                        "等待水瓶直酿 4 瓶盖章虚弱药水");
+            }
+        });
+    }
+
     private static String describeStand(
             net.minecraft.world.level.block.entity.BrewingStandBlockEntity stand) {
         if (stand == null) {

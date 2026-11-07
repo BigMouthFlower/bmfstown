@@ -273,7 +273,7 @@ public class AlchemyPerkGateTests {
         helper.succeed();
     }
 
-    /** 悬浮秘传（第 11 条）：门禁双面——锁住不起酿、解锁即放行。 */
+    /** 悬浮秘传（第 11 条，决策 #33：缓降+腐化蜘蛛眼）：门禁双面——锁住不起酿、解锁即放行。 */
     @GameTest(template = "tiny3x3x3", timeoutTicks = 1600)
     public static void gateLevitationLockedThenUnlocked(GameTestHelper helper) {
         BlockPos stand = new BlockPos(2, 1, 2);
@@ -281,9 +281,9 @@ public class AlchemyPerkGateTests {
         var be0 = helper.getLevel().getBlockEntity(helper.absolutePos(stand));
         if (be0 instanceof net.minecraft.world.level.block.entity.BrewingStandBlockEntity bs) {
             for (int i = 0; i < 3; i++) {
-                bs.setItem(i, PotionContents.createItemStack(Items.POTION, Potions.AWKWARD));
+                bs.setItem(i, PotionContents.createItemStack(Items.POTION, Potions.SLOW_FALLING));
             }
-            bs.setItem(3, new ItemStack(Items.SHULKER_SHELL)); // 悬浮催化剂
+            bs.setItem(3, new ItemStack(Items.FERMENTED_SPIDER_EYE)); // 悬浮催化剂（腐化语义）
             bs.setItem(4, new ItemStack(Items.BLAZE_POWDER));
             bs.setChanged();
         }
@@ -293,7 +293,7 @@ public class AlchemyPerkGateTests {
             if (be instanceof net.minecraft.world.level.block.entity.BrewingStandBlockEntity b) {
                 var c = b.getItem(0).getOrDefault(DataComponents.POTION_CONTENTS,
                         PotionContents.EMPTY);
-                if (c.potion().orElse(null) != Potions.AWKWARD) {
+                if (c.potion().orElse(null) != Potions.SLOW_FALLING) {
                     helper.fail("未解锁的悬浮秘传被酿出");
                     return;
                 }

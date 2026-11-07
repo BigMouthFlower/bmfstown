@@ -313,7 +313,8 @@ public class TownSaveData extends SavedData {
             Town.WorkshopRegister reg = town.workshop();
             sb.append('|').append(csvLongs(reg.containers))
                     .append('|').append(csvLongs(reg.stations))
-                    .append('|').append(csvLongs(reg.brewStations));
+                    .append('|').append(csvLongs(reg.brewStations))
+                    .append('|').append(csvLongs(reg.waterSources));
             sb.append('\n');
             // 追加区块行（v0.9.1 不连续选区）：B|城镇ID|区块ID|名字|min|max
             // 0 号主区块就是 T 行的 min/max 本体，不重复发

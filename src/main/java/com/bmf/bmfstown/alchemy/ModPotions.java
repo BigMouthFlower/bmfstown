@@ -8,6 +8,7 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.alchemy.Potion;
+import net.minecraft.world.item.alchemy.Potions;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
@@ -65,35 +66,41 @@ public final class ModPotions {
             POTIONS.register("bmfstown_levitation", () -> new Potion("bmfstown_levitation",
                     new MobEffectInstance(MobEffects.LEVITATION, 200, 0)));
 
-    /** 秘传条目：解锁 id →（产物 potion, 催化剂）。LinkedHashMap 保登记顺序。 */
     public static final Map<String, SecretEntry> SECRETS = new LinkedHashMap<>();
 
-    public record SecretEntry(DeferredHolder<Potion, Potion> potion, Item catalyst) {
+    /**
+     * 秘传条目：解锁 id →（底药 potion, 产物 potion, 催化剂）。LinkedHashMap 保登记顺序。
+     * <p>底药默认粗制药水；悬浮（决策 #33）走原版腐化语义——缓降+腐化蜘蛛眼（原版
+     * PotionBrewing 已核实查无此方，腐蛛眼腐化对象里没有缓降）。
+     */
+    public record SecretEntry(Holder<Potion> base, DeferredHolder<Potion, Potion> potion,
+                              Item catalyst) {
     }
 
     static {
         SECRETS.put("unlock.alchemy.haste",
-                new SecretEntry(HASTE, Items.QUARTZ));
+                new SecretEntry(Potions.AWKWARD, HASTE, Items.QUARTZ));
         SECRETS.put("unlock.alchemy.resistance",
-                new SecretEntry(RESISTANCE, Items.OBSIDIAN));
+                new SecretEntry(Potions.AWKWARD, RESISTANCE, Items.OBSIDIAN));
         SECRETS.put("unlock.alchemy.absorption",
-                new SecretEntry(ABSORPTION, Items.GOLD_INGOT));
+                new SecretEntry(Potions.AWKWARD, ABSORPTION, Items.GOLD_INGOT));
         SECRETS.put("unlock.alchemy.health_boost",
-                new SecretEntry(HEALTH_BOOST, Items.HONEY_BOTTLE));
+                new SecretEntry(Potions.AWKWARD, HEALTH_BOOST, Items.HONEY_BOTTLE));
         SECRETS.put("unlock.alchemy.luck",
-                new SecretEntry(LUCK, Items.DANDELION));
+                new SecretEntry(Potions.AWKWARD, LUCK, Items.DANDELION));
         SECRETS.put("unlock.alchemy.wither",
-                new SecretEntry(WITHER, Items.SOUL_SAND));
+                new SecretEntry(Potions.AWKWARD, WITHER, Items.SOUL_SAND));
         SECRETS.put("unlock.alchemy.blindness",
-                new SecretEntry(BLINDNESS, Items.INK_SAC));
+                new SecretEntry(Potions.AWKWARD, BLINDNESS, Items.INK_SAC));
         SECRETS.put("unlock.alchemy.darkness",
-                new SecretEntry(DARKNESS, Items.SCULK));
+                new SecretEntry(Potions.AWKWARD, DARKNESS, Items.SCULK));
         SECRETS.put("unlock.alchemy.nausea",
-                new SecretEntry(NAUSEA, Items.ROTTEN_FLESH));
+                new SecretEntry(Potions.AWKWARD, NAUSEA, Items.ROTTEN_FLESH));
         SECRETS.put("unlock.alchemy.mining_fatigue",
-                new SecretEntry(MINING_FATIGUE, Items.DRIPSTONE_BLOCK));
+                new SecretEntry(Potions.AWKWARD, MINING_FATIGUE, Items.DRIPSTONE_BLOCK));
         SECRETS.put("unlock.alchemy.levitation",
-                new SecretEntry(LEVITATION, Items.SHULKER_SHELL));
+                new SecretEntry(Potions.SLOW_FALLING, LEVITATION,
+                        Items.FERMENTED_SPIDER_EYE));
     }
 
     /** 该产物药水对应的解锁 id（mixin 门禁用；非秘传药水 = null）。 */

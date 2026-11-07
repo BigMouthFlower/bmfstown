@@ -1267,12 +1267,13 @@ public class Resident extends PathfinderMob {
         // ---- 0.4 特性逐 tick 行为（轻浮漂浮等；内部含 null 补抽，老档兼容） ----
         this.traitState.ensureTrait(this.getRandom());
         this.traitState.tickTraits(this);
-        // ---- 0.5 簿记员在职成长（用户定稿：在职每 5 秒 +1 簿记经验） ----
+        // ---- 0.5 簿记员在职成长（决策 #40：+1/5 秒提配置 bookkeeper.xpPerGain，数值不变） ----
         if (this.getProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER
                 && this.isAlive()) {
             if (++this.bookkeepingXpTimer >= 100) { // 100 tick = 5 秒
                 this.bookkeepingXpTimer = 0;
-                this.addSkillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING, 1);
+                this.addSkillXp(com.bmf.bmfstown.entity.profile.SkillType.BOOKKEEPING,
+                        Config.BOOKKEEPER_XP_PER_GAIN.get());
             }
         }
 

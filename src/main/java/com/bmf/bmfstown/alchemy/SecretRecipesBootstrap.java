@@ -19,8 +19,9 @@ public final class SecretRecipesBootstrap {
     @SubscribeEvent
     public static void onRegisterBrewing(RegisterBrewingRecipesEvent event) {
         for (var e : ModPotions.SECRETS.entrySet()) {
-            // 粗制药水 + 催化剂 → 秘传药水（原版查无此方的组合，硬标准已过筛）
-            event.getBuilder().addMix(Potions.AWKWARD, e.getValue().catalyst(),
+            // 底药 + 催化剂 → 秘传药水（绝大多数底药=粗制药水；悬浮=缓降（决策 #33），
+            // 全部组合均过原版 PotionBrewing 查无此方筛）
+            event.getBuilder().addMix(e.getValue().base(), e.getValue().catalyst(),
                     e.getValue().potion());
         }
     }

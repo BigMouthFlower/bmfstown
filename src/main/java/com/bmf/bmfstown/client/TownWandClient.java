@@ -326,7 +326,7 @@ public final class TownWandClient {
                         c[0], c[1], c[2], BORDER_EDGE_ALPHA, ZoneOutliner.EDGE_WIDTH);
             }
 
-            // ---- 工坊登记方块（v0.12，用户追加）：黄=容器，紫=工作站/酿造台 ----
+            // ---- 工坊登记方块（v0.12，用户追加）：黄=容器，紫=工作站/酿造台，蓝=水源站 ----
             // 与登记会话同一套颜色语言（酿造台=岗位紫，用户 11-06 拍板），
             // 透明度略降（这是观察态，别抢过会话编辑态）
             for (Long p : town.workshopContainers()) {
@@ -340,6 +340,10 @@ public final class TownWandClient {
             for (Long p : town.workshopBrewStations()) {
                 ZoneOutliner.renderEdges(pose.last(), edges, blockBox(BlockPos.of(p)),
                         0.75F, 0.5F, 1.0F, 0.75F, ZoneOutliner.EDGE_WIDTH);
+            }
+            for (Long p : town.workshopWaterSources()) {
+                ZoneOutliner.renderEdges(pose.last(), edges, blockBox(BlockPos.of(p)),
+                        0.3F, 0.55F, 1.0F, 0.75F, ZoneOutliner.EDGE_WIDTH);
             }
         }
         mc.renderBuffers().bufferSource().endBatch(OutlineRenderTypes.edge());

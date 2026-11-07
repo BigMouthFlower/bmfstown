@@ -87,7 +87,8 @@ public final class WorkshopRegisterEvents {
 
         // 岗位判定必须在容器之前：酿造台本身是 Container，先判容器会被吞进
         // 容器池，酿造台岗位池永远空、炼金术士认领不到台（2026-11-06 实测踩坑）
-        if (toggleStation(serverPlayer, register, pos, state)
+        if (toggleWaterSource(serverPlayer, register, pos, state, event.getFace())
+                || toggleStation(serverPlayer, register, pos, state)
                 || toggleContainer(serverPlayer, register, pos, state)) {
             TownSaveData.get(serverPlayer.serverLevel()).setDirty();
             RegisterSessions.touch(player.getUUID());
@@ -149,7 +150,54 @@ public final class WorkshopRegisterEvents {
     }
 
     /**
-     * 岗位登记/取消，按方块类型分流（v0.12 炼金扩展）：工作台 → 工人/烟火商岗位池，
+     * 水源站登记/取消（v0.12.1 炼金补水，决策 #34）。三种有效形态：
+     * 含水炼药锅（右键锅本体）/ 含水方块（右键本体）/ 水源方块（原版射线
+     * 穿透流体点不到水面——右键水源**贴脸的实心面**，登记相邻的那个水源格）。
+     * 命中返回 true。位置有效性在镇民取水时实时校验，登记不锁方块状态。
+     */
+    private static boolean toggleWaterSource(ServerPlayer player,
+            Town.WorkshopRegister register, BlockPos pos, BlockState state,
+            @Nullable Direction face) {
+        // 容器优先：箱子也能被含水——含水箱子按容器登记，不当水源站
+        if (player.serverLevel().getBlockEntity(pos) instanceof Container) {
+            return false;
+        }
+        BlockPos target = null;
+        if (isWaterStationState(state)) {
+            target = pos; // 锅/含水方块/（少见但允许的）水源本体
+        } else if (face != null) {
+            BlockPos adj = pos.relative(face);
+            if (isWaterStationState(player.serverLevel().getBlockState(adj))) {
+                target = adj; // 点水源旁边的实心面 → 登记贴脸的水
+            }
+        }
+        if (target == null) {
+            return false;
+        }
+        if (register.waterSources.remove(target.asLong())) {
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.register.water_off", target.toShortString()), true);
+        } else {
+            register.waterSources.add(target.asLong());
+            player.displayClientMessage(Component.translatable(
+                    "msg.bmfstown.register.water_on", target.toShortString()), true);
+        }
+        return true;
+    }
+
+    /** 该方块状态是否可作水源站：含水炼药锅 / 水源 / 含水方块。 */
+    private static boolean isWaterStationState(BlockState state) {
+        if (state.is(Blocks.WATER_CAULDRON)) {
+            return true;
+        }
+        if (state.is(Blocks.WATER) && state.getFluidState().isSource()) {
+            return true;
+        }
+        return state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED)
+                && state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED);
+    }
+
+    /** 岗位登记/取消，按方块类型分流（v0.12 炼金扩展）：工作台 → 工人/烟火商岗位池，
      * 酿造台 → 炼金术士岗位池。命中返回 true。
      */
     private static boolean toggleStation(ServerPlayer player,

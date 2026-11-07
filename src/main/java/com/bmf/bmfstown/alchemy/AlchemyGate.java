@@ -9,7 +9,6 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.alchemy.PotionContents;
-import net.minecraft.world.item.alchemy.Potions;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -102,17 +101,19 @@ public final class AlchemyGate extends SavedData {
         return secretId != null && strategy.locked(secretId);
     }
 
-    /** 由"粗制底药+催化剂"反查秘传条目；非秘传组合返回 null。 */
+    /** 由"底药+催化剂"反查秘传条目（底药按条目各自登记，悬浮=缓降，决策 #33）；
+     *  非秘传组合返回 null。 */
     @Nullable
     private static String secretIdOfCombo(ItemStack from, ItemStack reagent) {
         var fromPotion = from.getOrDefault(
                 net.minecraft.core.component.DataComponents.POTION_CONTENTS,
                 PotionContents.EMPTY).potion().orElse(null);
-        if (fromPotion == null || fromPotion.value() != Potions.AWKWARD.value()) {
-            return null; // 秘传 mix 的 from 恒为粗制药水
+        if (fromPotion == null) {
+            return null;
         }
         for (var e : ModPotions.SECRETS.entrySet()) {
-            if (e.getValue().catalyst() == reagent.getItem()) {
+            if (e.getValue().catalyst() == reagent.getItem()
+                    && fromPotion.value() == e.getValue().base().value()) {
                 return e.getKey();
             }
         }

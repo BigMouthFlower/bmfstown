@@ -69,9 +69,12 @@ public class Town {
         public final java.util.HashSet<Long> stations = new java.util.HashSet<>();
         /** 已登记酿造台（v0.12 炼金术士岗位池）：岗位按方块类型分流，与工作台互不混用。 */
         public final java.util.HashSet<Long> brewStations = new java.util.HashSet<>();
+        /** 已登记水源站（v0.12.1 炼金补水，决策 #34）：水源方块/含水方块/含水炼药锅。 */
+        public final java.util.HashSet<Long> waterSources = new java.util.HashSet<>();
 
         public boolean isEmpty() {
-            return containers.isEmpty() && stations.isEmpty() && brewStations.isEmpty();
+            return containers.isEmpty() && stations.isEmpty() && brewStations.isEmpty()
+                    && waterSources.isEmpty();
         }
 
         /**
@@ -365,6 +368,8 @@ public class Town {
                     .mapToLong(Long::longValue).toArray());
             tag.putLongArray("WorkshopBrewStations", this.workshop.brewStations.stream()
                     .mapToLong(Long::longValue).toArray());
+            tag.putLongArray("WorkshopWaterSources", this.workshop.waterSources.stream()
+                    .mapToLong(Long::longValue).toArray());
         }
         return tag;
     }
@@ -414,6 +419,9 @@ public class Town {
         }
         for (long p : tag.getLongArray("WorkshopBrewStations")) {
             town.workshop.brewStations.add(p);
+        }
+        for (long p : tag.getLongArray("WorkshopWaterSources")) {
+            town.workshop.waterSources.add(p);
         }
         // 老档自动归块（v0.9.1）：归属为空（区块功能实装前画的功能区）且
         // 几何上完整落在某个追加区块内 → 自动归到那个区块。主外框内的保持主区块。

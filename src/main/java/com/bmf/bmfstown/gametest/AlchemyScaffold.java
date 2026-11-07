@@ -168,6 +168,14 @@ public final class AlchemyScaffold {
      *  只能按 customEffects 里的速度效果识别——holder 判定永远数到 0。 */
     public static int countStamped(Setup setup, GameTestHelper helper,
                                    net.minecraft.world.item.Item bottle) {
+        return countStamped(setup, helper, bottle,
+                net.minecraft.world.effect.MobEffects.MOVEMENT_SPEED);
+    }
+
+    /** 同上，效果种类可指定（水瓶直酿虚弱等非迅捷成品用）。 */
+    public static int countStamped(Setup setup, GameTestHelper helper,
+                                   net.minecraft.world.item.Item bottle,
+                                   net.minecraft.core.Holder<net.minecraft.world.effect.MobEffect> effect) {
         int count = 0;
         List<net.minecraft.world.Container> containers = new ArrayList<>();
         var chest = setup.chest(helper);
@@ -184,9 +192,9 @@ public final class AlchemyScaffold {
                     continue;
                 }
                 var contents = st.getOrDefault(DataComponents.POTION_CONTENTS, PotionContents.EMPTY);
-                boolean hasSpeed = contents.customEffects().stream()
-                        .anyMatch(e -> e.getEffect() == net.minecraft.world.effect.MobEffects.MOVEMENT_SPEED);
-                if (hasSpeed && st.get(ModDataComponents.PURITY.get()) != null) {
+                boolean hasEffect = contents.customEffects().stream()
+                        .anyMatch(e -> e.getEffect() == effect);
+                if (hasEffect && st.get(ModDataComponents.PURITY.get()) != null) {
                     count++;
                 }
             }

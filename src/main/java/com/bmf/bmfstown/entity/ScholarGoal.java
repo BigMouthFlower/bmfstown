@@ -745,8 +745,9 @@ public class ScholarGoal extends Goal {
     }
 
     /**
-     * 成书经验结算：学者主技能 +30；<b>辩证法</b> perk 下 perk 书
-     * 对应职业经验同样 +30（双涨——原"实践"并入辩证法的效果）。
+     * 成书经验结算（决策 #40 提配置）：闲书 = scholar.xpPerIdleBook（默认 100）、
+     * 特殊书（perk 技能书/隐藏解锁书）= scholar.xpPerSpecialBook（默认 200）；
+     * <b>辩证法</b> perk 下 perk 书对应职业经验同样 +特殊书档（双涨——原"实践"并入辩证法）。
      * 注意走 {@code resident.addSkillXp}：分工锁涨在这里统一拦截。
      */
     private void grantCompletionXp(BookContent content, ServerLevel level) {
@@ -756,12 +757,15 @@ public class ScholarGoal extends Goal {
             com.bmf.bmfstown.book.BookBroadcast.discovered(
                     level, content.townId(), p.perkId());
         }
-        this.resident.addSkillXp(this.resident.getProfession().mainSkill(), 30);
+        int xp = content.draft() instanceof BookDraft.Idle
+                ? Config.SCHOLAR_XP_PER_IDLE_BOOK.get()
+                : Config.SCHOLAR_XP_PER_SPECIAL_BOOK.get();
+        this.resident.addSkillXp(this.resident.getProfession().mainSkill(), xp);
         if (this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "dialectics")
                 && content.draft() instanceof BookDraft.Perk p) {
             var prof = com.bmf.bmfstown.entity.profile.ProfessionType.byName(p.professionId());
             if (prof.isReal() && prof.mainSkill() != null) {
-                this.resident.addSkillXp(prof.mainSkill(), 30);
+                this.resident.addSkillXp(prof.mainSkill(), xp);
             }
         }
         // 隐藏解锁书：写成即触发该镇解锁广播（UnlockBootstrap 同名定义）

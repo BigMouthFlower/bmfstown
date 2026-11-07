@@ -511,6 +511,15 @@ public final class Config {
                     "Crafting xp per item for the worker")
             .defineInRange("craft.xpPerCraft", 5, 0, 1000);
 
+    /** 炼金每一步涨多少经验（决策 #33 及其修订 2026-11-07：按生产链长结算——
+     *  地狱疣/中间底药/主料/红石荧石/火药/龙息各算一步，收瓶入库时
+     *  按 步数×每步经验 一次结清；步是整批劳动，不乘瓶数）。
+     *  默认 10：一炉一步 10（2 步药水=20/批，5 步滞留强化=50/批）。 */
+    public static final ModConfigSpec.IntValue CRAFT_XP_PER_BREW_STEP = BUILDER
+            .comment("炼金术士每一步酿造获得的经验（按链长整批结算一次，不乘瓶数：地狱疣/中间底药/主料/修饰各一步）",
+                    "Alchemist xp per brewing step (charged once per batch by chain length, not per bottle)")
+            .defineInRange("craft.xpPerBrewStep", 10, 0, 1000);
+
     /** 开源 perk（传奇分支解锁）：每件产出 +1 的概率（百分比）。 */
     public static final ModConfigSpec.IntValue CRAFT_OPEN_SOURCE_PERCENT = BUILDER
             .comment("工人'开源'perk（Lv6 解锁）：每件产出 +1 的概率（百分比）",
@@ -589,6 +598,17 @@ public final class Config {
                     "Base on-duty ticks to copy one book (60 real minutes)")
             .defineInRange("scholar.copyTicks", 72000L, 1200L, 24000000L);
 
+    /** 成书经验（决策 #40：原硬编码 30 提配置，用户定稿削弱→加强——写书很慢，量该上来）。 */
+    public static final ModConfigSpec.IntValue SCHOLAR_XP_PER_IDLE_BOOK = BUILDER
+            .comment("学者写成一本闲书获得的主技能经验",
+                    "Scholar main-skill xp for finishing an idle book")
+            .defineInRange("scholar.xpPerIdleBook", 100, 0, 10000);
+
+    public static final ModConfigSpec.IntValue SCHOLAR_XP_PER_SPECIAL_BOOK = BUILDER
+            .comment("学者写成一本特殊书（perk 技能书/隐藏解锁书）获得的主技能经验；辩证法 perk 的对应职业双涨同用此值",
+                    "Scholar main-skill xp for finishing a special book (perk/unlock); dialectics secondary gain uses the same value")
+            .defineInRange("scholar.xpPerSpecialBook", 200, 0, 10000);
+
     public static final ModConfigSpec.IntValue SCHOLAR_PERK_BOOK_CHANCE = BUILDER
             .comment("写书命中特殊书（perk 池）的概率（%）；未命中写闲书。特殊书不放回：抽中即从该镇池子移除",
                     "Chance (%) that a written book is a special perk book (drawn without replacement)")
@@ -650,6 +670,13 @@ public final class Config {
             .comment("过拟合 perk：每掌握一门知识的写书效率加成（%，加算叠乘）。代价：抽特殊书 50% 走全量池可能出重复书",
                     "Overfit perk: writing speed bonus per learned book (%). Cost: 50% draws come from the full pool (duplicates possible)")
             .defineInRange("scholar.overfitBonusPercent", 10, 0, 100);
+
+    // ---- 簿记员（在职成长；决策 #40：+1/5 秒提配置，数值不变）----
+
+    public static final ModConfigSpec.IntValue BOOKKEEPER_XP_PER_GAIN = BUILDER
+            .comment("簿记员每次在职成长获得的簿记经验（每 5 秒结算一次）",
+                    "Bookkeeping xp per on-duty gain (settled every 5 seconds)")
+            .defineInRange("bookkeeper.xpPerGain", 1, 0, 100);
 
     // ---- 记忆（v0.9.3 铭记）----
 

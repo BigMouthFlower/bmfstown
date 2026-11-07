@@ -40,6 +40,9 @@ public final class WorkshopRegisterClient {
     private static final float[] COLOR_CONTAINER = {1.0F, 0.85F, 0.3F};
     /** 已登记工作站：紫。 */
     private static final float[] COLOR_STATION = {0.75F, 0.5F, 1.0F};
+
+    /** 水源站（炼金补水）：水蓝，与岗位紫/容器黄区分（决策 #34）。 */
+    private static final float[] COLOR_WATER = {0.3F, 0.55F, 1.0F};
     /** 准星候选：白。 */
     private static final float[] COLOR_CANDIDATE = {1.0F, 1.0F, 1.0F};
     /** 准星在城镇范围外：暗红。 */
@@ -112,6 +115,12 @@ public final class WorkshopRegisterClient {
                     COLOR_STATION[0], COLOR_STATION[1], COLOR_STATION[2],
                     0.9F, ZoneOutliner.EDGE_WIDTH);
         }
+        // 水源站（炼金补水，决策 #34）——水蓝
+        for (Long p : town.workshopWaterSources()) {
+            ZoneOutliner.renderEdges(pose.last(), edges, blockBox(BlockPos.of(p)),
+                    COLOR_WATER[0], COLOR_WATER[1], COLOR_WATER[2],
+                    0.9F, ZoneOutliner.EDGE_WIDTH);
+        }
         buffers.endBatch(OutlineRenderTypes.edge());
 
         // 准星候选：容器/工作台类方块画框（镇内白=可登记，镇外暗红=这里无效）
@@ -170,8 +179,9 @@ public final class WorkshopRegisterClient {
     }
 
     /**
-     * 准星方块可否登记：容器（任意 Container 方块实体）或工作台。
-     * 返回对应的标识色；不可登记返回 null（不画候选框）。
+     * 准星方块可否登记：容器（任意 Container 方块实体）、工作台/酿造台、
+     * 水源站三形态（含水炼药锅/水源/含水方块）。返回对应的标识色；
+     * 不可登记返回 null（不画候选框）。
      */
     @Nullable
     private static float[] candidateKind(Minecraft mc, BlockPos pos) {
@@ -181,8 +191,17 @@ public final class WorkshopRegisterClient {
                 || state.is(net.minecraft.world.level.block.Blocks.BREWING_STAND)) {
             return COLOR_STATION;
         }
+        // 容器判定在水源之前：箱子也能被含水（waterlogged chest），
+        // 含水的箱子应该按容器登记而不是水源站
         if (mc.level.getBlockEntity(pos) instanceof net.minecraft.world.Container) {
             return COLOR_CONTAINER;
+        }
+        if (state.is(net.minecraft.world.level.block.Blocks.WATER_CAULDRON)
+                || (state.is(net.minecraft.world.level.block.Blocks.WATER)
+                && state.getFluidState().isSource())
+                || (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED)
+                && state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED))) {
+            return COLOR_WATER;
         }
         return null;
     }

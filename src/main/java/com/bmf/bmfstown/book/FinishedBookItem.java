@@ -96,10 +96,13 @@ public class FinishedBookItem extends Item {
         var potionHolder = entry.potion();
         String productKey = net.minecraft.world.item.alchemy.Potion.getName(
                 java.util.Optional.of(potionHolder), "item.minecraft.potion.effect.");
+        // 底药按条目登记（绝大多数=粗制；悬浮=缓降，决策 #33）——vanilla 药水键原版自带
+        String baseKey = net.minecraft.world.item.alchemy.Potion.getName(
+                java.util.Optional.of(entry.base()), "item.minecraft.potion.effect.");
         // 全程保持 translatable 组件不解析——文本在渲染时刻才按玩家语言取词，
         // 任何时序下都不会把原始键名暴露成页面正文
         Component page = Component.translatable("gui.bmfstown.alchemy.recipe_page",
-                Component.translatable("item.minecraft.potion.effect.awkward"),
+                Component.translatable(baseKey),
                 Component.translatable(entry.catalyst().getDescriptionId()),
                 Component.translatable(productKey));
         return List.of(page);
