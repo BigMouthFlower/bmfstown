@@ -46,7 +46,9 @@ public final class WorkshopRegisterEvents {
 
     @SubscribeEvent
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (event.getLevel().isClientSide() || event.getHand() != InteractionHand.MAIN_HAND) {
+        // 双侧都要取消：酿造台 GUI 是客户端预测打开的（client 返回 SUCCESS 本地开屏），
+        // 只取消服务端拦不住它（首测实测踩坑）
+        if (event.getHand() != InteractionHand.MAIN_HAND) {
             return;
         }
         Player player = event.getEntity();
@@ -56,11 +58,13 @@ public final class WorkshopRegisterEvents {
         }
         // 会话激活且主手拿着城镇手册才拦截（与选区会话同口径）
         if (!(player.getMainHandItem().getItem() instanceof TownHandbookItem)) {
-            player.displayClientMessage(Component.translatable(
-                    "msg.bmfstown.register.need_handbook"), true);
+            if (!event.getLevel().isClientSide()) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.register.need_handbook"), true);
+            }
             return; // 不拦截：手里的东西正常用
         }
-        // 会话激活：这一下右键只属于登记
+        // 会话激活：这一下右键只属于登记（客户端取消 = 阻止 GUI 预测）
         event.setCanceled(true);
 
         if (!(player instanceof ServerPlayer serverPlayer)) {
@@ -81,8 +85,10 @@ public final class WorkshopRegisterEvents {
         Town.WorkshopRegister register = town.workshop();
         BlockState state = serverPlayer.serverLevel().getBlockState(pos);
 
-        if (toggleContainer(serverPlayer, register, pos, state)
-                || toggleStation(serverPlayer, register, pos, state)) {
+        // 岗位判定必须在容器之前：酿造台本身是 Container，先判容器会被吞进
+        // 容器池，酿造台岗位池永远空、炼金术士认领不到台（2026-11-06 实测踩坑）
+        if (toggleStation(serverPlayer, register, pos, state)
+                || toggleContainer(serverPlayer, register, pos, state)) {
             TownSaveData.get(serverPlayer.serverLevel()).setDirty();
             RegisterSessions.touch(player.getUUID());
             // 推手册数据：客户端渲染小框要读登记表（手册没开着也只更新缓存）
@@ -142,21 +148,36 @@ public final class WorkshopRegisterEvents {
         return other;
     }
 
-    /** 工作站登记/取消（v0.12 岗位只认工作台）。命中返回 true。 */
+    /**
+     * 岗位登记/取消，按方块类型分流（v0.12 炼金扩展）：工作台 → 工人/烟火商岗位池，
+     * 酿造台 → 炼金术士岗位池。命中返回 true。
+     */
     private static boolean toggleStation(ServerPlayer player,
             Town.WorkshopRegister register, BlockPos pos, BlockState state) {
-        if (!state.is(Blocks.CRAFTING_TABLE)) {
-            return false;
+        if (state.is(Blocks.CRAFTING_TABLE)) {
+            if (register.stations.remove(pos.asLong())) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.register.station_off", pos.toShortString()), true);
+            } else {
+                register.stations.add(pos.asLong());
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.register.station_on", pos.toShortString()), true);
+            }
+            return true;
         }
-        if (register.stations.remove(pos.asLong())) {
-            player.displayClientMessage(Component.translatable(
-                    "msg.bmfstown.register.station_off", pos.toShortString()), true);
-        } else {
-            register.stations.add(pos.asLong());
-            player.displayClientMessage(Component.translatable(
-                    "msg.bmfstown.register.station_on", pos.toShortString()), true);
+        if (state.is(Blocks.BREWING_STAND)) {
+            if (register.brewStations.remove(pos.asLong())) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.register.brew_off", pos.toShortString()), true);
+            } else {
+                register.brewStations.add(pos.asLong());
+                register.containers.remove(pos.asLong()); // 清掉误登进容器池的旧登记
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.register.brew_on", pos.toShortString()), true);
+            }
+            return true;
         }
-        return true;
+        return false;
     }
 
     /** 结束会话并同步客户端（正常结束/异常兜底共用）。 */

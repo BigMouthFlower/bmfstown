@@ -82,6 +82,28 @@ public final class ModDataComponents {
                     .networkSynchronized(net.minecraft.network.codec.ByteBufCodecs.BOOL)
                     .build());
 
+    /**
+     * 浊药纯度（v0.12 炼金，决策 #27）：0.0~1.0 连续值，炼金术士取料时打上。
+     * P&lt;1 = 浊药（药效时长 ×P，喝下/命中时按 1−P 概率窜味——杂质不存组件、
+     * 现抽保证喝前不可见）。组件缺省 = 非浊药（玩家手酿无此标记）。
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<Float>> PURITY =
+            COMPONENTS.register("purity", () -> DataComponentType.<Float>builder()
+                    .persistent(Codec.floatRange(0.0F, 1.0F))
+                    .networkSynchronized(net.minecraft.network.codec.ByteBufCodecs.FLOAT)
+                    .build());
+
+    /**
+     * 杂质豁免（v0.12 炼金，决策 #28 医师/毒石）：炼金术士盖章时若选了对称净化
+     * 分支（医师=正面药免负面杂质 / 毒石=负面药免正面杂质），浊药打上此标记；
+     * 喝下/命中时杂质现抽直接跳过。药效时长折扣不受影响。
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<Boolean>> ALCHEMY_PURE =
+            COMPONENTS.register("alchemy_pure", () -> DataComponentType.<Boolean>builder()
+                    .persistent(com.mojang.serialization.Codec.BOOL)
+                    .networkSynchronized(net.minecraft.network.codec.ByteBufCodecs.BOOL)
+                    .build());
+
     private ModDataComponents() {
     }
 

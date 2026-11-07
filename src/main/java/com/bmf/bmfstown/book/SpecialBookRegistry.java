@@ -72,6 +72,28 @@ public final class SpecialBookRegistry {
                         SpecialBookEffect.Type.MELEE_DAMAGE, 15))));
     }
 
+    static {
+        // ---- 秘传配方书（v0.12 炼金，用户 2026-11-05 定稿十条全上；Unlock 类，无卡点） ----
+        // 成书即 unlockIfNew（全局酿造门禁开放）+ 可打开阅读（书页写底药+催化剂）。
+        String[][] secretRecipes = {
+                {"alchemy_haste", "unlock.alchemy.haste"},
+                {"alchemy_resistance", "unlock.alchemy.resistance"},
+                {"alchemy_absorption", "unlock.alchemy.absorption"},
+                {"alchemy_health_boost", "unlock.alchemy.health_boost"},
+                {"alchemy_luck", "unlock.alchemy.luck"},
+                {"alchemy_wither", "unlock.alchemy.wither"},
+                {"alchemy_blindness", "unlock.alchemy.blindness"},
+                {"alchemy_darkness", "unlock.alchemy.darkness"},
+                {"alchemy_nausea", "unlock.alchemy.nausea"},
+                {"alchemy_mining_fatigue", "unlock.alchemy.mining_fatigue"},
+                {"alchemy_levitation", "unlock.alchemy.levitation"},
+        };
+        for (String[] r : secretRecipes) {
+            BOOKS.put(r[0], new SpecialBook(r[0],
+                    new BookDraft.Unlock(r[1]), 2000L, java.util.List.of()));
+        }
+    }
+
     private SpecialBookRegistry() {
     }
 }

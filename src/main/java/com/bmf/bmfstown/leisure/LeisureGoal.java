@@ -127,6 +127,11 @@ public class LeisureGoal extends Goal {
         return this.current != null;
     }
 
+    /** 是否正在阅读（书在手里）——孤儿书清扫网的守卫。 */
+    public boolean isReadingNow() {
+        return this.current instanceof LibraryReadActivity a && a.isReading();
+    }
+
     @Override
     public boolean requiresUpdateEveryTick() {
         return true;

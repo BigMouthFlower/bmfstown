@@ -81,6 +81,23 @@ public final class Perks {
             {"monty", "movabletype"},     // 传奇：三门问题 / 活字印刷术
     };
 
+    // ---- 炼金术士节点（v0.12，用户 2026-11-05 定稿；同构 3 节点 × 2 分支） ----
+
+    /** 炼金精通：低温熟成（不耗烈焰粉，速度 −30%）/ 急火快酿（纯度 −0.3，酿造效率 +30%，名字待用户定）。 */
+    public static final String NODE_AL_ADEPT = "alchemist.adept";
+    /** 炼金大师：医疗石（正面药不窜负面杂质）/ 毒石（负面药不窜正面杂质）。 */
+    public static final String NODE_AL_MASTER = "alchemist.master";
+    /** 炼金传奇：倍效（药水时长翻倍）/ 升阶（药水效果等级 +1）。 */
+    public static final String NODE_AL_LEGEND = "alchemist.legend";
+
+    public static final String[] ALCHEMIST_NODES = {NODE_AL_ADEPT, NODE_AL_MASTER, NODE_AL_LEGEND};
+
+    public static final String[][] ALCHEMIST_BRANCHES = {
+            {"cold_brew", "quickfire"},
+            {"medic_stone", "poison_stone"},
+            {"double_time", "boost_one"},
+    };
+
     /** 节点解锁所需段位（与 {@code SkillTiers.PERK_TIERS} 对齐：精通/大师/传奇）。 */
     public static final int[] UNLOCK_TIER = {3, 6, 9};
 
@@ -94,6 +111,9 @@ public final class Perks {
         }
         if (node.startsWith("scholar.")) {
             return ProfessionType.SCHOLAR;
+        }
+        if (node.startsWith("alchemist.")) {
+            return ProfessionType.ALCHEMIST;
         }
         return ProfessionType.WARRIOR;
     }
@@ -115,6 +135,7 @@ public final class Perks {
         var profession = identity.profession();
         boolean workerTree = node.startsWith("worker.");
         boolean scholarTree = node.startsWith("scholar.");
+        boolean alchTree = node.startsWith("alchemist.");
         // 节点树前缀必须与职业匹配
         if (workerTree && profession != ProfessionType.WORKER) {
             return false;
@@ -122,13 +143,18 @@ public final class Perks {
         if (scholarTree && profession != ProfessionType.SCHOLAR) {
             return false;
         }
-        if (!workerTree && !scholarTree && profession != ProfessionType.WARRIOR) {
+        if (alchTree && profession != ProfessionType.ALCHEMIST) {
+            return false;
+        }
+        if (!workerTree && !scholarTree && !alchTree && profession != ProfessionType.WARRIOR) {
             return false;
         }
         String[] nodes = workerTree ? WORKER_NODES
-                : scholarTree ? SCHOLAR_NODES : NODES;
+                : scholarTree ? SCHOLAR_NODES
+                : alchTree ? ALCHEMIST_NODES : NODES;
         String[][] branches = workerTree ? WORKER_BRANCHES
-                : scholarTree ? SCHOLAR_BRANCHES : BRANCHES;
+                : scholarTree ? SCHOLAR_BRANCHES
+                : alchTree ? ALCHEMIST_BRANCHES : BRANCHES;
         for (int n = 0; n < nodes.length; n++) {
             if (!nodes[n].equals(node)) {
                 continue;

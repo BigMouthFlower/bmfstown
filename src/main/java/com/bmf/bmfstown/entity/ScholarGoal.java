@@ -768,6 +768,8 @@ public class ScholarGoal extends Goal {
         if (content.draft() instanceof BookDraft.Unlock u) {
             com.bmf.bmfstown.unlock.UnlockState.get(level).unlockIfNew(
                     level, content.townId(), u.unlockId());
+            // 秘传配方书：解锁全局酿造门禁（v0.12 炼金，决策 #25）
+            com.bmf.bmfstown.alchemy.AlchemyGate.open(level.getServer(), u.unlockId());
         }
     }
 

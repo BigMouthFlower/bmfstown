@@ -369,7 +369,14 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         // 凹槽正好落在我们的格子上；y 直接取 PLAYER_INV_Y-1（块顶对格子顶，
         // 格子顶在块内 1px 处）。之前按"整张贴图平移"的老模型减了 83，
         // 整块背包被抬高到状态文字区——就是那次截图里"贴图跑到上面"的错位。
-        if (this.page == PAGE_INFO || this.page == PAGE_WORK) {
+        // 工作页仅学者显示背包（卡点书转交需要，用户 11-06 定稿）；
+        // 工人/炼金等工作页收起底座——选产物/选药水弹层落在这一带，底座不撤必重叠
+        boolean invVisible = this.page == PAGE_INFO
+                || (this.page == PAGE_WORK
+                        && this.menu.getResident() != null
+                        && this.menu.getResident().getProfession()
+                                == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR);
+        if (invVisible) {
             gfx.blit(INVENTORY_TEXTURE,
                     x + VANILLA_DEST_X, y + ResidentMenu.PLAYER_INV_Y - 1,
                     VANILLA_CELL_U, VANILLA_CELL_V,
@@ -978,7 +985,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * 也在（拿书稿用），只画"物品栏"——镇民袋那一块在工作页不存在。
      */
     private void drawBottomLabels(GuiGraphics gfx, boolean infoPage) {
-        if (this.page != PAGE_INFO && this.page != PAGE_WORK) {
+        boolean invVisible = this.page == PAGE_INFO
+                || (this.page == PAGE_WORK
+                        && this.menu.getResident() != null
+                        && this.menu.getResident().getProfession()
+                                == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR);
+        if (!invVisible) {
             return;
         }
         // 现在底板是原版同款浅灰，直接用原版的深灰字，视觉一致
@@ -1044,6 +1056,15 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
     /** 工人产物选择弹层是否打开（点产物格开，选完/点外面收）。 */
     private boolean orderPickerOpen;
+    /** 炼金药水选择弹层（v0.12 炼金）：文字行列表 + 延时/强化互斥芯片。 */
+    private boolean alchPickerOpen;
+    /** 弹层内当前选中的修饰档（none/long/strong；点药水行时一并下单）。 */
+    /** 药水修饰档（组 A）：none|long|strong——与组 B 自由组合。 */
+    private String alchModPotion = "none";
+    /** 容器修饰档（组 B）：none|splash|lingering——与组 A 自由组合。 */
+    private String alchModContainer = "none";
+    /** 炼金弹层药水列表滚动行（固定显示 2 行 + 滚动条）。 */
+    private int alchScroll;
 
     /** 工人订单物品格：20×20（含边框），空 = 未设置；有单显示产物图标。 */
     private void drawOrderSlot(GuiGraphics gfx, int x, int y, ItemStack orderStack,
@@ -1142,6 +1163,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
             return com.bmf.bmfstown.entity.profile.Perks.SCHOLAR_NODES;
         }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+            return com.bmf.bmfstown.entity.profile.Perks.ALCHEMIST_NODES;
+        }
         return com.bmf.bmfstown.entity.profile.Perks.NODES;
     }
 
@@ -1152,6 +1176,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         }
         if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
             return com.bmf.bmfstown.entity.profile.Perks.SCHOLAR_BRANCHES;
+        }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+            return com.bmf.bmfstown.entity.profile.Perks.ALCHEMIST_BRANCHES;
         }
         return com.bmf.bmfstown.entity.profile.Perks.BRANCHES;
     }
@@ -1164,6 +1191,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         }
         if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
             return "gui.bmfstown.resident.perk.sb";
+        }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+            return "gui.bmfstown.resident.perk.ab";
         }
         return "gui.bmfstown.resident.perk.b";
     }
@@ -1513,6 +1543,27 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
             // perk 区下方现在是玩家背包（v0.11），状态行改画在 perk 区上方空档
             drawCenteredInPanel(gfx, line, 5, bw, perkAreaTop() - 10, 0x9E9E9E);
+        } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+            // 炼金术士：开工开关（酿造台登记池自动认领）+ 药水选择弹层入口
+            boolean enabled = resident.workerEnabledSynced();
+            drawCenteredInPanel(gfx, I18n.get(enabled
+                            ? "gui.bmfstown.resident.work.ws_toggle_on"
+                            : "gui.bmfstown.resident.work.ws_toggle_off"),
+                    5, bw, followY + 3, enabled ? 0xA8FFA8 : 0xE0E0E0);
+            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.alch_potion_label"),
+                    5, bw, guardY + 3, 0xE0E0E0);
+            // ---- 当前订单预览（工人同款：右上物品槽 + perk 区上方状态行）----
+            String alchOrderKey = com.bmf.bmfstown.client.ClientMoodState.workerOrderOf(
+                    resident.getUUID());
+            var alchOrderStack = com.bmf.bmfstown.client.ClientAlchemyCatalog
+                    .displayStackForKey(alchOrderKey);
+            drawOrderSlot(gfx, this.imageWidth - 29, guardY - 2, alchOrderStack, mouseX, mouseY);
+            String alchOrderTxt = alchOrderStack.isEmpty()
+                    ? I18n.get("gui.bmfstown.resident.work.ws_no_order")
+                    : alchOrderStack.getHoverName().getString();
+            drawCenteredInPanel(gfx,
+                    I18n.get("gui.bmfstown.resident.work.alch_order_line", alchOrderTxt),
+                    5, bw, perkAreaTop() - 10, 0x9E9E9E);
         }
 
         // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框）----
@@ -1782,6 +1833,116 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     gfx.fill(hoverCellX, hoverCellY, hoverCellX + 1, hoverCellY + 18, 0xFFFFFFFF);
                     gfx.fill(hoverCellX + 17, hoverCellY, hoverCellX + 18, hoverCellY + 18, 0xFFFFFFFF);
                 }
+            } else if (this.alchPickerOpen
+                    && current == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+                // 炼金药水选择弹层（工人产物选择同款：真实物品图标格子网格）。
+                // 修饰分两组：药水档（延时/强化，互斥可全不选）× 容器档（喷溅/滞留，
+                // 互斥可全不选），组间自由组合（延时+喷溅 = 延时喷溅药）。
+                // 位置 = 背包区（炼金页背包已收起），不与 perk 区重叠（用户 11-06 定稿）。
+                var potions = com.bmf.bmfstown.client.ClientAlchemyCatalog.entries();
+                int cols = 8;
+                int visRows = 2; // 固定显示 2 行，超出滚动（用户 11-06 定稿加滚动条）
+                int arows = (potions.size() + cols - 1) / cols;
+                int maxScroll = Math.max(0, arows - visRows);
+                this.alchScroll = Mth.clamp(this.alchScroll, 0, maxScroll);
+                int pw = this.imageWidth - 8;
+                int ph = 46 + visRows * 20 + 2;
+                int px = 4;
+                int py = perkAreaBottom() + 2;
+                gfx.fill(px, py, px + pw, py + ph, 0xFFE9E3D5);
+                gfx.fill(px, py, px + pw, py + 1, 0xFF8A7A55);
+                drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.alch_picker_title"),
+                        px, pw, py + 3, 0x4A3B22);
+                // 修饰芯片：两行两组（药效行 / 容器行），行内互斥可全不选，组间自由组合。
+                // 按钮 = 1px 深棕边框 + 内芯填充（选中棕底白字），文案完整居中显示
+                String[] chipMods = {"long", "strong", "splash", "lingering"};
+                String[] chipLabels = {I18n.get("gui.bmfstown.resident.work.alch_chip_long"),
+                        I18n.get("gui.bmfstown.resident.work.alch_chip_strong"),
+                        I18n.get("gui.bmfstown.resident.work.alch_chip_splash"),
+                        I18n.get("gui.bmfstown.resident.work.alch_chip_lingering")};
+                String[] groupLabels = {I18n.get("gui.bmfstown.resident.work.alch_group_potion"),
+                        I18n.get("gui.bmfstown.resident.work.alch_group_container")};
+                int chipW = (pw - 8 - 26 - 4) / 2;
+                for (int g = 0; g < 2; g++) {
+                    int rowY = py + 14 + g * 14;
+                    gfx.drawString(this.font, groupLabels[g], px + 4, rowY + 2, 0x6B5A38, false);
+                    for (int c = 0; c < 2; c++) {
+                        int idx = g * 2 + c;
+                        int chipX = px + 30 + c * (chipW + 2);
+                        String cur = g == 0 ? this.alchModPotion : this.alchModContainer;
+                        boolean sel = cur.equals(chipMods[idx]);
+                        gfx.fill(chipX, rowY, chipX + chipW, rowY + 12, 0xFF8A7A55);
+                        gfx.fill(chipX + 1, rowY + 1, chipX + chipW - 1, rowY + 11,
+                                sel ? 0xFF8A7A55 : 0xFFEFE9D8);
+                        String t = this.font.plainSubstrByWidth(chipLabels[idx], chipW - 4);
+                        gfx.drawString(this.font, t,
+                                chipX + (chipW - this.font.width(t)) / 2, rowY + 2,
+                                sel ? 0xFFFFFF : 0x4A3B22, false);
+                    }
+                }
+                if (potions.isEmpty()) {
+                    gfx.drawString(this.font,
+                            I18n.get("gui.bmfstown.resident.work.alch_sync_hint"),
+                            px + 6, py + 49, 0x8A7A55, false);
+                }
+                // 药水格子（真实瓶图标 + 悬停白框 + tooltip，工人同款）。
+                // 图标 = 按当前芯片实时算出的**最终产物**（延时+喷溅 → 喷溅型延时瓶）——
+                // 格子本身就是预览，悬停 tooltip 同名（用户 11-06 定稿）
+                int hoverIdx = -1;
+                int hoverCellX = -1;
+                int hoverCellY = -1;
+                net.minecraft.world.item.ItemStack hoverStack = null;
+                int start = this.alchScroll * cols;
+                for (int k = start; k < Math.min(potions.size(), start + visRows * cols); k++) {
+                    var entry = potions.get(k);
+                    int cellX = px + 4 + (k % cols) * 20;
+                    int cellY = py + 46 + (k / cols - this.alchScroll) * 20;
+                    boolean hov = mouseX >= this.leftPos + cellX && mouseX < this.leftPos + cellX + 18
+                            && mouseY >= this.topPos + cellY && mouseY < this.topPos + cellY + 18;
+                    gfx.fill(cellX, cellY, cellX + 18, cellY + 18, hov ? 0xFFCFC5A2 : 0xFFD8D0B8);
+                    String pp = this.alchModPotion;
+                    String cc = this.alchModContainer;
+                    if (pp.equals("long") && !entry.hasLong()) {
+                        pp = "none";
+                    }
+                    if (pp.equals("strong") && !entry.hasStrong()) {
+                        pp = "none";
+                    }
+                    if (cc.equals("splash") && !entry.hasSplash()) {
+                        cc = "none";
+                    }
+                    if (cc.equals("lingering") && !entry.hasLingering()) {
+                        cc = "none";
+                    }
+                    var icon = com.bmf.bmfstown.client.ClientAlchemyCatalog
+                            .displayStack(entry.potionId(), pp, cc);
+                    gfx.renderItem(icon, cellX + 1, cellY + 1);
+                    if (hov) {
+                        hoverIdx = k;
+                        hoverCellX = cellX;
+                        hoverCellY = cellY;
+                        hoverStack = icon;
+                    }
+                }
+                if (hoverStack != null) {
+                    gfx.renderComponentTooltip(this.font, List.of(hoverStack.getHoverName()),
+                            mouseX - this.leftPos + 8, mouseY - this.topPos + 8);
+                }
+                // 滚动条（超出 2 行才画）
+                if (maxScroll > 0) {
+                    int trackY = py + 46;
+                    int trackH = visRows * 20;
+                    gfx.fill(px + pw - 3, trackY, px + pw - 1, trackY + trackH, 0xFFD8D0B8);
+                    int thumbH = Math.max(8, trackH * visRows / arows);
+                    int thumbY = trackY + (trackH - thumbH) * this.alchScroll / maxScroll;
+                    gfx.fill(px + pw - 3, thumbY, px + pw - 1, thumbY + thumbH, 0xFF8A7A55);
+                }
+                if (hoverIdx >= 0) {
+                    gfx.fill(hoverCellX, hoverCellY, hoverCellX + 18, hoverCellY + 1, 0xFFFFFFFF);
+                    gfx.fill(hoverCellX, hoverCellY + 17, hoverCellX + 18, hoverCellY + 18, 0xFFFFFFFF);
+                    gfx.fill(hoverCellX, hoverCellY, hoverCellX + 1, hoverCellY + 18, 0xFFFFFFFF);
+                    gfx.fill(hoverCellX + 17, hoverCellY, hoverCellX + 18, hoverCellY + 18, 0xFFFFFFFF);
+                }
             }
         }
     }
@@ -1867,7 +2028,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     status = I18n.get("gui.bmfstown.resident.perk.ready");
                 }
                 int color = unlocked ? 0xFFFFFF : 0x808080;
-                gfx.drawString(this.font, "◆ " + I18n.get("gui.bmfstown.resident.perk.node." + n)
+                // 节点名：职业专属键优先（炼金=火候/净化/宗师），没有回落共享键
+                String nodeKey = net.minecraft.client.resources.language.I18n
+                        .exists(branchKeyPrefix() + "node." + n)
+                        ? branchKeyPrefix() + "node." + n
+                        : "gui.bmfstown.resident.perk.node." + n;
+                gfx.drawString(this.font, "◆ " + I18n.get(nodeKey)
                         + "  " + status, 8, textY, color, false);
             } else {
                 int b = row.branch();
@@ -2252,6 +2418,90 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 return true;
             }
 
+            // ---- 炼金弹层打开：芯片切换 + 格子点击下单 / 点外面收起 ----
+            if (this.alchPickerOpen
+                    && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+                Resident r = this.menu.getResident();
+                int relX = (int) (mouseX - this.leftPos);
+                int relY = (int) (mouseY - this.topPos);
+                int px = 4;
+                int py = perkAreaBottom() + 2;
+                int pw = this.imageWidth - 8;
+                int cols = 8;
+                String[] chipMods = {"long", "strong", "splash", "lingering"};
+                var potions = com.bmf.bmfstown.client.ClientAlchemyCatalog.entries();
+                int arows = (potions.size() + cols - 1) / cols;
+                int visRows = 2;
+                boolean insidePopup = relX >= px && relX < px + pw
+                        && relY >= py && relY < py + 46 + visRows * 20 + 2;
+                if (insidePopup && r != null) {
+                    // 芯片带：两行两组（药效/容器），行内互斥可全不选
+                    int chipW = (pw - 8 - 26 - 4) / 2;
+                    if (relY >= py + 14 && relY < py + 40
+                            && relX >= px + 4 && relX < px + 30 + 2 * chipW + 2) {
+                        int g = relY >= py + 28 ? 1 : 0;
+                        int rowY = py + 14 + g * 14;
+                        if (relY >= rowY && relY < rowY + 12) {
+                            int col = relX >= px + 30 + chipW + 2 ? 1 : 0;
+                            int idx = g * 2 + col;
+                            if (g == 0) {
+                                this.alchModPotion = this.alchModPotion.equals(chipMods[idx])
+                                        ? "none" : chipMods[idx];
+                            } else {
+                                this.alchModContainer = this.alchModContainer.equals(chipMods[idx])
+                                        ? "none" : chipMods[idx];
+                            }
+                        }
+                        return true;
+                    }
+                    // 药水格子（工人同款 20px 网格；滚动偏移）
+                    if (relY >= py + 46 && relY < py + 46 + visRows * 20
+                            && relX >= px + 4 && relX < px + 4 + cols * 20) {
+                        int row = (relY - (py + 46)) / 20;
+                        int col = (relX - (px + 4)) / 20;
+                        int k = (this.alchScroll + row) * cols + col;
+                        if (row >= 0 && k >= 0 && k < potions.size()) {
+                            var entry = potions.get(k);
+                            // 档位不存在 → 回落基础档（该药无延时/强化/喷溅/滞留变体时）
+                            String potionPart = this.alchModPotion;
+                            String contPart = this.alchModContainer;
+                            if (potionPart.equals("long") && !entry.hasLong()) {
+                                potionPart = "none";
+                            }
+                            if (potionPart.equals("strong") && !entry.hasStrong()) {
+                                potionPart = "none";
+                            }
+                            if (contPart.equals("splash") && !entry.hasSplash()) {
+                                contPart = "none";
+                            }
+                            if (contPart.equals("lingering") && !entry.hasLingering()) {
+                                contPart = "none";
+                            }
+                            String mod;
+                            if (potionPart.equals("none") && contPart.equals("none")) {
+                                mod = "none";
+                            } else if (contPart.equals("none")) {
+                                mod = potionPart;
+                            } else if (potionPart.equals("none")) {
+                                mod = contPart;
+                            } else {
+                                mod = potionPart + "+" + contPart;
+                            }
+                            String key = "alch|" + entry.potionId() + "|" + mod;
+                            ModNetworking.sendToServer(new ModNetworking.AlchemistOrderPayload(
+                                    r.getId(), key));
+                            // 乐观更新订单缓存（服务端为权威）——订单预览立刻可见
+                            com.bmf.bmfstown.client.ClientMoodState.setWorkerOrder(
+                                    r.getUUID(), key);
+                            this.alchPickerOpen = false;
+                            return true;
+                        }
+                    }
+                }
+                this.alchPickerOpen = false; // 点弹层外：收起
+                return true;
+            }
+
             // 职业行（滚动窗口：可见行 v → 实际下标 workScroll + v；下标=过滤列表位置）
             int rowTop = this.topPos + workRowTop();
             int rel = (int) (mouseY - rowTop);
@@ -2305,6 +2555,27 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     return true;
                 }
                 // 不在按钮上：掉出本块，交给后面的 perk 区点击
+            }
+            // ---- 炼金术士：开工开关 + 药水选择弹层入口 ----
+            if (workControlsVisible() && mouseX >= listX && mouseX < listX + listW
+                    && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+                Resident r = this.menu.getResident();
+                if (r == null) {
+                    return true;
+                }
+                if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
+                    ModNetworking.sendToServer(new ModNetworking.WorkerTogglePayload(r.getId()));
+                    return true;
+                }
+                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H) {
+                    this.alchModPotion = "none"; // 每次打开重置修饰档
+                    this.alchModContainer = "none";
+                    this.alchScroll = 0;
+                    this.alchPickerOpen = true;
+                    // 自愈式拉取：目录不靠登录时的一次性推送，开弹层即向服务端要
+                    ModNetworking.sendToServer(new ModNetworking.AlchemyCatalogRequestPayload());
+                    return true;
+                }
             }
             // ---- 学者：写书/抄书模式切换按钮（v0.10.3）----
             if (workControlsVisible() && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
@@ -2539,6 +2810,22 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (this.page == PAGE_WORK) {
+            // 悬停在炼金药水弹层上：滚药水列表（固定 2 行 + 滚动条）
+            if (this.alchPickerOpen
+                    && currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+                var potions = com.bmf.bmfstown.client.ClientAlchemyCatalog.entries();
+                int arows = (potions.size() + 7) / 8;
+                int maxScroll = Math.max(0, arows - 2);
+                int px = 4;
+                int py = perkAreaBottom() + 2;
+                int pw = this.imageWidth - 8;
+                if (maxScroll > 0 && mouseX >= this.leftPos + px && mouseX < this.leftPos + px + pw
+                        && mouseY >= this.topPos + py && mouseY < this.topPos + py + 88) {
+                    this.alchScroll = Mth.clamp(this.alchScroll - (int) Math.signum(scrollY),
+                            0, maxScroll);
+                    return true;
+                }
+            }
             // 悬停在 perk 区上：滚 perk 树（固定高滚动菜单）
             if (mouseY >= this.topPos + perkAreaTop() && mouseY < this.topPos + perkAreaBottom()) {
                 clampPerkScroll();

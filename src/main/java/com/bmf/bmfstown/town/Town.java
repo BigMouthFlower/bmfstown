@@ -67,9 +67,35 @@ public class Town {
         public final java.util.HashSet<Long> containers = new java.util.HashSet<>();
         /** 已登记工作站（岗位），存 BlockPos.asLong()。 */
         public final java.util.HashSet<Long> stations = new java.util.HashSet<>();
+        /** 已登记酿造台（v0.12 炼金术士岗位池）：岗位按方块类型分流，与工作台互不混用。 */
+        public final java.util.HashSet<Long> brewStations = new java.util.HashSet<>();
 
         public boolean isEmpty() {
-            return containers.isEmpty() && stations.isEmpty();
+            return containers.isEmpty() && stations.isEmpty() && brewStations.isEmpty();
+        }
+
+        /**
+         * 旧档迁移（2026-11-06，幂等）：登记判定顺序 bug 期间，酿造台被误登进
+         * 容器池——扫描容器池，把酿造台挪进酿造台岗位池（炼金认领前调用）。
+         */
+        public void migrateBrewStands(net.minecraft.server.level.ServerLevel level) {
+            boolean moved = false;
+            var it = containers.iterator();
+            while (it.hasNext()) {
+                long p = it.next();
+                BlockPos pos = BlockPos.of(p);
+                if (!level.isLoaded(pos)) {
+                    continue; // 未加载区块不动（下次再试），避免同步加载
+                }
+                if (level.getBlockState(pos).is(net.minecraft.world.level.block.Blocks.BREWING_STAND)) {
+                    it.remove();
+                    brewStations.add(p);
+                    moved = true;
+                }
+            }
+            if (moved) {
+                TownSaveData.get(level).setDirty();
+            }
         }
     }
 
@@ -337,6 +363,8 @@ public class Town {
                     .mapToLong(Long::longValue).toArray());
             tag.putLongArray("WorkshopStations", this.workshop.stations.stream()
                     .mapToLong(Long::longValue).toArray());
+            tag.putLongArray("WorkshopBrewStations", this.workshop.brewStations.stream()
+                    .mapToLong(Long::longValue).toArray());
         }
         return tag;
     }
@@ -383,6 +411,9 @@ public class Town {
         }
         for (long p : tag.getLongArray("WorkshopStations")) {
             town.workshop.stations.add(p);
+        }
+        for (long p : tag.getLongArray("WorkshopBrewStations")) {
+            town.workshop.brewStations.add(p);
         }
         // 老档自动归块（v0.9.1）：归属为空（区块功能实装前画的功能区）且
         // 几何上完整落在某个追加区块内 → 自动归到那个区块。主外框内的保持主区块。

@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.bmf.bmfstown.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "PotionBrewingMixin",
+    "BrewingStandBlockEntityMixin",
+    "BrewingStandBlockEntityAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

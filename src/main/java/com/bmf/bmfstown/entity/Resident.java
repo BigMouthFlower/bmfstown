@@ -460,10 +460,13 @@ public class Resident extends PathfinderMob {
         // 跟随观察（途径 B）与写作互斥（两 Goal 各自 canUse 判 followResidentId）
         this.goalSelector.addGoal(4, new ScholarGoal(this));
         this.goalSelector.addGoal(4, new ScholarFollowGoal(this));
+        // ---- 炼金术士真酿造（v0.12：酿造台岗位池自动认领，见 AlchemistGoal） ----
+        this.goalSelector.addGoal(4, new AlchemistGoal(this));
         // ---- 闲暇活动（v0.10.3：动态活动池——闲逛/图书馆看闲书，优先级 5
         //      低于工作/战士 Goal；窗口判定见 LeisureGoal，读书逻辑在
         //      leisure.LibraryReadActivity，替代已废弃的 ReadingGoal） ----
-        this.goalSelector.addGoal(5, new com.bmf.bmfstown.leisure.LeisureGoal(this));
+        this.leisureGoal = new com.bmf.bmfstown.leisure.LeisureGoal(this);
+        this.goalSelector.addGoal(5, this.leisureGoal);
         // ---- 开门/关门（原版村民同款，用户定稿） ----
         // DoorInteractGoal 系不占 MOVE/LOOK 旗标（构造器无 setFlags，已核对字节码）：
         // 寻路撞上关闭的木门时它并行启动——开门、等走过、再关门。
@@ -769,6 +772,8 @@ public class Resident extends PathfinderMob {
     }
 
     /** 工人 Goal 引用（注册时挂上；面板状态显示用）。 */
+    @Nullable
+    private com.bmf.bmfstown.leisure.LeisureGoal leisureGoal;
     @Nullable
     private WorkerGoal workerGoal;
 
@@ -1250,6 +1255,12 @@ public class Resident extends PathfinderMob {
      */
     @Override
     protected void customServerAiStep() {
+        // ---- 孤儿书清扫网（v0.12.1）：每 5 秒一次，任何路径漏还的书数秒内归架 ----
+        if (this.tickCount % 100 == 0 && this.level() instanceof net.minecraft.server.level.ServerLevel sl
+                && this.leisureGoal != null) {
+            com.bmf.bmfstown.leisure.LibraryReadActivity.sweepOrphanBook(
+                    this, sl, this.leisureGoal.isReadingNow());
+        }
         super.customServerAiStep();
         // ---- 0. 工人状态打包同步（面板状态行用；set 同值不发包） ----
         this.refreshWorkerStatus();

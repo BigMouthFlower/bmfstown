@@ -268,28 +268,8 @@ public class LibraryReadActivity implements LeisureActivity {
         //      书滞留在主手（活动状态是瞬态的，装备却随实体落档）——
         //      开新一轮前先送回最近书架（架满进背包），绝不当成"原主手
         //      物品"在背包-主手之间无限流转（用户 21:16 报告的书滞留）----
-        ItemStack orphan = resident.getMainHandItem();
-        if (!orphan.isEmpty()
-                && orphan.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get()) != null) {
-            boolean shelved = false;
-            BlockPos orphanTarget = nearestShelfWithSpace(level, resident, resident.blockPosition());
-            if (orphanTarget != null && level.getBlockEntity(orphanTarget)
-                    instanceof ChiseledBookShelfBlockEntity orphanShelf) {
-                for (int os = 0; os < orphanShelf.getContainerSize(); os++) {
-                    if (orphanShelf.getItem(os).isEmpty()) {
-                        orphanShelf.setItem(os, orphan);
-                        shelved = !orphanShelf.getItem(os).isEmpty();
-                        break;
-                    }
-                }
-            }
-            if (!shelved) {
-                resident.getInventory().addItem(orphan);
-            }
-            resident.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
-            com.bmf.bmfstown.BmfTown.LOGGER.info("[BmfTown][休闲] {} 回收了手中滞留的书（上次会话中断残留）",
-                    resident.getName().getString());
-        }
+        // 此刻正要取新书：手中若有残留必是上次中断的孤儿 → readingNow=false
+        sweepOrphanBook(resident, level, false);
         this.heldBook = shelf.removeItem(slot, 1);
         var content = this.heldBook.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
         this.skillBookId = content == null ? null : content.draft().bookId();
@@ -456,6 +436,83 @@ public class LibraryReadActivity implements LeisureActivity {
                     words.word(0), words.word(1), words.word(2));
         };
         com.bmf.bmfstown.social.DialogEngine.sayRaw(resident, line.getString());
+    }
+
+    /**
+     * 孤儿书清扫（v0.12.1 根治"书留在手里"）：任何路径漏掉还书
+     * （抢占时序/区块卸载/未知中断），这道网都会在数秒内把书送回书架
+     * （架满进背包）。{@code readingNow} = 该镇民当前正在阅读——是则跳过
+     * （阅读中的书本来就该在手里）。由 Resident.customServerAiStep 周期调用。
+     */
+    public static void sweepOrphanBook(Resident resident, ServerLevel level, boolean readingNow) {
+        if (readingNow) {
+            return;
+        }
+        ItemStack orphan = resident.getMainHandItem();
+        if (orphan.isEmpty()
+                || orphan.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get()) == null) {
+            return;
+        }
+        boolean shelved = false;
+        BlockPos orphanTarget = nearestShelfStatic(level, resident);
+        if (orphanTarget != null && level.getBlockEntity(orphanTarget)
+                instanceof ChiseledBookShelfBlockEntity orphanShelf) {
+            for (int os = 0; os < orphanShelf.getContainerSize(); os++) {
+                if (orphanShelf.getItem(os).isEmpty()) {
+                    orphanShelf.setItem(os, orphan);
+                    shelved = !orphanShelf.getItem(os).isEmpty();
+                    break;
+                }
+            }
+        }
+        if (!shelved) {
+            resident.getInventory().addItem(orphan);
+        }
+        resident.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        com.bmf.bmfstown.BmfTown.LOGGER.info("[BmfTown][休闲] {} 回收了手中滞留的书（清扫网）",
+                resident.getName().getString());
+    }
+
+    /** 静态版最近有空位书架（清扫网用）：扫该镇民所属城镇工坊区的雕纹书架。 */
+    private static BlockPos nearestShelfStatic(ServerLevel level, Resident resident) {
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        var townId = resident.getIdentity().townId();
+        if (townId == null) {
+            return null;
+        }
+        var town = com.bmf.bmfstown.town.TownSaveData.get(level).findTown(townId.toString());
+        if (town == null) {
+            return null;
+        }
+        for (com.bmf.bmfstown.town.TownZone zone : town.zones(com.bmf.bmfstown.town.TownWandMode.WORK)) {
+            for (BlockPos pos : com.bmf.bmfstown.town.TownZone.iterate(zone)) {
+                if (!(level.getBlockEntity(pos) instanceof ChiseledBookShelfBlockEntity shelf)) {
+                    continue;
+                }
+                boolean hasSpace = false;
+                for (int slot = 0; slot < shelf.getContainerSize(); slot++) {
+                    if (shelf.getItem(slot).isEmpty()) {
+                        hasSpace = true;
+                        break;
+                    }
+                }
+                if (!hasSpace) {
+                    continue;
+                }
+                double d = resident.blockPosition().distSqr(pos);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = pos.immutable();
+                }
+            }
+        }
+        return best;
+    }
+
+    /** 是否正处于阅读中（书在手里）——孤儿清扫的守卫用。 */
+    public boolean isReading() {
+        return this.phase == Phase.READ;
     }
 
     @Override

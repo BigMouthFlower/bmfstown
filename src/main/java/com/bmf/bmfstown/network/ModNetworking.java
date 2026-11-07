@@ -640,6 +640,77 @@ public final class ModNetworking {
         }
     }
 
+    /** C → S：请求重发炼金目录（弹层打开时自愈式拉取，不依赖登录时序）。 */
+    public record AlchemyCatalogRequestPayload() implements CustomPacketPayload {
+
+        public static final AlchemyCatalogRequestPayload INSTANCE = new AlchemyCatalogRequestPayload();
+
+        public static final Type<AlchemyCatalogRequestPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "alchemy_catalog_request"));
+
+        public static final StreamCodec<ByteBuf, AlchemyCatalogRequestPayload> STREAM_CODEC =
+                StreamCodec.unit(INSTANCE);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：炼金订单（订单键 alch|&lt;potion&gt;|&lt;none|long|strong&gt;）。
+     * 服务端复核职业与目录存在性（AlchemyCatalog.resolve 反查拒绝野键）。
+     */
+    public record AlchemistOrderPayload(int entityId, String orderKey)
+            implements CustomPacketPayload {
+
+        public static final Type<AlchemistOrderPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "alchemist_order"));
+
+        public static final StreamCodec<ByteBuf, AlchemistOrderPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, AlchemistOrderPayload::entityId,
+                        ByteBufCodecs.STRING_UTF8, AlchemistOrderPayload::orderKey,
+                        AlchemistOrderPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * S → C：炼金目录同步（客户端 PotionBrewing 是 vanilla 自举实例，
+     * 反查必须服务端做——条目 "potionId|hasLong|hasStrong"）。
+     */
+    public record AlchemyCatalogSyncPayload(java.util.List<String> entries)
+            implements CustomPacketPayload {
+
+        public static final Type<AlchemyCatalogSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "alchemy_catalog_sync"));
+
+        public static final StreamCodec<ByteBuf, AlchemyCatalogSyncPayload> STREAM_CODEC = StreamCodec.of(
+                (buf, payload) -> {
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.entries().size());
+                    for (String e : payload.entries()) {
+                        ByteBufCodecs.STRING_UTF8.encode(buf, e);
+                    }
+                },
+                buf -> {
+                    int n = ByteBufCodecs.VAR_INT.decode(buf);
+                    java.util.List<String> entries = new java.util.ArrayList<>(n);
+                    for (int i = 0; i < n; i++) {
+                        entries.add(ByteBufCodecs.STRING_UTF8.decode(buf));
+                    }
+                    return new AlchemyCatalogSyncPayload(entries);
+                });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     /**
      * C → S：perk 选档（成长区分支行点击）。
      *
@@ -1029,7 +1100,7 @@ public final class ModNetworking {
         });
     }
 
-    /** 工人开工/停工切换：校验职业后翻转开关。 */
+    /** 工人开工/停工切换：校验职业后翻转开关（炼金术士共用同一开关槽，v0.12 泛化）。 */
     private static void handleWorkerToggle(WorkerTogglePayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             Player player = ctx.player();
@@ -1040,8 +1111,9 @@ public final class ModNetworking {
                     instanceof com.bmf.bmfstown.entity.Resident resident)) {
                 return;
             }
-            if (resident.getProfession()
-                    != com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
+            var prof = resident.getProfession();
+            if (prof != com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
+                    && prof != com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.work.need_worker"), true);
                 return;
@@ -1051,6 +1123,87 @@ public final class ModNetworking {
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     nowEnabled ? "msg.bmfstown.workshop.enabled" : "msg.bmfstown.workshop.disabled",
                     resident.getName().getString()), false);
+        });
+    }
+
+    /** 服务端把炼金目录（可酿药水+变体可用性）发给玩家。 */
+    public static void sendAlchemyCatalogSync(ServerPlayer player) {
+        var level = player.serverLevel();
+        java.util.List<String> entries = new java.util.ArrayList<>();
+        for (var r : com.bmf.bmfstown.alchemy.AlchemyCatalog.catalog(level)) {
+            String id = net.minecraft.core.registries.BuiltInRegistries.POTION
+                    .getKey(r.base().value()).toString();
+            entries.add(id + "|" + (r.extended() != null ? "1" : "0")
+                    + "|" + (r.strong() != null ? "1" : "0")
+                    + "|" + (r.hasSplash() ? "1" : "0")
+                    + "|" + (r.hasLingering() ? "1" : "0"));
+        }
+        player.connection.send(new AlchemyCatalogSyncPayload(entries));
+    }
+
+    /** C2S 处理：按请求重发目录（自愈）。 */
+    private static void handleAlchemyCatalogRequest(AlchemyCatalogRequestPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer serverPlayer) {
+                sendAlchemyCatalogSync(serverPlayer);
+            }
+        });
+    }
+
+    /** S2C 处理：写入客户端炼金目录缓存。 */
+    private static void handleAlchemyCatalogSync(AlchemyCatalogSyncPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> com.bmf.bmfstown.client.ClientAlchemyCatalog.accept(payload.entries()));
+    }
+
+    /** 炼金订单：校验职业与目录存在性（反查拒绝野键），落账。 */
+    private static void handleAlchemistOrder(AlchemistOrderPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (resident.getProfession()
+                    != com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_worker"), true);
+                return;
+            }
+            var recipe = com.bmf.bmfstown.alchemy.AlchemyCatalog.resolve(
+                    serverPlayer.serverLevel(), payload.orderKey());
+            if (recipe == null) {
+                // 野键：可见拒绝（静默丢弃曾让"订单保存不上"无从排查，2026-11-06）
+                BmfTown.LOGGER.warn("[BmfTown][炼金] {} 下单被拒（目录中无此键：{}）",
+                        resident.getName().getString(), payload.orderKey());
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.workshop.order_invalid"), true);
+                return;
+            }
+            // 秘传门禁：未解锁的秘传订单可见拒绝（2026-11-07 修——之前目录与门禁解耦后
+            // resolve 能过、canUse 过不了，NPC 会原地发呆）
+            String modStr = payload.orderKey().split("\\|")[2];
+            String secretId = com.bmf.bmfstown.alchemy.ModPotions.secretIdOf(
+                    recipe.finalPotion(modStr));
+            if (secretId != null
+                    && !com.bmf.bmfstown.alchemy.AlchemyGate.isOpen(secretId)) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.alchemy.secret_locked"), true);
+                return;
+            }
+            resident.getJobState().setOrderItem(payload.orderKey());
+            // 反查最终产物名做反馈
+            String mod = payload.orderKey().split("\\|")[2];
+            var finalPotion = recipe.finalPotion(mod);
+            var name = finalPotion == null ? payload.orderKey()
+                    : net.minecraft.network.chat.Component.translatable(
+                            net.minecraft.world.item.alchemy.Potion.getName(
+                                    java.util.Optional.of(finalPotion),
+                                    "item.minecraft.potion.effect.")).getString();
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.workshop.order_set", name), false);
         });
     }
 
@@ -1075,7 +1228,11 @@ public final class ModNetworking {
                     payload.product());
             if (product == net.minecraft.world.item.Items.AIR
                     || !com.bmf.bmfstown.entity.profile.WorkshopCrafts.isWhitelisted(product)) {
-                return; // 非白名单产物：静默丢弃
+                BmfTown.LOGGER.warn("[BmfTown][工人] {} 下单被拒（非白名单产物：{}）",
+                        resident.getName().getString(), payload.product());
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.workshop.order_invalid"), true);
+                return;
             }
             if (!com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
                     resident.getArchive(), product)) {
@@ -1089,6 +1246,8 @@ public final class ModNetworking {
             if (craft == null) {
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.workshop.locked"), true);
+                BmfTown.LOGGER.warn("[BmfTown][工人] {} 下单被拒（白名单内无配方：{}）",
+                        resident.getName().getString(), payload.product());
                 return; // 白名单里但没有对应配方（异常数据）：拒绝
             }
             resident.getJobState().setOrderItem(payload.product());
@@ -1492,6 +1651,12 @@ public final class ModNetworking {
                 ModNetworking::handleHandbookRegisterSession);
         registrar.playToServer(WorkerOrderPayload.TYPE, WorkerOrderPayload.STREAM_CODEC,
                 ModNetworking::handleWorkerOrder);
+        registrar.playToServer(AlchemistOrderPayload.TYPE, AlchemistOrderPayload.STREAM_CODEC,
+                ModNetworking::handleAlchemistOrder);
+        registrar.playToClient(AlchemyCatalogSyncPayload.TYPE, AlchemyCatalogSyncPayload.STREAM_CODEC,
+                ModNetworking::handleAlchemyCatalogSync);
+        registrar.playToServer(AlchemyCatalogRequestPayload.TYPE, AlchemyCatalogRequestPayload.STREAM_CODEC,
+                ModNetworking::handleAlchemyCatalogRequest);
         registrar.playToServer(WorkerTogglePayload.TYPE, WorkerTogglePayload.STREAM_CODEC,
                 ModNetworking::handleWorkerToggle);
         registrar.playToServer(CensusRequestPayload.TYPE, CensusRequestPayload.STREAM_CODEC,

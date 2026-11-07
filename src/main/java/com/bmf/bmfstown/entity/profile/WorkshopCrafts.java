@@ -169,8 +169,17 @@ public final class WorkshopCrafts {
         }
 
         public static Item item(String id) {
-            return net.minecraft.core.registries.BuiltInRegistries.ITEM
-                    .get(ResourceLocation.parse(id));
+            // 防御：非物品注册名（如炼金订单键 "alch|..."，含 '|' 非法字符）一律回
+            // AIR——这曾经是首测崩溃源（跨职业订单键流进工人解析端，2026-11-06）
+            if (id == null || id.isEmpty() || id.contains("|")) {
+                return net.minecraft.world.item.Items.AIR;
+            }
+            try {
+                return net.minecraft.core.registries.BuiltInRegistries.ITEM
+                        .get(ResourceLocation.parse(id));
+            } catch (Exception e) {
+                return net.minecraft.world.item.Items.AIR;
+            }
         }
     }
 }

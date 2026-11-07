@@ -50,6 +50,7 @@ public class BmfTown {
         // 会引用它。实体实例化远晚于 mod 构造，但保持这个顺序更安全。
         ModDataSerializers.register(modEventBus);
         ModDataComponents.register(modEventBus);
+        com.bmf.bmfstown.alchemy.ModPotions.POTIONS.register(modEventBus); // 秘传药水（v0.12 炼金）
         com.bmf.bmfstown.unlock.UnlockBootstrap.register(); // 解锁条目登记（职业锁定等）
         com.bmf.bmfstown.book.SpecialBookRegistry.bootstrap(); // 特殊书首批书目登记（奖池/习得效果）
         com.bmf.bmfstown.block.ModBlocks.register(modEventBus);

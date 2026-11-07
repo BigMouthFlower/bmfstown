@@ -420,6 +420,9 @@ public class ResidentMenu extends AbstractContainerMenu {
                 return true;
             }
             this.resident.getIdentity().setProfession(type);
+            // 订单跟着职业走：换职业一律作废当前订单（键格式不同职业互不兼容，
+            // 且残留订单会让新职业的解析端出错——2026-11-06 崩溃修复）
+            this.resident.getJobState().setOrderItem("");
             this.resident.syncClient();
             // 换成非战士职业 → 战士工作模式一并作废（岗位跟着职业走）
             if (type != ProfessionType.WARRIOR) {
@@ -892,14 +895,22 @@ public class ResidentMenu extends AbstractContainerMenu {
      * tooltip、点击分发四条路径上都会检查它，"只不画"防不住隐形点击
      * （见切页注释）。
      */
-    private static class PlayerInvSlot extends Slot {
+    private class PlayerInvSlot extends Slot {
         PlayerInvSlot(Container container, int index, int x, int y) {
             super(container, index, x, y);
         }
 
         @Override
         public boolean isActive() {
-            return CLIENT_PAGE == PAGE_INFO || CLIENT_PAGE == PAGE_WORK;
+            // 工作页仅学者显示背包（学者卡点书要经玩家背包转交他人——用户 11-06 定稿）；
+            // 工人/炼金的选择弹层会与背包重叠，非学者一律收起
+            if (CLIENT_PAGE == PAGE_INFO) {
+                return true;
+            }
+            return CLIENT_PAGE == PAGE_WORK
+                    && ResidentMenu.this.resident != null
+                    && ResidentMenu.this.resident.getProfession()
+                            == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR;
         }
     }
 

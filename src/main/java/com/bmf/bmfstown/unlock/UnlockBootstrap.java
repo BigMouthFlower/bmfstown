@@ -23,6 +23,19 @@ public final class UnlockBootstrap {
                 List.of(), "unlock.bmfstown.job.scholar.name"));
     }
 
+    static {
+        // ---- 秘传配方（v0.12 炼金，决策 #25）：统一走解锁框架——
+        //      手动型定义（配方书写成时 ScholarGoal 显式 unlockIfNew → 统一公告），
+        //      广播类型 = "隐藏配方"（msg.bmfstown.unlock.type.alchemy_recipe）。
+        //      定义表当前无 UI 消费者，不会污染解锁树页面。 ----
+        String[] secrets = {"haste", "resistance", "absorption", "health_boost",
+                "luck", "wither", "blindness", "darkness", "nausea", "mining_fatigue"};
+        for (String id : secrets) {
+            UnlockRegistry.define(UnlockDefinition.manual("unlock.alchemy." + id,
+                    "alchemy_recipe", List.of(), "unlock.bmfstown.alchemy." + id + ".name"));
+        }
+    }
+
     private UnlockBootstrap() {
     }
 }

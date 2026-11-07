@@ -77,6 +77,18 @@ public final class ResidentCommands {
                                         EntityArgument.getEntities(ctx, "targets"),
                                         StringArgumentType.getString(ctx, "book"))))));
 
+        // ---- /bmfstown alchorder <目标> <药水注册名> [none|long|strong|clear] ----
+        // 炼金调试：给炼金术士下酿造订单（面板订单 UI 实装前的测试通路）。
+        root.then(Commands.literal("alchorder")
+                .then(Commands.argument("targets", EntityArgument.entities())
+                        .then(Commands.argument("potion", StringArgumentType.string())
+                                .then(Commands.argument("mod", StringArgumentType.word())
+                                        .executes(ctx -> setAlchemyOrder(
+                                                ctx,
+                                                EntityArgument.getEntities(ctx, "targets"),
+                                                StringArgumentType.getString(ctx, "potion"),
+                                                StringArgumentType.getString(ctx, "mod")))))));
+
         // ---- /bmfstown mood <目标> <0-100> ----
         root.then(Commands.literal("mood")
                 .then(Commands.argument("targets", EntityArgument.entities())
@@ -294,8 +306,67 @@ public final class ResidentCommands {
      * 直接学会一本特殊书（调试）：标记已学 + 装备——装备已学即效果生效。
      * 书 id 必须在特殊书登记表里（如 wulun / sunzi / shanjing）。
      */
-    private static int learnBook(CommandContext<CommandSourceStack> ctx,
-                                 Collection<? extends Entity> targets, String bookId) {
+    /** 炼金调试：给炼金术士下/清酿造订单（面板订单 UI 实装前的测试通路）。 */
+    private static int setAlchemyOrder(CommandContext<CommandSourceStack> ctx,
+                                       Collection<? extends Entity> targets, String potionId,
+                                       String mod) {
+        if (!(ctx.getSource().getLevel() instanceof net.minecraft.server.level.ServerLevel level)) {
+            return 0;
+        }
+        if ("clear".equalsIgnoreCase(mod)) {
+            int changed = 0;
+            for (Entity entity : targets) {
+                if (entity instanceof Resident resident) {
+                    resident.getJobState().setOrderItem("");
+                    resident.syncClient();
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                            resident.getName().getString() + " 订单已清空"), false);
+                    changed++;
+                }
+            }
+            return changed;
+        }
+        // 药水注册名（允许省略命名空间）
+        var id = potionId.contains(":")
+                ? net.minecraft.resources.ResourceLocation.parse(potionId)
+                : net.minecraft.resources.ResourceLocation.withDefaultNamespace(potionId);
+        var potion = net.minecraft.core.registries.BuiltInRegistries.POTION
+                .getHolder(id).orElse(null);
+        if (potion == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "没有这个药水：" + id + "（如 minecraft:swiftness）"));
+            return 0;
+        }
+        if (!mod.equals("none") && !mod.equals("long") && !mod.equals("strong")) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "修饰必须是 none / long / strong"));
+            return 0;
+        }
+        // 目录校验：该药水可酿且变体存在
+        var recipe = com.bmf.bmfstown.alchemy.AlchemyCatalog.catalog(level).stream()
+                .filter(r -> r.base().value() == potion.value())
+                .findFirst().orElse(null);
+        if (recipe == null || recipe.finalPotion(mod) == null) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "这个药水/变体不可酿：" + id + " × " + mod));
+            return 0;
+        }
+        String orderKey = com.bmf.bmfstown.alchemy.AlchemyCatalog.orderKey(potion, mod);
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (entity instanceof Resident resident
+                    && resident.getProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+                resident.getJobState().setOrderItem(orderKey);
+                resident.syncClient();
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        resident.getName().getString() + " 订单已设：" + orderKey), false);
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    private static int learnBook(CommandContext<CommandSourceStack> ctx,                                 Collection<? extends Entity> targets, String bookId) {
         var book = com.bmf.bmfstown.book.SpecialBookRegistry.byId(bookId);
         if (book == null) {
             ctx.getSource().sendFailure(Component.literal(

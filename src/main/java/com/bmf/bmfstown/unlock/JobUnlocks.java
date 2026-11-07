@@ -47,6 +47,7 @@ public final class JobUnlocks {
             ProfessionType type) {
         return type == ProfessionType.WARRIOR || type == ProfessionType.NONE
                 || type == ProfessionType.SCHOLAR
+                || type == ProfessionType.ALCHEMIST
                 || (townId != null && UnlockState.get(level).isUnlocked(townId, idOf(type)));
     }
 
@@ -54,9 +55,11 @@ public final class JobUnlocks {
             @Nullable ProfessionType current) {
         List<ProfessionType> out = new ArrayList<>();
         for (ProfessionType type : ProfessionType.values()) {
-            // 无业（NONE）/战士/学者（v0.11 用户定稿：学者默认可选不设解锁）永远可选
+            // 无业（NONE）/战士/学者（v0.11 用户定稿）/炼金术士（v0.12 先跑通机制，解锁链后接）
+            // 永远可选
             if (type == current || type == ProfessionType.WARRIOR
                     || type == ProfessionType.NONE || type == ProfessionType.SCHOLAR
+                    || type == ProfessionType.ALCHEMIST
                     || unlocked.test(type)) {
                 out.add(type);
             }

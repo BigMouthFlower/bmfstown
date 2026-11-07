@@ -54,7 +54,14 @@ public enum ProfessionType implements StringRepresentable {
      * 50% 卡点机制见 {@code ScholarGoal}；工作方块（讲台）自动认领，
      * 无需绑定三件套。
      */
-    SCHOLAR("scholar", "学者", 10);
+    SCHOLAR("scholar", "学者", 10),
+
+    /**
+     * 炼金术士（v0.12 设计定稿，.ai/designs/alchemist.md）：白天在酿造台（镇内登记
+     * 酿造台岗位池）真酿造药水——放料→原版酿造 tick→取料打纯度+手艺补第 4 瓶。
+     * 秘传配方走隐藏配方书门禁（决策 #25/#27）；Perk 树内容留空待用户定稿。
+     */
+    ALCHEMIST("alchemist", "炼金术士", 10);
 
     private final String name;
     private final String zhName;
@@ -101,6 +108,7 @@ public enum ProfessionType implements StringRepresentable {
             case WORKER -> SkillType.CRAFTING;
             case BOOKKEEPER -> SkillType.BOOKKEEPING;
             case SCHOLAR -> SkillType.SCHOLARSHIP;
+            case ALCHEMIST -> SkillType.CRAFTING;
             default -> null;
         };
     }

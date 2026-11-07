@@ -784,10 +784,13 @@ public class WorkerGoal extends Goal {
                     continue;
                 }
                 int take = Math.min(want, stack.getCount());
-                chest.removeItem(i, take);
+                // 同炼金修复：removeItem 返回值 = 拆出的那一份（活引用 copy 在取整槽时
+                // 会拿到 EMPTY 单例，物品凭空消失——工人料 64 堆叠很少触发所以此前未暴露）
+                ItemStack grab = chest.removeItem(i, take);
+                if (grab.isEmpty()) {
+                    continue;
+                }
                 want -= take;
-                ItemStack grab = stack.copy();
-                grab.setCount(take);
                 ItemStack leftover = this.resident.getInventory().addItem(grab);
                 if (!leftover.isEmpty()) {
                     storeItem(chest, leftover);

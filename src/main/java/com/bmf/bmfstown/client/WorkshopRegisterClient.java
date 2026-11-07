@@ -106,6 +106,12 @@ public final class WorkshopRegisterClient {
                     COLOR_STATION[0], COLOR_STATION[1], COLOR_STATION[2],
                     0.9F, ZoneOutliner.EDGE_WIDTH);
         }
+        // 酿造台岗位（炼金）——同为岗位紫（用户 11-06：不能跟容器一个颜色）
+        for (Long p : town.workshopBrewStations()) {
+            ZoneOutliner.renderEdges(pose.last(), edges, blockBox(BlockPos.of(p)),
+                    COLOR_STATION[0], COLOR_STATION[1], COLOR_STATION[2],
+                    0.9F, ZoneOutliner.EDGE_WIDTH);
+        }
         buffers.endBatch(OutlineRenderTypes.edge());
 
         // 准星候选：容器/工作台类方块画框（镇内白=可登记，镇外暗红=这里无效）
@@ -170,10 +176,14 @@ public final class WorkshopRegisterClient {
     @Nullable
     private static float[] candidateKind(Minecraft mc, BlockPos pos) {
         BlockState state = mc.level.getBlockState(pos);
+        // 岗位判定在前：酿造台本身是 Container，先判容器会把它染成容器黄
+        if (state.is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE)
+                || state.is(net.minecraft.world.level.block.Blocks.BREWING_STAND)) {
+            return COLOR_STATION;
+        }
         if (mc.level.getBlockEntity(pos) instanceof net.minecraft.world.Container) {
             return COLOR_CONTAINER;
         }
-        return state.is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE)
-                ? COLOR_STATION : null;
+        return null;
     }
 }

@@ -41,7 +41,8 @@ public final class TownHandbookClient {
     public record TownView(UUID id, String name, String dimension, String owner,
                            BlockPos min, BlockPos max, List<ZoneView> zones,
                            List<ZoneView> blocks, List<MemberView> members,
-                           List<Long> workshopContainers, List<Long> workshopStations) {
+                           List<Long> workshopContainers, List<Long> workshopStations,
+                           List<Long> workshopBrewStations) {
     }
 
     /** 一条居民展示数据（手册"居民列表"用）。 */
@@ -150,7 +151,7 @@ public final class TownHandbookClient {
             }
             String[] f = line.split("\\|", -1);
             try {
-                if (f[0].equals("T") && (f.length == 7 || f.length == 9)) {
+                if (f[0].equals("T") && (f.length == 7 || f.length == 9 || f.length == 10)) {
                     Builder b = new Builder(
                             UUID.fromString(f[1]), f[2], f[3], f[4],
                             parsePos(f[5]), parsePos(f[6]));
@@ -158,6 +159,9 @@ public final class TownHandbookClient {
                     if (f.length >= 9) {
                         b.workshopContainers.addAll(parseLongs(f[7]));
                         b.workshopStations.addAll(parseLongs(f[8]));
+                    }
+                    if (f.length >= 10) {
+                        b.workshopBrewStations.addAll(parseLongs(f[9]));
                     }
                     byId.put(b.id, b);
                     order.add(b);
@@ -236,6 +240,7 @@ public final class TownHandbookClient {
         final List<MemberView> members = new ArrayList<>();
         final List<Long> workshopContainers = new ArrayList<>();
         final List<Long> workshopStations = new ArrayList<>();
+        final List<Long> workshopBrewStations = new ArrayList<>();
 
         Builder(UUID id, String name, String dimension, String owner,
                 BlockPos min, BlockPos max) {
@@ -250,7 +255,8 @@ public final class TownHandbookClient {
         TownView build() {
             return new TownView(id, name, dimension, owner, min, max,
                     List.copyOf(zones), List.copyOf(blocks), List.copyOf(members),
-                    List.copyOf(workshopContainers), List.copyOf(workshopStations));
+                    List.copyOf(workshopContainers), List.copyOf(workshopStations),
+                    List.copyOf(workshopBrewStations));
         }
     }
 
