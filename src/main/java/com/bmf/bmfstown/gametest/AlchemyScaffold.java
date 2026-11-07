@@ -120,6 +120,7 @@ public final class AlchemyScaffold {
         UUID townId = setup.town().id();
         resident.getIdentity().setProfession(ProfessionType.ALCHEMIST);
         resident.getIdentity().setTownId(townId);
+        resident.syncClient(); // getProfession()/getArchive() 读同步快照，改完必须刷新
         resident.getJobState().setOrderItem(orderKey);
         setup.residents().add(resident);
         return resident;
