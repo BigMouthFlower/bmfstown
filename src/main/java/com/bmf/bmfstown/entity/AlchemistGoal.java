@@ -1514,10 +1514,11 @@ public class AlchemistGoal extends Goal {
                 .equals(level.dimension().location().toString());
     }
 
-    private static boolean inWorkHours(ServerLevel level) {
+    private boolean inWorkHours(ServerLevel level) {
         long t = level.getDayTime() % 24000L;
-        int start = Config.CRAFT_WORK_START.get();
-        int end = Config.CRAFT_WORK_END.get();
+        int[] window = this.resident.workWindow(); // v0.14：边界带晨夜轴个人偏移
+        int start = window[0];
+        int end = window[1];
         return start <= end ? (t >= start && t < end) : (t >= start || t < end);
     }
 

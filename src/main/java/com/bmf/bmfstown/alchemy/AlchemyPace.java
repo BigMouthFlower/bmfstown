@@ -47,7 +47,9 @@ public final class AlchemyPace {
             return 1.0D;
         }
         double eff = EfficiencyMath.total(
-                r.getGrowth().skillXp(SkillType.CRAFTING), r.getStatus().mood(), false);
+                r.getGrowth().skillXp(SkillType.CRAFTING), r.getStatus().mood(), false,
+                r.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT),
+                r.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
         eff *= 1.0D + r.learnedEffectBonus(SpecialBookEffect.Type.CRAFT_SPEED) / 100.0D;
         if (r.hasPerk(Perks.NODE_AL_ADEPT, "quickfire")) {
             eff *= 1.3D;

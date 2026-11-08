@@ -3,7 +3,8 @@ package com.bmf.bmfstown.entity.domain;
 import com.bmf.bmfstown.config.Config;
 import com.bmf.bmfstown.entity.Resident;
 import com.bmf.bmfstown.entity.WorkMode;
-import com.bmf.bmfstown.entity.profile.PersonalityType;
+import com.bmf.bmfstown.entity.profile.PersonalityAxis;
+import com.bmf.bmfstown.entity.profile.PersonalityFormulas;
 import com.bmf.bmfstown.entity.profile.MobPref;
 import com.bmf.bmfstown.entity.profile.PrefAnimal;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
@@ -13,7 +14,6 @@ import com.bmf.bmfstown.entity.profile.WeatherPref;
 import com.bmf.bmfstown.town.TownZone;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -55,12 +55,17 @@ import java.util.Map;
  *
  * <h2>限流语义</h2>
  * <ul>
- *   <li>按天计数：吃喜（2 次）、动物/音乐（1 次）、好战击杀（2 次）——每日结算清零；</li>
+ *   <li>按天计数：吃喜（2 次）、动物/音乐（1 次）、好战击杀（上限可配）——每日结算清零；</li>
  *   <li>按 dayTime 间隔：挨饿（半天）、天气（半天且天气变了才触发）、
- *       生物厌恶（5 分钟，无日上限）、胆小（半天）；</li>
- *   <li>每日结算链：职业喜欢、攀比护甲、好战无杀、胆小平安、爱热闹、
- *       乐观/悲观、住宅材质/颜色扫描——一天一次，各走 ±3。</li>
+ *       生物厌恶（5 分钟，无日上限）、勇气遇敌（半天）；</li>
+ *   <li>每日结算链：职业喜欢、好战无杀、勇气平安、社交扎堆/独处、
+ *       住宅材质/颜色扫描——一天一次，各走 ±3 基准。</li>
  * </ul>
+ *
+ * <h2>性格轴（v0.14 多轴改版，决策 #44）</h2>
+ * 旧 9 条离散词条替换为 10 条 0~100 连续轴（{@link PersonalityAxis}），
+ * 公式统一在 {@link PersonalityFormulas}：轴值先算事件基准，再过心态乘区
+ * （好事×(1+c)/坏事×(1−c)，可越过 ±3）。轴值落 NBT "Axes"。
  */
 public final class Status {
 
@@ -125,34 +130,26 @@ public final class Status {
         WEATHER_NEUTRAL(TONE_NEUTRAL),
         /** 感知：讨厌的生物在附近出没（5 分钟 1 次，无日上限）。 */
         MOB_DISLIKED(TONE_NEGATIVE),
-        /** 攀比：穿着钻石/下界合金护甲。 */
-        ARMOR_HIGH(TONE_POSITIVE),
-        /** 攀比：没护甲或只有皮/铁/锁甲。 */
-        ARMOR_NONE(TONE_NEGATIVE),
-        /** 攀比：金护甲——中性事件，不动心情。 */
-        ARMOR_GOLD(TONE_NEUTRAL),
-        /** 好战：击杀生物（每天 2 次）。 */
+        /** 好战：击杀生物（每天上限见配置）。 */
         KILL(TONE_POSITIVE),
         /** 好战：连续多天没击杀。 */
         KILL_NONE(TONE_NEGATIVE),
-        /** 胆小：周围有敌对生物。 */
+        /** 勇气：周围有敌对生物。 */
         TIMID_SCARED(TONE_NEGATIVE),
-        /** 胆小：一整天平安无事。 */
+        /** 勇气：一整天平安无事（仅轴值<50 生效）。 */
         TIMID_SAFE(TONE_POSITIVE),
-        /** 爱热闹：身边有 2 个以上同伴。 */
-        GREGARIOUS_CROWD(TONE_POSITIVE),
-        /** 爱热闹：身边一个同伴都没有。 */
-        GREGARIOUS_LONELY(TONE_NEGATIVE),
-        /** 贪吃：吃到东西了（每天 1 次，不管爱不爱吃）。 */
-        GLUTTON_FED(TONE_POSITIVE),
-        /** 乐观：每日固定增量。 */
-        OPTIMIST_DAILY(TONE_POSITIVE),
-        /** 悲观：每日固定减量。 */
-        PESSIMIST_DAILY(TONE_NEGATIVE),
-        /** 和平主义：附近有生物死亡（含自己杀的）。 */
-        PACIFIST_DEATH(TONE_NEGATIVE),
-        /** 爆炸主义：附近发生爆炸。 */
-        EXPLOSION_LOVED(TONE_POSITIVE),
+        /** 社交：身边有 2 个以上同伴（对冲型，色调随轴值）。 */
+        SOCIAL_CROWD(TONE_POSITIVE),
+        /** 社交：身边一个同伴都没有（对冲型，色调随轴值）。 */
+        SOCIAL_LONELY(TONE_NEGATIVE),
+        /** 暴力：附近有生物死亡（色调随轴值：嗜血+仁慈−）。 */
+        DEATH_NEARBY(TONE_NEGATIVE),
+        /** 暴力：附近发生爆炸（烟花除外；色调随轴值）。 */
+        EXPLOSION_NEARBY(TONE_POSITIVE),
+        /** 暴力：附近有生物繁殖（色调随轴值）。 */
+        BIRTH_NEARBY(TONE_POSITIVE),
+        /** 嫉妒：看到玩家的好装备（仅轴值>80 掉心情）。 */
+        GEAR_ENVY(TONE_NEGATIVE),
         /** 没睡好：昨晚整夜没躺过床，每多一夜多扣一次。 */
         NO_SLEEP(TONE_NEGATIVE);
 
@@ -232,6 +229,12 @@ public final class Status {
 
     private int hunger = MAX_HUNGER;
     private int mood = Config.INITIAL_MOOD.get();
+
+    /**
+     * 性格轴值（v0.14 多轴改版）：10 条轴各一个 0~100 的值，null = 尚未抽取
+     * （出生懒生成 / 旧档迁移按用户拍板随机重抽）。持久化在 "Axes" int 数组。
+     */
+    private int[] axes = null;
 
     // ---- 心情结算游标 ----
 
@@ -321,6 +324,43 @@ public final class Status {
     }
 
     // ==========================================================
+    //  性格轴（v0.14 多轴改版）
+    // ==========================================================
+
+    /**
+     * 读一条轴的值。首次调用时懒生成（出生/旧档迁移 = 随机重抽，用户拍板）。
+     * 调用方必须传服务端 level；事件入口都满足。
+     */
+    public int axis(Resident resident, ServerLevel level, PersonalityAxis axis) {
+        ensureAxes(resident);
+        return this.axes[axis.ordinal()];
+    }
+
+    /** 全轴快照（ResidentSnapshot 打包用；未生成返回 null）。 */
+    public int[] axesView() {
+        return this.axes == null ? null : this.axes.clone();
+    }
+
+    /** 调试/测试用：直接设轴值（钳制 0~100）；未生成时先随机补全。 */
+    public void setAxis(PersonalityAxis axis, int value) {
+        ensureAxesRaw();
+        this.axes[axis.ordinal()] = PersonalityAxis.clampAxis(value);
+    }
+
+    private void ensureAxes(Resident resident) {
+        if (this.axes == null) {
+            this.axes = PersonalityAxis.rollAll(resident.getRandom());
+        }
+    }
+
+    /** 无 RandomSource 场景（测试注入）的兜底生成。 */
+    private void ensureAxesRaw() {
+        if (this.axes == null) {
+            this.axes = PersonalityAxis.rollAll(RandomSource.create());
+        }
+    }
+
+    // ==========================================================
     //  写（调用方负责随后 resident.syncClient()；引擎内部已带）
     // ==========================================================
 
@@ -395,19 +435,12 @@ public final class Status {
     }
 
     /**
-     * 成功进食了（不管是不是爱吃的）：刷新挨饿递增基准日 + 贪吃性格加分。
+     * 成功进食了（不管是不是爱吃的）：刷新挨饿递增基准日。
+     * 旧"贪吃"词条的进食加分已随多轴改版降级到喜好层（决策 #44，二期承接）。
      */
     public void noteFed(Resident resident, ServerLevel level) {
         ensureGenerated(resident, level);
         this.lastFedDay = currentDay(level);
-        if (resident.getPrefs().personality() == PersonalityType.GLUTTON) {
-            EventType type = EventType.GLUTTON_FED;
-            if (this.eventCountToday.getOrDefault(type, 0) < 1) {
-                this.eventCountToday.put(type, 1);
-                this.applyClamped(resident, Config.MOOD_TRAIT_VALUE.get());
-                addThought(resident, level, type);
-            }
-        }
     }
 
     /**
@@ -438,9 +471,6 @@ public final class Status {
             delta = base;
             key = "mood.bmfstown.thought.starving_1";
         }
-        if (resident.getPrefs().personality() == PersonalityType.GLUTTON) {
-            delta = delta * Config.MOOD_TRAIT_GLUTTON_STARVE_PERCENT.get() / 100;
-        }
         // 铭记修正：身上有"挨饿"的永久记忆，旧病复发额外更痛（用户定稿 +10）
         if (resident.getMemoryState().hasFirmMemory(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING)) {
             delta += Config.MOOD_MEMORY_PENALTY.get();
@@ -461,56 +491,102 @@ public final class Status {
     }
 
     /**
-     * 好战性格：击杀生物。每天 2 次；同时刷新 lastKillDay。
+     * 好战轴：击杀生物。基准 = base·(v−50)/50（仅 v>50 生效），再过心态乘区。
+     * 每天上限见配置；配额用完也刷新 lastKillDay（防连杀意外续上无杀计时）。
      */
     public void noteKill(Resident resident, ServerLevel level) {
         ensureGenerated(resident, level);
-        if (resident.getPrefs().personality() != PersonalityType.WARLIKE) {
-            return;
+        this.lastKillDay = currentDay(level);
+        double base = PersonalityFormulas.killBase(
+                this.axis(resident, level, PersonalityAxis.WARLIKE), Config.MOOD_TRAIT_VALUE.get());
+        if (base == 0) {
+            return; // 中位以下杀怪无感
         }
         EventType type = EventType.KILL;
         int limit = Config.MOOD_TRAIT_KILL_DAILY_LIMIT.get();
         if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
-            // 配额用完也刷新"今天杀过"——否则连杀会意外续上 5 天无杀的计时器
-            this.lastKillDay = currentDay(level);
             return;
         }
         this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
-        this.lastKillDay = currentDay(level);
-        this.applyClamped(resident, Config.MOOD_TRAIT_VALUE.get());
+        this.applyClamped(resident, resolveHope(resident, level, base));
         addThought(resident, level, type);
     }
 
-    /** 和平主义者：附近有生物死亡 → 负面（每天 5 次）。任何死亡都算。 */
+    /**
+     * 暴力轴：附近有生物死亡。基准 = base·(v−50)/50 线性过零——
+     * 仁慈（v<50）难受、嗜血（v>50）亢奋、中位无感（2026-11-08 定稿）。
+     * 任何死亡都算（自己杀的也算），死者本人除外。
+     */
     public void noteDeathNearby(Resident resident, ServerLevel level) {
         ensureGenerated(resident, level);
-        if (resident.getPrefs().personality() != PersonalityType.PACIFIST) {
+        double base = PersonalityFormulas.violenceBase(
+                this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
+        publishViolenceEvent(resident, level, EventType.DEATH_NEARBY, base,
+                Config.AXIS_DEATH_DAILY_LIMIT.get());
+    }
+
+    /**
+     * 暴力轴：附近发生爆炸（烟花不算爆炸源）。与死亡同一条线性过零曲线。
+     */
+    public void noteExplosionNearby(Resident resident, ServerLevel level) {
+        ensureGenerated(resident, level);
+        double base = PersonalityFormulas.violenceBase(
+                this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
+        publishViolenceEvent(resident, level, EventType.EXPLOSION_NEARBY, base,
+                Config.AXIS_EXPLOSION_DAILY_LIMIT.get());
+    }
+
+    /**
+     * 暴力轴：附近有生物繁殖（新生命诞生）。与死亡镜像：仁慈欣喜、嗜血嫌吵。
+     */
+    public void noteBirthNearby(Resident resident, ServerLevel level) {
+        ensureGenerated(resident, level);
+        double base = PersonalityFormulas.birthBase(
+                this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
+        publishViolenceEvent(resident, level, EventType.BIRTH_NEARBY, base,
+                Config.AXIS_BIRTH_DAILY_LIMIT.get());
+    }
+
+    /** 暴力轴三类事件的公共体：节流 → 心态乘区 → 动态色调想法（正负随轴值）。 */
+    private void publishViolenceEvent(Resident resident, ServerLevel level,
+                                      EventType type, double base, int dailyLimit) {
+        if (base == 0) {
+            return; // 中位镇民对生死无感
+        }
+        if (this.eventCountToday.getOrDefault(type, 0) >= dailyLimit) {
             return;
         }
-        EventType type = EventType.PACIFIST_DEATH;
-        int limit = Config.MOOD_TRAIT_PACIFIST_DAILY_LIMIT.get();
+        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
+        this.applyClamped(resident, resolveHope(resident, level, base));
+        int tone = base > 0 ? TONE_POSITIVE : TONE_NEGATIVE;
+        addThought(level, tone, "mood.bmfstown.thought." + keyOf(type),
+                hopeMarker(resident, level, tone));
+    }
+
+    /**
+     * 嫉妒轴：看到玩家的好装备（GearJudgeHandler 判定后回调）。
+     * 心情惩罚仅 v>80 生效（v=80→0，v=100→满扣 −base），每天上限见配置。
+     */
+    public void notePlayerGear(Resident resident, ServerLevel level) {
+        ensureGenerated(resident, level);
+        double base = PersonalityFormulas.gearMoodBase(
+                this.axis(resident, level, PersonalityAxis.ENVY), Config.MOOD_TRAIT_VALUE.get());
+        if (base == 0) {
+            return;
+        }
+        EventType type = EventType.GEAR_ENVY;
+        int limit = Config.AXIS_GEAR_MOOD_DAILY_LIMIT.get();
         if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
             return;
         }
         this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
-        this.applyClamped(resident, -Config.MOOD_TRAIT_VALUE.get());
+        this.applyClamped(resident, resolveHope(resident, level, base));
         addThought(resident, level, type);
     }
 
-    /** 爆炸主义者：附近发生爆炸 → +3（每天 1 次）。 */
-    public void noteExplosionNearby(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
-        if (resident.getPrefs().personality() != PersonalityType.EXPLOSION_LOVER) {
-            return;
-        }
-        EventType type = EventType.EXPLOSION_LOVED;
-        int limit = Config.MOOD_TRAIT_EXPLOSION_DAILY_LIMIT.get();
-        if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
-            return;
-        }
-        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
-        this.applyClamped(resident, Config.MOOD_TRAIT_VALUE.get());
-        addThought(resident, level, type);
+    /** 心态乘区便捷封装：基准 → HOPE 轴修正 → 取整。 */
+    private int resolveHope(Resident resident, ServerLevel level, double base) {
+        return PersonalityFormulas.resolve(this.axis(resident, level, PersonalityAxis.HOPE), base);
     }
 
     // ==========================================================
@@ -532,11 +608,9 @@ public final class Status {
         ensureGenerated(resident, level);
 
         settleProfession(resident, level);
-        settleEnvy(resident, level);
         settleWarlike(resident, level);
-        settleTimid(resident, level);
-        settleGregarious(resident, level);
-        settleDisposition(resident, level);
+        settleCourageSafe(resident, level);
+        settleSocial(resident, level);
         settleHomeMaterials(resident, level);
         settleSleep(resident, level);
         settleMemory(resident, level);
@@ -555,68 +629,39 @@ public final class Status {
         }
     }
 
-    /** 结算 2：攀比——护甲品质分档。判定走注册名 contains。 */
-    private void settleEnvy(Resident resident, ServerLevel level) {
-        if (resident.getPrefs().personality() != PersonalityType.ENVY) {
-            return;
-        }
-        boolean high = false;
-        boolean gold = false;
-        for (EquipmentSlot slot : new EquipmentSlot[]{
-                EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
-            ItemStack stack = resident.getItemBySlot(slot);
-            if (stack.isEmpty()) {
-                continue;
-            }
-            String path = BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath();
-            if (path.contains("diamond") || path.contains("netherite")) {
-                high = true;
-            } else if (path.contains("gold")) {
-                gold = true;
-            }
-        }
-        if (high) {
-            this.applyClamped(resident, Config.MOOD_TRAIT_VALUE.get());
-            addThought(resident, level, EventType.ARMOR_HIGH);
-        } else if (gold) {
-            addThought(resident, level, EventType.ARMOR_GOLD);
-        } else {
-            this.applyClamped(resident, -Config.MOOD_TRAIT_VALUE.get());
-            addThought(resident, level, EventType.ARMOR_NONE);
-        }
-    }
-
-    /** 结算 3：好战——连续 N 天没击杀生物 → 负面。天数口径用绝对天。 */
+    /** 结算 2：好战轴——连续 N 天没击杀生物 → 负面（仅轴值>50 生效）。天数口径用绝对天。 */
     private void settleWarlike(Resident resident, ServerLevel level) {
-        if (resident.getPrefs().personality() != PersonalityType.WARLIKE) {
+        double base = PersonalityFormulas.noKillBase(
+                this.axis(resident, level, PersonalityAxis.WARLIKE), Config.MOOD_TRAIT_VALUE.get());
+        if (base == 0) {
             return;
         }
         int need = Config.MOOD_TRAIT_WARLIKE_NO_KILL_DAYS.get();
         int since = this.lastKillDay < 0 ? Integer.MAX_VALUE : currentDay(level) - this.lastKillDay;
         if (since >= need) {
-            this.applyClamped(resident, -Config.MOOD_TRAIT_VALUE.get());
+            this.applyClamped(resident, resolveHope(resident, level, base));
             addThought(resident, level, EventType.KILL_NONE);
         }
     }
 
-    /** 结算 4：胆小——一整天没被怪物吓过 → 正面。 */
-    private void settleTimid(Resident resident, ServerLevel level) {
-        if (resident.getPrefs().personality() != PersonalityType.TIMID) {
+    /** 结算 3：勇气轴——一整天没被怪物吓过 → 正面（仅轴值<35 生效：能被吓到的人，悬着的心才会放下）。 */
+    private void settleCourageSafe(Resident resident, ServerLevel level) {
+        double base = PersonalityFormulas.safeBase(
+                this.axis(resident, level, PersonalityAxis.COURAGE), Config.MOOD_TRAIT_VALUE.get());
+        if (base == 0) {
             return;
         }
         int since = this.lastTimidScareDay < 0
                 ? Integer.MAX_VALUE : currentDay(level) - this.lastTimidScareDay;
         if (since >= 1) {
-            this.applyClamped(resident, Config.MOOD_TRAIT_VALUE.get());
+            this.applyClamped(resident, resolveHope(resident, level, base));
             addThought(resident, level, EventType.TIMID_SAFE);
         }
     }
 
-    /** 结算 5：爱热闹——身边 2 个以上同伴正面；一个都没有负面。 */
-    private void settleGregarious(Resident resident, ServerLevel level) {
-        if (resident.getPrefs().personality() != PersonalityType.GREGARIOUS) {
-            return;
-        }
+    /** 结算 4：社交轴——扎堆/独处的对冲感受（对冲型，两极各有感受）。 */
+    private void settleSocial(Resident resident, ServerLevel level) {
+        int social = this.axis(resident, level, PersonalityAxis.SOCIAL);
         AABB box = resident.getBoundingBox().inflate(CROWD_RANGE);
         int others = 0;
         for (Resident r : level.getEntitiesOfClass(Resident.class, box)) {
@@ -625,23 +670,17 @@ public final class Status {
             }
         }
         if (others >= 2) {
-            this.applyClamped(resident, Config.MOOD_TRAIT_VALUE.get());
-            addThought(resident, level, EventType.GREGARIOUS_CROWD);
+            double base = PersonalityFormulas.crowdBase(social, Config.MOOD_TRAIT_VALUE.get());
+            if (base != 0) {
+                this.applyClamped(resident, resolveHope(resident, level, base));
+                addThought(resident, level, EventType.SOCIAL_CROWD);
+            }
         } else if (others == 0) {
-            this.applyClamped(resident, -Config.MOOD_TRAIT_VALUE.get());
-            addThought(resident, level, EventType.GREGARIOUS_LONELY);
-        }
-    }
-
-    /** 结算 6：乐观/悲观的每日固定增减。标记在 addThought 里按性格自动打。 */
-    private void settleDisposition(Resident resident, ServerLevel level) {
-        PersonalityType personality = resident.getPrefs().personality();
-        if (personality == PersonalityType.OPTIMIST) {
-            this.applyClamped(resident, Config.MOOD_TRAIT_OPTIMIST.get());
-            addThought(resident, level, EventType.OPTIMIST_DAILY);
-        } else if (personality == PersonalityType.PESSIMIST) {
-            this.applyClamped(resident, -Config.MOOD_TRAIT_PESSIMIST.get());
-            addThought(resident, level, EventType.PESSIMIST_DAILY);
+            double base = PersonalityFormulas.lonelyBase(social, Config.MOOD_TRAIT_VALUE.get());
+            if (base != 0) {
+                this.applyClamped(resident, resolveHope(resident, level, base));
+                addThought(resident, level, EventType.SOCIAL_LONELY);
+            }
         }
     }
 
@@ -789,6 +828,8 @@ public final class Status {
         senseJukebox(resident, level);
         senseHostiles(resident, level);
         senseWeather(resident, level);
+        // 嫉妒轴（v0.14）：评判视野内玩家的随身装备 → 心情/台词
+        com.bmf.bmfstown.entity.GearJudgeHandler.sense(resident, level);
         // 职业线索（v0.10）：看见玩家携带特定物品 → 线索台词 → 解锁职业
         com.bmf.bmfstown.unlock.JobHints.sense(resident, level);
     }
@@ -878,11 +919,15 @@ public final class Status {
             addThought(resident, level, EventType.MOB_DISLIKED);
         }
 
-        if (resident.getPrefs().personality() == PersonalityType.TIMID
+        // 勇气轴·遇敌（用户定稿）：仅胆小（<35）才怕怪——基准 = −base·(35−v)/35，
+        // v=0 封顶恐慌、v≥35 无感（中位以上也怕会吓到太多人）。
+        double scareBase = PersonalityFormulas.scareBase(
+                this.axis(resident, level, PersonalityAxis.COURAGE), Config.MOOD_TRAIT_VALUE.get());
+        if (scareBase != 0
                 && elapsed(now, this.lastTimidAt, Config.MOOD_TRAIT_TIMID_INTERVAL.get())) {
             this.lastTimidAt = now;
             this.lastTimidScareDay = currentDay(level);
-            this.applyClamped(resident, -Config.MOOD_TRAIT_VALUE.get());
+            this.applyClamped(resident, resolveHope(resident, level, scareBase));
             addThought(resident, level, EventType.TIMID_SCARED);
         }
     }
@@ -920,10 +965,12 @@ public final class Status {
      * 对玩家不可见，懒生成还能顺带兼容老存档（读档第一次 tick 补抽）。
      */
     public void ensureGenerated(Resident resident, ServerLevel level) {
+        ensureAxes(resident); // 轴先行：抽"喜欢的职业"要按勇气轴过滤（胆小不喜战士）
         if (resident.getPrefs().generated()) {
+            reconcileLikedProfession(resident);
             return;
         }
-        resident.getPrefs().ensureGenerated(resident.getRandom());
+        resident.getPrefs().ensureGenerated(resident.getRandom(), isCowardly(resident));
         // 性格事件游标以"偏好生成那天"为初始值
         int today = currentDay(level);
         this.lastKillDay = today;
@@ -931,12 +978,38 @@ public final class Status {
     }
 
     /**
-     * 重摇偏好与性格（调试命令 /bmfstown reroll 用）。
+     * 胆小判定（用户定稿）：勇气轴低于还手/逃跑分界线（35）。
+     */
+    private boolean isCowardly(Resident resident) {
+        return resident.axisValue(PersonalityAxis.COURAGE)
+                < (int) PersonalityFormulas.COURAGE_SPLIT_LINE;
+    }
+
+    /**
+     * 喜好职业对账（用户定稿 2026-11-08：胆小不喜战士）：
+     * 旧档（旧规则抽的）/ GATTACA 继承来的"胆小却喜好战士"在此修正。
+     * 抽取路径已被 cowardly 参数拦住，这里只兜存量矛盾；幂等——
+     * 重摇后不再是战士，下次进来直接跳过。
+     */
+    private void reconcileLikedProfession(Resident resident) {
+        if (isCowardly(resident)
+                && resident.getPrefs().likedProfession() == ProfessionType.WARRIOR) {
+            resident.getPrefs().rerollLikedProfession(resident.getRandom(), true);
+        }
+    }
+
+    /**
+     * 重摇偏好与性格轴（调试命令 /bmfstown reroll 用）。
      * lastKillDay/lastTimidScareDay 重置到今天，语义是"今天刚出生"。
      */
     public void reroll(Resident resident, ServerLevel level) {
-        resident.getPrefs().reroll(resident.getRandom());
-        ensureGenerated(resident, level);
+        this.axes = null;
+        ensureAxes(resident); // 轴先行：重摇偏好要按新勇气轴过滤
+        resident.getPrefs().reroll(resident.getRandom(), isCowardly(resident));
+        // 游标重置到今天，语义是"今天刚出生"
+        int today = currentDay(level);
+        this.lastKillDay = today;
+        this.lastTimidScareDay = today;
     }
 
     // ==========================================================
@@ -984,17 +1057,24 @@ public final class Status {
 
     /**
      * 记一条想法。30 条封顶，队满挤掉最老的。
-     * 标记规则：乐观的正面想法打 "+"，悲观的负面想法打 "−"（性格滤镜提示）。
+     * 标记规则（v0.14 轴化）：心态轴值 ≥61 的正面想法打 "+"，≤39 的负面想法打 "−"。
      */
     private void addThought(Resident resident, ServerLevel level, EventType type) {
-        int marker = Thought.MARK_NONE;
-        PersonalityType personality = resident.getPrefs().personality();
-        if (personality == PersonalityType.OPTIMIST && type.tone == TONE_POSITIVE) {
-            marker = Thought.MARK_PLUS;
-        } else if (personality == PersonalityType.PESSIMIST && type.tone == TONE_NEGATIVE) {
-            marker = Thought.MARK_MINUS;
+        int tone = type.tone;
+        addThought(level, tone, "mood.bmfstown.thought." + keyOf(type),
+                hopeMarker(resident, level, tone));
+    }
+
+    /** 心态滤镜标记：乐观端 "+"（正面想法）/ 悲观端 "−"（负面想法）。 */
+    private int hopeMarker(Resident resident, ServerLevel level, int tone) {
+        int hope = this.axis(resident, level, PersonalityAxis.HOPE);
+        if (tone == TONE_POSITIVE && hope >= 61) {
+            return Thought.MARK_PLUS;
         }
-        addThought(level, type.tone, "mood.bmfstown.thought." + keyOf(type), marker);
+        if (tone == TONE_NEGATIVE && hope <= 39) {
+            return Thought.MARK_MINUS;
+        }
+        return Thought.MARK_NONE;
     }
 
     /** EventType → 语言 key 后缀（显式映射，防止 enum 改名静默丢文案）。 */
@@ -1010,20 +1090,16 @@ public final class Status {
             case WEATHER_DISLIKED -> "weather_disliked";
             case WEATHER_NEUTRAL -> "weather_neutral";
             case MOB_DISLIKED -> "mob_disliked";
-            case ARMOR_HIGH -> "armor_high";
-            case ARMOR_NONE -> "armor_none";
-            case ARMOR_GOLD -> "armor_gold";
             case KILL -> "kill";
             case KILL_NONE -> "kill_none";
             case TIMID_SCARED -> "timid_scared";
             case TIMID_SAFE -> "timid_safe";
-            case GREGARIOUS_CROWD -> "gregarious_crowd";
-            case GREGARIOUS_LONELY -> "gregarious_lonely";
-            case GLUTTON_FED -> "glutton_fed";
-            case OPTIMIST_DAILY -> "optimist_daily";
-            case PESSIMIST_DAILY -> "pessimist_daily";
-            case PACIFIST_DEATH -> "pacifist_death";
-            case EXPLOSION_LOVED -> "explosion_loved";
+            case SOCIAL_CROWD -> "social_crowd";
+            case SOCIAL_LONELY -> "social_lonely";
+            case DEATH_NEARBY -> "death_nearby";
+            case EXPLOSION_NEARBY -> "explosion_nearby";
+            case BIRTH_NEARBY -> "birth_nearby";
+            case GEAR_ENVY -> "gear_envy";
             case NO_SLEEP -> "no_sleep";
         };
     }
@@ -1109,6 +1185,10 @@ public final class Status {
         tag.putLong("LastTimidAt", this.lastTimidAt);
         tag.putInt("LastSleptNightK", this.lastSleptNightK);
         tag.putInt("SleepChargedNightK", this.lastChargedNightK);
+        // 性格轴（v0.14）：不落档的话读档即重抽，"存读档洗性格"就成立了
+        if (this.axes != null) {
+            tag.putIntArray("Axes", this.axes);
+        }
         return tag;
     }
 
@@ -1170,7 +1250,22 @@ public final class Status {
         s.lastTimidAt = tag.contains("LastTimidAt") ? tag.getLong("LastTimidAt") : Long.MIN_VALUE;
         s.lastSleptNightK = tag.contains("LastSleptNightK") ? tag.getInt("LastSleptNightK") : Integer.MIN_VALUE;
         s.lastChargedNightK = tag.contains("SleepChargedNightK") ? tag.getInt("SleepChargedNightK") : Integer.MIN_VALUE;
+        // 性格轴（v0.14）：新档读回；旧档无此键 → 保持 null，首个事件入口懒生成
+        // 时随机重抽（用户拍板：迁移不做语义映射，随机重抽）
+        s.axes = tag.contains("Axes") ? normalizeAxes(tag.getIntArray("Axes")) : null;
         return s;
+    }
+
+    /** 校验轴数组长度与取值范围（长度不符 = 当 null 处理走重抽）。 */
+    private static int[] normalizeAxes(int[] raw) {
+        if (raw == null || raw.length != PersonalityAxis.COUNT) {
+            return null;
+        }
+        int[] out = new int[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            out[i] = PersonalityAxis.clampAxis(raw[i]);
+        }
+        return out;
     }
 
     /** 实例级读回（六域常规读档 / GATTACA 快照复原用）。 */
@@ -1200,6 +1295,7 @@ public final class Status {
         this.lastTimidAt = other.lastTimidAt;
         this.lastSleptNightK = other.lastSleptNightK;
         this.lastChargedNightK = other.lastChargedNightK;
+        this.axes = other.axes == null ? null : other.axes.clone();
     }
 
     private static <E extends Enum<E>> E getEnum(CompoundTag tag, String key,

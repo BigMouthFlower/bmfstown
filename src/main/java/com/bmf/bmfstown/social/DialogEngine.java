@@ -90,6 +90,24 @@ public final class DialogEngine {
                 resident.getName().getString(), text);
     }
 
+    /**
+     * 外部自带节流的组件台词直发（v0.14 嫉妒装备评判用）：
+     * 调用方负责自己的频率控制（全镇冷却/每日上限），这里只查"嘴忙锁"
+     * 防止两条字叠同人。头顶还有字没消完时静默跳过。
+     *
+     * @return true = 真的说出来了（调用方可据此记账）；false = 嘴忙被拦。
+     */
+    public static boolean sayDirect(Resident resident, net.minecraft.network.chat.Component text) {
+        if (!(resident.level() instanceof ServerLevel level) || text == null) {
+            return false;
+        }
+        if (!cooldownOk(resident, GROUP_BUSY, level.getGameTime())) {
+            return false;
+        }
+        spawnDisplay(level, resident, text);
+        return true;
+    }
+
     // ==========================================================
     //  事件入口
     // ==========================================================

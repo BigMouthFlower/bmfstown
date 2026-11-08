@@ -143,6 +143,10 @@ public class FireworksmanGoal extends Goal {
         if (!com.bmf.bmfstown.calendar.TownCalendar.get(level).isWorkday(level)) {
             return false; // 周末不上班，进闲暇池
         }
+        // 专注轴摸鱼（v0.14）：与 WorkerGoal 同款机制（每段一判，短窗口不工作）
+        if (tryGoofOff(level)) {
+            return false;
+        }
         JobState job = this.resident.getJobState();
         if (!job.workerEnabled() || job.orderItem().isEmpty()) {
             return false;
@@ -1111,11 +1115,37 @@ public class FireworksmanGoal extends Goal {
     //  工具方法
     // ==========================================================
 
-    private static boolean inWorkHours(ServerLevel level) {
+    private boolean inWorkHours(ServerLevel level) {
         long t = level.getDayTime() % 24000L;
-        int start = Config.CRAFT_WORK_START.get();
-        int end = Config.CRAFT_WORK_END.get();
+        int[] window = this.resident.workWindow(); // v0.14：边界带晨夜轴个人偏移
+        int start = window[0];
+        int end = window[1];
         return start <= end ? (t >= start && t < end) : (t >= start || t < end);
+    }
+
+    /** 摸鱼判定游标：每工作段判一次，防 canUse 每 tick 重摇。 */
+    private long nextGoofRollAt = 0;
+
+    /** 专注轴摸鱼（v0.14）：机制与 WorkerGoal.tryGoofOff 完全一致（400~800t 短窗口）。 */
+    private boolean tryGoofOff(ServerLevel level) {
+        long now = level.getGameTime();
+        if (now < this.nextGoofRollAt) {
+            return false;
+        }
+        this.nextGoofRollAt = now + Config.FIREWORK_TICKS_PER_ITEM.get();
+        double chance = com.bmf.bmfstown.entity.profile.PersonalityFormulas.goofChance(
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
+        if (chance <= 0) {
+            return false;
+        }
+        if (level.getRandom().nextDouble() < chance) {
+            int session = Config.AXIS_GOOF_SESSION_MIN.get()
+                    + level.getRandom().nextInt(Math.max(1,
+                            Config.AXIS_GOOF_SESSION_MAX.get() - Config.AXIS_GOOF_SESSION_MIN.get() + 1));
+            this.resident.startGoofOff(level.getGameTime() + session);
+            return true;
+        }
+        return false;
     }
 
     private int craftTicks() {
@@ -1124,7 +1154,9 @@ public class FireworksmanGoal extends Goal {
         // 心情不进乘区（炼金"只看等级"悬案未决，烟火不踩一遍）
         double efficiency = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
                 this.resident.getGrowth().skillXp(skill),
-                this.resident.getStatus().mood(), false);
+                this.resident.getStatus().mood(), false,
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT),
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
         efficiency *= 1.0 + this.resident.learnedEffectBonus(
                 com.bmf.bmfstown.book.SpecialBookEffect.Type.CRAFT_SPEED) / 100.0;
         if (efficiency < 0.1D) {

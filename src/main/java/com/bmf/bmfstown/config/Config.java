@@ -212,59 +212,127 @@ public final class Config {
 
     // ---- v0.8 性格标签 ----
 
-    /** 性格类事件的基础数值（攀比/好战/胆小/爱热闹/贪吃统一用这个值）。 */
+    /** 性格轴类事件的基础数值（心态乘区之前的基准，统一 ±3）。 */
     public static final ModConfigSpec.IntValue MOOD_TRAIT_VALUE = BUILDER
-            .comment("性格类事件的基础心情数值（统一 ±3）",
-                    "Base mood value for personality-trait events (unified ±3)")
+            .comment("性格轴类事件的基础心情数值（统一 ±3；心态乘区在其后应用，可越过此值）",
+                    "Base mood value for personality-axis events (unified ±3; the HOPE multiplier applies after and may exceed it)")
             .defineInRange("mood.traitValue", 3, 0, 100);
 
-    /** 乐观性格每日固定增量；正面想法文案带 "+"。 */
-    public static final ModConfigSpec.IntValue MOOD_TRAIT_OPTIMIST = BUILDER
-            .comment("乐观性格每日固定的心情增量（正面想法带 + 标记）",
-                    "Daily fixed mood gain for the Optimist trait (positive thoughts get a + marker)")
-            .defineInRange("mood.traitOptimist", 2, 0, 100);
-
-    /** 悲观性格每日固定减量；负面想法文案带 "−"。 */
-    public static final ModConfigSpec.IntValue MOOD_TRAIT_PESSIMIST = BUILDER
-            .comment("悲观性格每日固定的心情减量（负面想法带 − 标记）",
-                    "Daily fixed mood loss for the Pessimist trait (negative thoughts get a − marker)")
-            .defineInRange("mood.traitPessimist", 2, 0, 100);
-
-    /** 好战性格：连续多少天没击杀就出负面想法。 */
+    /** 好战轴：连续多少天没击杀就出负面想法。 */
     public static final ModConfigSpec.IntValue MOOD_TRAIT_WARLIKE_NO_KILL_DAYS = BUILDER
-            .comment("好战性格连续多少天没击杀生物会心情下降",
-                    "Days without a kill before the Warlike trait starts losing mood")
+            .comment("好战轴连续多少天没击杀生物会心情下降（仅轴值>50 生效）",
+                    "Days without a kill before the warlike axis starts losing mood (only when axis value > 50)")
             .defineInRange("mood.traitWarlikeNoKillDays", 5, 1, 100);
 
-    /** 好战性格：击杀带来的正面想法每天最多几次。 */
+    /** 好战轴：击杀带来的正面想法每天最多几次。 */
     public static final ModConfigSpec.IntValue MOOD_TRAIT_KILL_DAILY_LIMIT = BUILDER
-            .comment("好战性格的击杀正面想法每天最多几次",
-                    "Daily cap on kill-related positive thoughts for the Warlike trait")
+            .comment("好战轴的击杀正面想法每天最多几次",
+                    "Daily cap on kill-related positive thoughts for the warlike axis")
             .defineInRange("mood.traitKillDailyLimit", 2, 1, 100);
 
-    /** 胆小性格： hostile 生物在附近的负面想法触发间隔（dayTime）。 */
+    /** 勇气轴：敌对生物在附近的负面想法触发间隔（dayTime）。 */
     public static final ModConfigSpec.IntValue MOOD_TRAIT_TIMID_INTERVAL = BUILDER
-            .comment("胆小性格的负面想法触发间隔（dayTime，12000 = 半天）",
-                    "Interval between Timid trait negative thoughts (dayTime ticks)")
+            .comment("勇气轴遇敌负面想法的触发间隔（dayTime，12000 = 半天）",
+                    "Interval between hostile-seen negative thoughts for the courage axis (dayTime ticks)")
             .defineInRange("mood.traitTimidInterval", 12000, 100, 24000);
 
-    /** 贪吃性格：挨饿时的心情减量乘数（百分比，150 = ×1.5）。 */
-    public static final ModConfigSpec.IntValue MOOD_TRAIT_GLUTTON_STARVE_PERCENT = BUILDER
-            .comment("贪吃性格挨饿时的心情减量乘数（百分比，150 = ×1.5）",
-                    "Starvation mood-loss multiplier (percent) for the Glutton trait")
-            .defineInRange("mood.traitGluttonStarvePercent", 150, 100, 300);
+    // ---- v0.14 性格轴（决策 #44）----
 
-    /** 和平主义性格：附近死亡的负面想法每天最多几次（v0.8.1）。 */
-    public static final ModConfigSpec.IntValue MOOD_TRAIT_PACIFIST_DAILY_LIMIT = BUILDER
-            .comment("和平主义性格的'附近有生物死亡'负面想法每天最多几次",
-                    "Daily cap on nearby-death negative thoughts for the Pacifist trait")
-            .defineInRange("mood.traitPacifistDailyLimit", 5, 1, 100);
+    /** 暴力轴：附近生物死亡事件的每天上限。 */
+    public static final ModConfigSpec.IntValue AXIS_DEATH_DAILY_LIMIT = BUILDER
+            .comment("暴力轴：附近有生物死亡事件的每天上限",
+                    "Daily cap on nearby-death events for the cruelty axis")
+            .defineInRange("personality.deathDailyLimit", 5, 1, 100);
 
-    /** 爆炸主义性格：附近爆炸的正面想法每天最多几次（v0.8.1）。 */
-    public static final ModConfigSpec.IntValue MOOD_TRAIT_EXPLOSION_DAILY_LIMIT = BUILDER
-            .comment("爆炸主义性格的'附近发生爆炸'正面想法每天最多几次",
-                    "Daily cap on nearby-explosion positive thoughts for the Explosion Lover trait")
-            .defineInRange("mood.traitExplosionDailyLimit", 1, 1, 100);
+    /** 暴力轴：附近爆炸事件的每天上限（烟花不算爆炸源）。 */
+    public static final ModConfigSpec.IntValue AXIS_EXPLOSION_DAILY_LIMIT = BUILDER
+            .comment("暴力轴：附近爆炸事件的每天上限（烟花爆炸不算）",
+                    "Daily cap on nearby-explosion events for the cruelty axis (fireworks excluded)")
+            .defineInRange("personality.explosionDailyLimit", 1, 1, 100);
+
+    /** 暴力轴：附近生物繁殖事件的每天上限。 */
+    public static final ModConfigSpec.IntValue AXIS_BIRTH_DAILY_LIMIT = BUILDER
+            .comment("暴力轴：附近有生物繁殖事件的每天上限",
+                    "Daily cap on nearby-birth events for the cruelty axis")
+            .defineInRange("personality.birthDailyLimit", 2, 1, 100);
+
+    /** 勇气轴：好战端战士锁敌半径的正向修正上限（格）。 */
+    public static final ModConfigSpec.DoubleValue AXIS_AGGRO_BONUS = BUILDER
+            .comment("勇气轴：锁敌半径正向修正上限（格，轴值 50→100 线性到满）",
+                    "Courage axis: max positive aggro-radius correction in blocks (linear from value 50 to 100)")
+            .defineInRange("personality.aggroBonusBlocks", 10.0D, 0.0D, 64.0D);
+
+    /** 勇气轴：胆小端战士锁敌半径的负向修正上限（格）。 */
+    public static final ModConfigSpec.DoubleValue AXIS_AGGRO_PENALTY = BUILDER
+            .comment("勇气轴：锁敌半径负向修正上限（格，轴值 50→0 线性到满；实施时钳下限≥2 防跌破）",
+                    "Courage axis: max negative aggro-radius correction in blocks (linear from value 50 to 0; clamped to min 2 at runtime)")
+            .defineInRange("personality.aggroPenaltyBlocks", 5.0D, 0.0D, 32.0D);
+
+    /** 勇气轴：逃跑触发距离上限（格，轴值 0 时最远）。 */
+    public static final ModConfigSpec.DoubleValue AXIS_FLEE_MAX_DIST = BUILDER
+            .comment("勇气轴：逃跑触发距离上限（格，轴值 0 时最远；轴值≥35 不逃跑）",
+                    "Courage axis: max flee trigger distance in blocks (furthest at axis value 0; no fleeing at value >= 35)")
+            .defineInRange("personality.fleeMaxDist", 8.0D, 0.0D, 32.0D);
+
+    /** 勇气轴：胆小端攻击伤害的折损上限（百分比，轴值 0 时最多打七折）。 */
+    public static final ModConfigSpec.IntValue AXIS_ATTACK_PENALTY_PERCENT = BUILDER
+            .comment("勇气轴：胆小端攻击伤害折损上限（百分比，轴值 0 时最多 −30；中位以上不增伤）",
+                    "Courage axis: max attack-damage penalty percent for the timid end (at value 0; no bonus above 50)")
+            .defineInRange("personality.attackPenaltyPercent", 30, 0, 100);
+
+    /** 坚韧轴：心情打折线/罢工线的极端位移幅度（心情点）。 */
+    public static final ModConfigSpec.IntValue AXIS_GRIT_SHIFT = BUILDER
+            .comment("坚韧轴：打折线/罢工线的极端位移幅度（心情点，坚韧高线下移更能扛，脆弱上移更容易崩）",
+                    "Grit axis: extreme shift of the slow/strike mood thresholds in mood points")
+            .defineInRange("personality.gritShift", 10, 0, 50);
+
+    /** 专注轴：工作效率公式的修正段（百分比，±5 = 0.95~1.05）。 */
+    public static final ModConfigSpec.IntValue AXIS_FOCUS_PERCENT = BUILDER
+            .comment("专注轴：工作效率公式的修正段（百分比，±5 = ×0.95~×1.05，进逐段连乘并展示）",
+                    "Focus axis: work-efficiency formula segment in percent (±5 => x0.95~x1.05)")
+            .defineInRange("personality.focusPercent", 5, 0, 50);
+
+    /** 晨夜轴：作息窗口的偏移上限（tick，两端对称）。 */
+    public static final ModConfigSpec.IntValue AXIS_CHRONO_OFFSET = BUILDER
+            .comment("晨夜轴：作息窗口偏移上限（tick，早鸟提前/夜猫子推迟，默认 ±1005）",
+                    "Chrono axis: max schedule-window offset in ticks (early birds earlier, night owls later; default ±1005)")
+            .defineInRange("personality.chronoOffsetTicks", 1005, 0, 6000);
+
+    /** 专注轴：摸鱼概率上限（百分比，轴值 0 时每工作段最多四成概率开小差）。 */
+    public static final ModConfigSpec.IntValue AXIS_GOOF_PERCENT = BUILDER
+            .comment("专注轴：摸鱼概率上限（百分比，轴值 0 时最多；轴值≥40 不摸鱼；窗口=正常闲暇×1/3）",
+                    "Focus axis: max goof-off chance percent per work segment (at axis value 0; disabled at value >= 40)")
+            .defineInRange("personality.goofPercent", 40, 0, 100);
+
+    /** 专注轴：摸鱼窗口下限（tick，短于正常闲暇）。 */
+    public static final ModConfigSpec.IntValue AXIS_GOOF_SESSION_MIN = BUILDER
+            .comment("专注轴：摸鱼窗口下限（tick，必须短于正常闲暇段）",
+                    "Focus axis: minimum goof-off window in ticks (must be shorter than normal leisure)")
+            .defineInRange("personality.goofSessionMin", 400, 100, 24000);
+
+    /** 专注轴：摸鱼窗口上限（tick）。 */
+    public static final ModConfigSpec.IntValue AXIS_GOOF_SESSION_MAX = BUILDER
+            .comment("专注轴：摸鱼窗口上限（tick）",
+                    "Focus axis: maximum goof-off window in ticks")
+            .defineInRange("personality.goofSessionMax", 800, 100, 24000);
+
+    /** 嫉妒轴：评判玩家装备的扫描距离（格）。 */
+    public static final ModConfigSpec.DoubleValue AXIS_GEAR_RANGE = BUILDER
+            .comment("嫉妒轴：评判玩家随身装备的扫描距离（格，需视线可达）",
+                    "Envy axis: scan range in blocks for judging player equipment (line of sight required)")
+            .defineInRange("personality.gearJudgeRange", 5.0D, 1.0D, 32.0D);
+
+    /** 嫉妒轴：装备评判台词的全镇级冷却（dayTime）。 */
+    public static final ModConfigSpec.IntValue AXIS_GEAR_TOWN_COOLDOWN = BUILDER
+            .comment("嫉妒轴：装备评判台词的全镇级冷却（dayTime，6000 = 5 分钟）",
+                    "Envy axis: town-wide cooldown for gear-judgement dialogue (dayTime ticks; 6000 = 5 min)")
+            .defineInRange("personality.gearTownCooldown", 6000, 200, 24000);
+
+    /** 嫉妒轴：装备评判的心情惩罚每天最多几次。 */
+    public static final ModConfigSpec.IntValue AXIS_GEAR_MOOD_DAILY_LIMIT = BUILDER
+            .comment("嫉妒轴：看到玩家好装备的心情惩罚每天最多几次（仅轴值>80 生效）",
+                    "Daily cap on gear-envy mood penalties (only when axis value > 80)")
+            .defineInRange("personality.gearMoodDailyLimit", 1, 1, 100);
 
     /** 昨晚没睡的每日心情减量；连续没睡逐夜叠加、不封顶；0 = 关闭（v0.8.1）。 */
     public static final ModConfigSpec.IntValue MOOD_NO_SLEEP = BUILDER
@@ -404,7 +472,8 @@ public final class Config {
 
     /** 击杀敌人一次涨多少格斗经验。 */
     public static final ModConfigSpec.IntValue WARRIOR_XP_PER_KILL = BUILDER
-            .comment("战士击杀敌人获得的格斗经验", "Combat xp per kill for warriors")
+            .comment("击杀敌人获得的格斗经验（v0.14 起全民入账，不只战士）",
+                    "Combat xp per kill (all residents since v0.14, not just warriors)")
             .defineInRange("warrior.xpPerKill", 30, 0, 1000);
 
     /**

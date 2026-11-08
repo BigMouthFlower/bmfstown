@@ -3,7 +3,6 @@ package com.bmf.bmfstown.entity.domain;
 import com.bmf.bmfstown.entity.profile.BlockMaterial;
 import com.bmf.bmfstown.entity.profile.Hobbies;
 import com.bmf.bmfstown.entity.profile.MobPref;
-import com.bmf.bmfstown.entity.profile.PersonalityType;
 import com.bmf.bmfstown.entity.profile.PrefAnimal;
 import com.bmf.bmfstown.entity.profile.PrefColor;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
@@ -65,7 +64,11 @@ public final class ResidentSnapshot {
     private final boolean likesMusic;
     private final WeatherPref dislikedWeather;
     private final MobPref dislikedMob;
-    private final PersonalityType personality;
+    /**
+     * 性格轴值（v0.14）：10 条轴各 0~100；null = 尚未生成（客户端显示"平稳"）。
+     * 快照预留 32 槽位（决策 #44），首批用 {@link com.bmf.bmfstown.entity.profile.PersonalityAxis#COUNT}。
+     */
+    private final int[] axes;
 
     // ---- Knowledge（v0.11 学者：书槽/已学/研读进度）----
     private final String equippedBookId;
@@ -91,7 +94,7 @@ public final class ResidentSnapshot {
             Hobbies.Food hobbyFood, ProfessionType likedProfession,
             List<BlockMaterial> likedBlocks, PrefAnimal likedAnimal, PrefColor likedColor,
             boolean likesMusic, WeatherPref dislikedWeather, MobPref dislikedMob,
-            PersonalityType personality,
+            int[] axes,
             String equippedBookId, List<String> learnedBooks, Map<String, Long> learnProgress,
             int writingPercent, int copyingPercent,
             int literacy, int totalBooksRead) {
@@ -112,7 +115,7 @@ public final class ResidentSnapshot {
         this.likesMusic = likesMusic;
         this.dislikedWeather = dislikedWeather;
         this.dislikedMob = dislikedMob;
-        this.personality = personality;
+        this.axes = axes == null ? null : axes.clone();
         this.equippedBookId = equippedBookId;
         this.learnedBooks = List.copyOf(learnedBooks);
         this.learnProgress = Map.copyOf(learnProgress);
@@ -134,22 +137,29 @@ public final class ResidentSnapshot {
                 prefs.hobbyFood(), prefs.likedProfession(),
                 prefs.likedBlocks(), prefs.likedAnimal(), prefs.likedColor(),
                 prefs.likesMusic(), prefs.dislikedWeather(), prefs.dislikedMob(),
-                prefs.personality(),
+                status.axesView(),
                 knowledge.equippedBookId(), knowledge.learnedSorted(),
                 knowledge.progressView(),
                 writingPercent, copyingPercent,
                 knowledge.literacy(), knowledge.totalBooksRead());
     }
 
-    /** 客户端兜底默认（readNbt 返回 null / 新实体 define 时）。 */
+    /** 客户端兜底默认（readNbt 返回 null / 新实体 define 时）。轴全中性 → 显示"平稳"。 */
     public static ResidentSnapshot defaults() {
         return new ResidentSnapshot(Status.MAX_HUNGER, 50,
                 ProfessionType.NONE, null, null, null, 0L,
                 Map.of(), Map.of(),
                 Hobbies.Food.SWEET, ProfessionType.NONE,
                 List.of(), null, null, false, null, null,
-                PersonalityType.OPTIMIST,
+                neutralAxes(),
                 "", List.of(), Map.of(), -1, -1, 0, 0);
+    }
+
+    /** 全中性轴数组（兜底展示用）。 */
+    private static int[] neutralAxes() {
+        int[] v = new int[com.bmf.bmfstown.entity.profile.PersonalityAxis.COUNT];
+        java.util.Arrays.fill(v, com.bmf.bmfstown.entity.profile.PersonalityAxis.NEUTRAL);
+        return v;
     }
 
     // ==========================================================
@@ -251,8 +261,9 @@ public final class ResidentSnapshot {
         return this.dislikedMob;
     }
 
-    public PersonalityType personality() {
-        return this.personality;
+    /** 性格轴值快照（10 条，0~100；未生成返回 null → 客户端显示"平稳"）。 */
+    public int[] axes() {
+        return this.axes == null ? null : this.axes.clone();
     }
 
     // ---- 派生值 ----
@@ -380,7 +391,8 @@ public final class ResidentSnapshot {
         if (this.dislikedMob != null) {
             tag.putString("DislikedMob", this.dislikedMob.name());
         }
-        tag.putString("Personality", this.personality.name());
+        tag.putIntArray("Axes", this.axes == null
+                ? new int[com.bmf.bmfstown.entity.profile.PersonalityAxis.COUNT] : this.axes);
         CompoundTag knowledge = new CompoundTag();
         knowledge.putString("Equipped", this.equippedBookId);
         ListTag learnedTag = new ListTag();
@@ -510,7 +522,7 @@ public final class ResidentSnapshot {
                 tag.getBoolean("LikesMusic"),
                 getEnum(tag, "DislikedWeather", WeatherPref.class),
                 getEnum(tag, "DislikedMob", MobPref.class),
-                getEnum(tag, "Personality", PersonalityType.class, PersonalityType.OPTIMIST),
+                normalizeAxes(tag.contains("Axes") ? tag.getIntArray("Axes") : null),
                 equippedBook, learnedBooks, learnProgress,
                 tag.contains("WritingPercent") ? tag.getInt("WritingPercent") : -1,
                 tag.contains("CopyingPercent") ? tag.getInt("CopyingPercent") : -1,
@@ -520,6 +532,18 @@ public final class ResidentSnapshot {
     private static <E extends Enum<E>> E getEnum(CompoundTag tag, String key,
             Class<E> type) {
         return getEnum(tag, key, type, null);
+    }
+
+    /** 轴数组校验：长度不符按未生成（null）处理。 */
+    private static int[] normalizeAxes(int[] raw) {
+        if (raw == null || raw.length != com.bmf.bmfstown.entity.profile.PersonalityAxis.COUNT) {
+            return null;
+        }
+        int[] out = new int[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            out[i] = com.bmf.bmfstown.entity.profile.PersonalityAxis.clampAxis(raw[i]);
+        }
+        return out;
     }
 
     private static <E extends Enum<E>> E getEnum(CompoundTag tag, String key,

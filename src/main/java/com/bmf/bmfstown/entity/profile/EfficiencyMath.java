@@ -28,9 +28,17 @@ public final class EfficiencyMath {
         return 1.0 + Config.PERK_STRONG_BONUS_PERCENT.get() / 100.0;
     }
 
-    /** 心情段：低于阈值（默认 40）时打折（默认 ×0.7），否则 ×1.0。 */
+    /** 心情段：低于阈值（默认 40）时打折（默认 ×0.7），否则 ×1.0（坚韧轴中位口径）。 */
     public static double moodMultiplier(double mood) {
-        int threshold = Config.MOOD_SLOW_THRESHOLD.get();
+        return moodMultiplier(mood, PersonalityAxis.NEUTRAL);
+    }
+
+    /**
+     * 心情段（v0.14 坚韧轴版）：阈值随坚韧轴位移——
+     * {@code PersonalityFormulas.slowThreshold(grit)}：坚韧高→线下移更能扛，脆弱→线上移更易崩。
+     */
+    public static double moodMultiplier(double mood, int grit) {
+        int threshold = PersonalityFormulas.slowThreshold(grit);
         if (threshold > 0 && mood < threshold) {
             return Config.MOOD_SLOW_MULTIPLIER_PERCENT.get() / 100.0;
         }
@@ -51,13 +59,23 @@ public final class EfficiencyMath {
         return 1.0;
     }
 
-    /** 完整计算：基础 × 强壮(选中才乘) × 心情。 */
+    /** 完整计算（全中性轴口径）：基础 × 强壮(选中才乘) × 心情 × 专注。 */
     public static double total(int xp, double mood, boolean strongPerk) {
+        return total(xp, mood, strongPerk, PersonalityAxis.NEUTRAL, PersonalityAxis.NEUTRAL);
+    }
+
+    /**
+     * 完整计算（v0.14 性格轴版）：
+     * <pre>效率 = 基础(熟练度) × 强壮perk × 心情打折（坚韧轴位移阈值） × 专注段(±5%)</pre>
+     * 专注段：{@code PersonalityFormulas.focusMultiplier(focus)}，v=50 时 ×1.0。
+     */
+    public static double total(int xp, double mood, boolean strongPerk, int grit, int focus) {
         double eff = baseOf(xp);
         if (strongPerk) {
             eff *= strongMultiplier();
         }
-        eff *= moodMultiplier(mood);
+        eff *= moodMultiplier(mood, grit);
+        eff *= PersonalityFormulas.focusMultiplier(focus);
         return eff;
     }
 }

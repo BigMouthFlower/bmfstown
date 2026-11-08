@@ -2,7 +2,6 @@ package com.bmf.bmfstown.client;
 
 import com.bmf.bmfstown.entity.profile.BlockMaterial;
 import com.bmf.bmfstown.entity.profile.MobPref;
-import com.bmf.bmfstown.entity.profile.PersonalityType;
 import com.bmf.bmfstown.entity.profile.PrefAnimal;
 import com.bmf.bmfstown.entity.profile.PrefColor;
 import com.bmf.bmfstown.entity.profile.WeatherPref;
@@ -142,28 +141,28 @@ public final class ClientMoodState {
     // ==========================================================
 
     /**
-     * 一个镇民的喜好/讨厌/性格摘要（客户端渲染用，全部枚举直存）。
+     * 一个镇民的喜好/讨厌摘要（客户端渲染用，全部枚举直存）。
      *
-     * <p>对应服务端 {@code MoodState.prefsString()} 的紧凑编码：
-     * {@code blocks|animal|color|music|weather|mob|personality}，
-     * blocks 段内逗号分隔；空段 = 没有这项偏好。
+     * <p>对应服务端 {@code Prefs.prefsString()} 的紧凑编码：
+     * {@code blocks|animal|color|music|weather|mob}（v0.14 起无性格段，
+     * 性格轴走 ResidentSnapshot "Axes"），blocks 段内逗号分隔；空段 = 没有这项偏好。
      *
      * <p>解析宽容：任何一段坏了整条退回 {@link #EMPTY}——
      * 面板显示"无"比崩溃好（串版本/改表后老包都能优雅降级）。
      */
     public record MoodPrefs(List<BlockMaterial> blocks, PrefAnimal animal, PrefColor color,
-            boolean music, WeatherPref weather, MobPref mob, PersonalityType personality) {
+            boolean music, WeatherPref weather, MobPref mob) {
 
         public static final MoodPrefs EMPTY =
-                new MoodPrefs(List.of(), null, null, false, null, null, null);
+                new MoodPrefs(List.of(), null, null, false, null, null);
 
         public static MoodPrefs parse(String encoded) {
             if (encoded == null || encoded.isEmpty()) {
                 return EMPTY;
             }
             String[] parts = encoded.split("\\|", -1);
-            if (parts.length != 7) {
-                return EMPTY;
+            if (parts.length < 6) {
+                return EMPTY; // 兼容旧 7 段格式：多出的第 7 段（旧性格枚举名）直接忽略
             }
             List<BlockMaterial> blocks = new ArrayList<>();
             if (!parts[0].isEmpty()) {
@@ -185,8 +184,7 @@ public final class ClientMoodState {
                         enumOf(parts[2], PrefColor.class),
                         "1".equals(parts[3]),
                         enumOf(parts[4], WeatherPref.class),
-                        enumOf(parts[5], MobPref.class),
-                        enumOf(parts[6], PersonalityType.class));
+                        enumOf(parts[5], MobPref.class));
             } catch (IllegalArgumentException ignored) {
                 return EMPTY;
             }

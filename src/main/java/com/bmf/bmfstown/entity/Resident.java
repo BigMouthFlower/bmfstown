@@ -36,6 +36,7 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MobSpawnType;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.SpawnGroupData;
@@ -225,6 +226,70 @@ public class Resident extends PathfinderMob {
             this.stopSleeping();
         }
         this.abortSleep();
+    }
+
+    /**
+     * 威胁唤醒（勇气 Goal 专用，v0.14 修复"躺着逃跑"）：
+     * 怪物逼近/袭击触发逃跑或还手时，先真正起床再跑。
+     *
+     * <p>原版只在<b>实际受伤</b>时唤醒睡着实体；逃跑 Goal 常在没挨打时
+     * 就触发（怪物进 fleeDistance 即逃），此时若不清睡姿，导航照跑、
+     * 人却保持 {@code Pose.SLEEPING}——就是"躺在床上滑行"的来源。
+     * 且 {@link #tickSleep} 在 SLEEPING 态每 tick 压导航，与逃跑导航互相打架。
+     *
+     * <p>走"被吵"路径（{@link #wakeFromBed}(false)）：清睡姿 + 5 秒防回床
+     * 冷却——怪物还在旁边就躺回去只会再演一遍。
+     */
+    public void wakeUpForThreat() {
+        if (this.isSleeping() || this.getPose() == net.minecraft.world.entity.Pose.SLEEPING) {
+            this.wakeFromBed(false);
+        } else if (this.sleepState == SleepState.SLEEPING) {
+            // 原版受伤唤醒已清睡姿、状态机还挂在 SLEEPING：就地归位
+            // （不然 tickSleep 的 SLEEPING 分支还会压几 tick 导航）
+            this.sleepState = SleepState.AWAKE;
+            this.targetBed = null;
+            this.sleepTravelTicks = 0;
+            this.sleepKickCooldown = 100;
+        }
+    }
+
+    // ------------------------------------------------------
+    //  群体支援呼救（v0.14）：邻居遇袭 → 不胆小者助战
+    // ------------------------------------------------------
+
+    /** 最近一次收到的呼救（袭击邻居的攻击者），5 秒内有效。 */
+    @Nullable
+    private LivingEntity alarmAttacker;
+    /** 呼救剩余有效 tick 数。 */
+    private int alarmTicks;
+
+    /**
+     * 收到呼救：邻居 {@code victim} 被攻击者 {@code attacker} 打了。
+     * 是否参战由 {@link CourageGoals.AssistGoal} 按勇气轴判定，这里只记录。
+     */
+    public void raiseAlarm(@Nullable LivingEntity attacker) {
+        this.alarmAttacker = attacker;
+        this.alarmTicks = 100; // 5 秒内响应有效
+    }
+
+    /**
+     * 当前有效的呼救攻击者（不消费，供 AssistGoal 反复判）；过期/死亡自动作废。
+     */
+    @Nullable
+    public LivingEntity currentAlarm() {
+        if (this.alarmAttacker != null) {
+            if (this.alarmTicks-- <= 0 || !this.alarmAttacker.isAlive()) {
+                this.alarmAttacker = null;
+                this.alarmTicks = 0;
+            }
+        }
+        return this.alarmAttacker;
+    }
+
+    /** 呼救已响应/已过期：清空。 */
+    public void clearAlarm() {
+        this.alarmAttacker = null;
+        this.alarmTicks = 0;
     }
     /** 已锁定的目标床位（住宅区内扫描得出，HEAD 坐标）。 */
     @Nullable
@@ -476,10 +541,16 @@ public class Resident extends PathfinderMob {
         // 寻路撞上关闭的木门时它并行启动——开门、等走过、再关门。
         // 铁门照旧进不去（村民同款）；栅栏门不管（村民也不管）。
         this.goalSelector.addGoal(2, new OpenDoorGoal(this, true));
-        // 索敌：锚点半径内的敌对生物（跟随=玩家身边，站岗=岗哨周围）；
-        // 被打还手是所有镇民的保底本能。
+        // 勇气轴逃跑（v0.14）：仅非战士且轴值<50；敌对生物逼近即逃，压过工作/漫步。
+        this.goalSelector.addGoal(2, new CourageGoals.CourageFleeGoal(this));
+        // 索敌：锚点半径内的敌对生物（跟随=玩家身边，站岗=岗哨周围，半径随勇气轴修正）。
+        // 被打还手是所有镇民的保底本能（v0.14 起走 CourageGoals.RetaliateGoal：
+        // 永不还手玩家；非战士需勇气轴值>50 才还手，否则逃）。
         this.targetSelector.addGoal(2, new WarriorGoals.MonsterTargetGoal(this));
-        this.targetSelector.addGoal(3, new HurtByTargetGoal(this));
+        this.targetSelector.addGoal(3, new CourageGoals.RetaliateGoal(this));
+        // 群体支援（v0.14）：邻居遇袭呼救，不胆小者（战士/勇气≥35）入场助战。
+        // 优先级 4 压在自卫(3)之下——自己在挨打时永远先顾自己。
+        this.targetSelector.addGoal(4, new CourageGoals.AssistGoal(this));
     }
 
     // ==========================================================
@@ -686,12 +757,88 @@ public class Resident extends PathfinderMob {
      * 是否在罢工：心情低于罢工阈值（可配置，0 = 关闭）。
      *
      * <p>罢工只停<b>工作</b>（跟随/站岗/主动索敌，见 WarriorGoals 三个 Goal 的 canUse），
-     * <b>不影响还手</b>——{@code HurtByTargetGoal}（优先级 3）不查这个标记，
+     * <b>不影响还手</b>——还手 Goal（优先级 3）不查这个标记，
      * 被打了照样自卫（用户定稿：否则城镇防御会出怪事）。
+     *
+     * <p>v0.14：阈值随坚韧轴位移（居中值=现行配置阈值，坚韧高→更能扛）。
      */
     public boolean onStrike() {
-        int threshold = com.bmf.bmfstown.config.Config.MOOD_STRIKE_THRESHOLD.get();
+        int threshold = com.bmf.bmfstown.entity.profile.PersonalityFormulas.strikeThreshold(
+                this.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT));
         return threshold > 0 && this.getArchive().mood() < threshold;
+    }
+
+    // ==========================================================
+    //  性格轴（v0.14 多轴改版，决策 #44）
+    // ==========================================================
+
+    /**
+     * 读一条性格轴值（0~100）。服务端走 Status 域；客户端/未生成返回中性 50。
+     * 行为旋钮（战斗/作息/效率）与心情事件共用这一个入口。
+     */
+    public int axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis axis) {
+        if (this.level() instanceof net.minecraft.server.level.ServerLevel level) {
+            return this.status.axis(this, level, axis);
+        }
+        return com.bmf.bmfstown.entity.profile.PersonalityAxis.NEUTRAL;
+    }
+
+    // ---- 摸鱼状态（专注轴负值触发，WorkerGoal/FireworksmanGoal 写入） ----
+
+    /** 摸鱼截止 gameTime（-1 = 不在摸鱼）。不落档：重启丢了最多多干一段活，无碍。 */
+    private long goofOffUntil = -1;
+
+    /** 当前是否在摸鱼窗口内（摸鱼=按概率开小差，走正常闲暇/漫步行为，窗口短于正常闲暇）。 */
+    public boolean isGoofingOff(net.minecraft.server.level.ServerLevel level) {
+        return this.goofOffUntil >= 0 && level.getGameTime() < this.goofOffUntil;
+    }
+
+    /** 开一个摸鱼窗口（到 gameTime 为止不工作）。 */
+    public void startGoofOff(long untilGameTime) {
+        this.goofOffUntil = untilGameTime;
+    }
+
+    // ---- 晨夜轴：作息窗口 ----
+
+    /** 当前昼夜刻（0~23999；floorMod 防 /time 回拨出现负数）。 */
+    public int tickOfDay(net.minecraft.server.level.ServerLevel level) {
+        return (int) Math.floorMod(level.getDayTime(), 24000L);
+    }
+
+    /** 晨夜轴偏移（早鸟为负=提前，夜猫子为正=推迟）。 */
+    private int chronoShift() {
+        return com.bmf.bmfstown.entity.profile.PersonalityFormulas.chronoShift(
+                this.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.CHRONO));
+    }
+
+    /** 本居民的睡眠窗口（睡眠窗口边界 + 晨夜轴偏移）。 */
+    public int[] sleepWindow() {
+        int shift = this.chronoShift();
+        return new int[]{com.bmf.bmfstown.config.Config.SLEEP_START_TIME.get() + shift,
+                com.bmf.bmfstown.config.Config.SLEEP_END_TIME.get() + shift};
+    }
+
+    /** 本居民的工人/炼金/烟火工作窗口（开工/收工 + 晨夜轴偏移）。 */
+    public int[] workWindow() {
+        int shift = this.chronoShift();
+        return new int[]{com.bmf.bmfstown.config.Config.CRAFT_WORK_START.get() + shift,
+                com.bmf.bmfstown.config.Config.CRAFT_WORK_END.get() + shift};
+    }
+
+    /** 本居民的学者工作窗口。 */
+    public int[] scholarWorkWindow() {
+        int shift = this.chronoShift();
+        return new int[]{com.bmf.bmfstown.config.Config.SCHOLAR_WORK_START.get() + shift,
+                com.bmf.bmfstown.config.Config.SCHOLAR_WORK_END.get() + shift};
+    }
+
+    /** 此刻是否处于本居民的夜晚（睡眠窗口内，含晨夜轴偏移）。 */
+    public boolean isNightForMe(net.minecraft.server.level.ServerLevel level) {
+        int t = this.tickOfDay(level);
+        int[] window = this.sleepWindow();
+        int start = window[0];
+        int end = window[1];
+        return start <= end ? t >= start && t < end : t >= start || t < end;
     }
 
     public ProfessionType getProfession() {
@@ -1076,14 +1223,27 @@ public class Resident extends PathfinderMob {
     public String debugSummary() {
         ResidentSnapshot p = this.getArchive();
         // String.format 的 %s 一律走 toString()，这里显式取中文名，避免输出 SWEET 这种英文枚举名
+        StringBuilder axisSummary = new StringBuilder();
+        int[] axes = p.axes();
+        if (axes != null) {
+            for (com.bmf.bmfstown.entity.profile.PersonalityAxis axis
+                    : com.bmf.bmfstown.entity.profile.PersonalityAxis.values()) {
+                if (axisSummary.length() > 0) {
+                    axisSummary.append('/');
+                }
+                axisSummary.append(axis.zhName()).append(axes[axis.ordinal()]);
+            }
+        } else {
+            axisSummary.append("未生成");
+        }
         return String.format(
-                "%s | 饥饿=%d 心情=%d | 专长:%s 称号:%s Lv%d | 口味:%s | 喜欢的工作:%s | 性格:%s",
+                "%s | 饥饿=%d 心情=%d | 专长:%s 称号:%s Lv%d | 口味:%s | 喜欢的工作:%s | 性格轴:%s",
                 this.getName().getString(),
                 p.hunger(), p.mood(),
                 p.profession().zhName(), p.title(), p.level(),
                 p.hobbyFood().zhName(),
                 p.likedProfession().zhName(),
-                p.personality().zhName());
+                axisSummary);
     }
 
     /**
@@ -2210,7 +2370,7 @@ public class Resident extends PathfinderMob {
         if (this.sleepKickCooldown > 0) {
             this.sleepKickCooldown--;
         }
-        boolean night = isNightTime(level.getDayTime());
+        boolean night = isNightForMe(level);
 
         // 读档对账（v0.8.1 实测 bug 修复）：sleepState 不落档，而 vanilla 会把
         // "睡姿 + 床坐标"存进实体 NBT——存档时正在睡的镇民，读档后睡姿还在、
@@ -2248,7 +2408,11 @@ public class Resident extends PathfinderMob {
         }
     }
 
-    /** 当前时间是否在睡觉窗口内（支持跨午夜，如 22000~6000）。 */
+    /**
+     * 旧版全局夜窗判定（v0.14 起镇民改走 {@link #isNightForMe}——晨夜轴有个人偏移；
+     * 本静态版保留给"与具体居民无关"的调用点/调试用）。
+     * 当前时间是否在睡觉窗口内（支持跨午夜，如 22000~6000）。
+     */
     public static boolean isNightTime(long dayTime) {
         int t = (int) (dayTime % 24000L);
         int start = Config.SLEEP_START_TIME.get();
@@ -3294,6 +3458,7 @@ public class Resident extends PathfinderMob {
      * 当前职业效率：统一走 {@code EfficiencyMath.total}（客户端面板展示的公式
      * 与此同源，所见即所得）。无职业 / 无主技能 → 1.0：效率是<b>职业</b>参数，
      * 无业不吃减益也不吃增益。强壮 perk 与心情打折的语义见 EfficiencyMath。
+     * v0.14：心情打折阈值随坚韧轴位移、新增专注轴 ±5% 段。
      */
     private double professionEfficiency() {
         var profession = this.identity.profession();
@@ -3304,7 +3469,9 @@ public class Resident extends PathfinderMob {
         return com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
                 this.growth.skillXp(skill),
                 this.status.mood(),
-                hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong"));
+                hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong"),
+                this.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT),
+                this.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
     }
 
     /**
@@ -3375,6 +3542,17 @@ public class Resident extends PathfinderMob {
                     modId, bonus, net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE));
             boosted = true;
         }
+        // 勇气轴（v0.14）：胆小端攻击打折（最多 −30%，中位以上不增伤——用户定稿）
+        double attackMult = com.bmf.bmfstown.entity.profile.PersonalityFormulas.attackMultiplier(
+                this.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.COURAGE));
+        var courageModId = net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("bmfstown", "courage_attack");
+        boolean courageBoosted = false;
+        if (attackAttr != null && attackMult < 1.0D - 1.0E-4) {
+            double malus = attackAttr.getValue() * (attackMult - 1.0);
+            attackAttr.addTransientModifier(new net.minecraft.world.entity.ai.attributes.AttributeModifier(
+                    courageModId, malus, net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADD_VALUE));
+            courageBoosted = true;
+        }
         try {
             boolean hit = super.doHurtTarget(target);
             // 好战性格：这一下把目标打死才算"击杀"（掉血不算）
@@ -3398,6 +3576,9 @@ public class Resident extends PathfinderMob {
             // 无论命中、异常都必须摘掉，否则效率会永久叠在属性上（下次再乘一次）
             if (boosted && attackAttr != null) {
                 attackAttr.removeModifier(modId);
+            }
+            if (courageBoosted && attackAttr != null) {
+                attackAttr.removeModifier(courageModId);
             }
         }
     }

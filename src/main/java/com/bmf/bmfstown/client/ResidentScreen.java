@@ -5,6 +5,7 @@ import com.bmf.bmfstown.entity.Resident;
 import com.bmf.bmfstown.entity.domain.ResidentSnapshot;
 import com.bmf.bmfstown.entity.domain.Status;
 import com.bmf.bmfstown.menu.ResidentMenu;
+import com.bmf.bmfstown.entity.profile.PersonalityAxis;
 import com.bmf.bmfstown.network.ModNetworking;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
@@ -13,6 +14,7 @@ import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
@@ -274,10 +276,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final int TOWN_GUI_HEIGHT = ResidentMenu.PANEL_Y + MAX_VISIBLE * ROW_H + 8;
 
     /**
-     * 喜好页面板高：v0.8 偏好一览 10 行（名字/口味/工作/建材/动物/颜色/
-     * 音乐/天气/生物/性格），行距 LINE，高度按 ROW_H 预留（与想法页同构）。
+     * 喜好页可见行数（2026-11-08 用户重做定稿："界面稍微大一点点"，10 → 13 行）：
+     * 名字行固定在上，滚动区放喜好段落深色文本框 + 性格 10 轴坐标条，
+     * 装不下就滚（滚轮 + 右缘滚动条）。
      */
-    private static final int HOBBY_GUI_HEIGHT = ResidentMenu.PANEL_Y + 10 * ROW_H + 6;
+    private static final int HOBBY_VISIBLE_ROWS = 13;
+    private static final int HOBBY_GUI_HEIGHT = ResidentMenu.PANEL_Y + HOBBY_VISIBLE_ROWS * ROW_H + 6;
 
     /** 想法日志可见条数（滚轮/滚动条翻更早的）。 */
     private static final int THOUGHTS_VISIBLE = 10;
@@ -291,6 +295,15 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 想法页当前滚动位置（0 = 最新的在最上面）。 */
     private int thoughtScroll = 0;
 
+    /** 喜好页滚动位置（px，0 = 内容顶；2026-11-08 重做：喜好段+性格轴整页滚）。 */
+    private int hobbyScroll = 0;
+
+    /** 性格轴坐标条一行的高度（px）。 */
+    private static final int AXIS_ROW_H = 12;
+
+    /** 性格轴名列宽（与旧偏好行标签列一致，装得下英文轴名）。 */
+    private static final int AXIS_NAME_W = 52;
+
     /**
      * 工作页面板高：与资料页同高（玩家背包/快捷栏都在固定位置显示）。
      * perk 节点区改固定高滚动菜单（{@link #PERK_VISIBLE_ROWS} 行可见，
@@ -303,6 +316,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         this.townScroll = 0; // 每次进归属页都回到列表头，别让玩家一进来就对着列表中段发呆
         this.workScroll = 0; // 工作页职业列表同理归零
         this.thoughtScroll = 0; // 想法页回到最新一条
+        this.hobbyScroll = 0; // 喜好页回到内容顶
         this.thoughtScrollbarDragging = false; // 切页时结束拖拽，别把状态带到别的页
         this.perkExpandedNode = -1; // perk 节点全部收起
         this.perkScroll = 0; // perk 滚动回树顶（换职业树也靠这里兜底）
@@ -809,14 +823,21 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private int thoughtDragGrabOffset = 0;
 
     /**
-     * 喜好页内容：v0.8 偏好 + 性格一览（想法去"想法"页看）。
+     * 喜好页内容（2026-11-08 用户定稿重做）：
+     * <ol>
+     *   <li><b>喜好段落</b>：白底面板内嵌一块深色文本框——喜好不再逐行键值对，
+     *       改成"他喜欢 A、B、C。他讨厌 D、E。"的一段话。原因：喜好来源不止
+     *       出生随机，特性等系统会持续往里追加，行式列表装不下；</li>
+     *   <li><b>性格 10 轴坐标条</b>：每条轴一行——轴名 + 水平坐标条（0~100，
+     *       中性区 40~60 加深，指针锚定本居民的轴值位置）。不显示档位文案
+     *       （用户定稿"不显示乐天派/胆小之类"），悬停可看数值、两极与轴侧写；</li>
+     *   <li>内容超出可视区时整页滚动（滚轮 + 右缘滚动条），名字行固定不滚。</li>
+     * </ol>
      *
      * <p>数据来源是打开面板时服务端下发的 {@link ClientMoodState.MoodPrefs}
-     * （{@code MoodSyncPayload.prefs} 紧凑串解析而来）——客户端只存不算，
-     * 没同步过时显示"无"。
-     *
-     * <p>标签列比资料页宽（52px）："喜欢的建材"这类 5 字标签按 32px 会被
-     * 值压字，所以本页走 {@link #drawPrefRow} 而不是 {@link #drawStat}。
+     * （{@code MoodSyncPayload.prefs} 紧凑串解析而来）与 {@link ResidentSnapshot}
+     * 快照（口味/喜欢的工作走快照域，性格轴走快照 "Axes"）——
+     * 客户端只存不算，没同步过时显示"无"。
      */
     private void renderHobbyPageText(GuiGraphics gfx, int mouseX, int mouseY) {
         Resident resident = this.menu.getResident();
@@ -825,63 +846,223 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         }
         ResidentSnapshot p = resident.getArchive();
         ClientMoodState.MoodPrefs prefs = ClientMoodState.prefsOf(resident.getUUID());
-        int textY = ResidentMenu.PANEL_Y;
-        gfx.drawString(this.font, resident.getName(), TEXT_PAD, textY, 0x303030, false);
 
-        String none = I18n.get("gui.bmfstown.resident.stat.value_none");
+        // 名字行固定在滚动区上方，不随内容滚。
+        // 坐标口径（v0.14.1 修复"喜好页全空"）：renderLabels 的画笔已平移到
+        // 面板原点——绘制一律用面板相对坐标；剪刀（GL 裁剪不吃画笔平移）
+        // 与鼠标命中判定才用绝对坐标。之前混用绝对坐标，名字画歪、内容
+        // 整体偏出裁剪区全被裁掉，面板看起来空空如也。
+        gfx.drawString(this.font, resident.getName(), TEXT_PAD, ResidentMenu.PANEL_Y, 0x303030, false);
 
-        drawPrefRow(gfx, textY + LINE, I18n.get("gui.bmfstown.resident.stat.hobby"),
-                I18n.get(p.hobbyFood().displayName()), 0x2E7D2E);
+        int relTop = hobbyListTop();
+        int relBottom = hobbyListBottom();
+        int visibleH = relBottom - relTop;
+        int contentH = hobbyContentHeight(p, prefs);
+        int max = Math.max(0, contentH - visibleH);
+        this.hobbyScroll = Mth.clamp(this.hobbyScroll, 0, max);
+        int scroll = this.hobbyScroll;
 
-        drawPrefRow(gfx, textY + LINE * 2, I18n.get("gui.bmfstown.resident.stat.job_liked"),
-                I18n.get(p.likedProfession().displayName()), 0x8A5A00);
+        int contentLeft = TEXT_PAD;
+        int contentRight = hobbyContentRight();
 
-        String blocks = prefs.blocks().isEmpty() ? none
-                : String.join("、", prefs.blocks().stream()
-                        .map(m -> I18n.get(m.displayName())).toList());
-        drawPrefRow(gfx, textY + LINE * 3, I18n.get("gui.bmfstown.resident.stat.blocks"),
-                blocks, 0x8A5A00);
+        gfx.enableScissor(this.leftPos + 4, this.topPos + relTop,
+                this.leftPos + contentRight, this.topPos + relBottom);
+        int y = relTop - scroll;
 
-        drawPrefRow(gfx, textY + LINE * 4, I18n.get("gui.bmfstown.resident.stat.animal"),
-                prefs.animal() != null ? I18n.get(prefs.animal().displayName()) : none, 0x2E7D2E);
-
-        drawPrefRow(gfx, textY + LINE * 5, I18n.get("gui.bmfstown.resident.stat.color"),
-                prefs.color() != null ? I18n.get(prefs.color().displayName()) : none, 0x2E7D2E);
-
-        drawPrefRow(gfx, textY + LINE * 6, I18n.get("gui.bmfstown.resident.stat.music"),
-                prefs.music()
-                        ? I18n.get("gui.bmfstown.resident.stat.value_yes")
-                        : I18n.get("gui.bmfstown.resident.stat.value_no"),
-                prefs.music() ? 0x2E7D2E : 0x808080);
-
-        drawPrefRow(gfx, textY + LINE * 7, I18n.get("gui.bmfstown.resident.stat.weather"),
-                prefs.weather() != null ? I18n.get(prefs.weather().displayName()) : none,
-                prefs.weather() != null ? 0xA03030 : 0x808080);
-
-        drawPrefRow(gfx, textY + LINE * 8, I18n.get("gui.bmfstown.resident.stat.mob"),
-                prefs.mob() != null ? I18n.get(prefs.mob().displayName()) : none,
-                prefs.mob() != null ? 0xA03030 : 0x808080);
-
-        // 性格：名字 + 一句话侧写（同步失败时为 null → 显示"无"）。
-        // 不带括号——"攀比（很在意装备好不好）"按 CJK 字宽算会溢出面板右缘
-        if (prefs.personality() != null) {
-            drawPrefRow(gfx, textY + LINE * 9,
-                    I18n.get("gui.bmfstown.resident.stat.personality"),
-                    I18n.get(prefs.personality().displayName())
-                            + " " + I18n.get(prefs.personality().descKey()),
-                    0x7B3FA0);
-        } else {
-            drawPrefRow(gfx, textY + LINE * 9,
-                    I18n.get("gui.bmfstown.resident.stat.personality"), none, 0x808080);
+        // ---- 1. 喜好段落（深色文本框：喜欢浅绿、讨厌浅红，一段话） ----
+        List<FormattedCharSequence> likeLines = this.font.split(
+                Component.literal(hobbyLikesSentence(p, prefs)), hobbyWrapWidth());
+        List<FormattedCharSequence> dislikeLines = this.font.split(
+                Component.literal(hobbyDislikesSentence(prefs)), hobbyWrapWidth());
+        int boxH = 4 + (likeLines.size() + dislikeLines.size()) * LINE + 4;
+        gfx.fill(contentLeft, y, contentRight, y + boxH, 0xFF262626);
+        int ty = y + 4;
+        int tx = contentLeft + 6;
+        for (FormattedCharSequence line : likeLines) {
+            gfx.drawString(this.font, line, tx, ty, 0xFFA9D89B, false);
+            ty += LINE;
         }
+        for (FormattedCharSequence line : dislikeLines) {
+            gfx.drawString(this.font, line, tx, ty, 0xFFE09A9A, false);
+            ty += LINE;
+        }
+        y += boxH + 4;
+
+        // ---- 2. 性格 10 轴坐标条 ----
+        gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.stat.personality"),
+                contentLeft, y, 0x707070, false);
+        y += LINE;
+        int[] axes = p.axes();
+        PersonalityAxis hovered = null;
+        int hoveredValue = 0;
+        for (PersonalityAxis axis : PersonalityAxis.values()) {
+            int hit = drawAxisRow(gfx, axis, axes, y, mouseX, mouseY);
+            if (hit >= 0) {
+                hovered = axis;
+                hoveredValue = hit;
+            }
+            y += AXIS_ROW_H;
+        }
+        gfx.disableScissor();
+
+        // 悬停提示放剪刀区外画：tooltip 会被 enableScissor 裁掉（血泪规律）。
+        // 用 renderScreenTooltip：屏幕绝对坐标 + 正确的右缘保护。
+        if (hovered != null) {
+            renderScreenTooltip(gfx, List.of(
+                    Component.translatable(hovered.displayName()).append(" " + hoveredValue),
+                    Component.translatable(hovered.poleKey(false)).withStyle(ChatFormatting.GRAY)
+                            .append(" ⇄ ").append(Component.translatable(hovered.poleKey(true))
+                                    .withStyle(ChatFormatting.GRAY)),
+                    Component.translatable(hovered.descKey()).withStyle(ChatFormatting.DARK_GRAY)),
+                    mouseX, mouseY);
+        }
+
+        drawHobbyScrollbar(gfx, contentH, visibleH, max);
     }
 
     /**
-     * 画一行"标签：值"（喜好页专用：标签列 52px 宽，容纳 5 字标签）。
+     * 文字层（renderLabels 平移姿势）画 tooltip 的统一出口。
+     *
+     * <p>实证 1.21.1 {@code GuiGraphics.renderTooltipInternal}：tooltip 的
+     * 渲染<b>吃当前画笔平移</b>，而右缘/下缘保护（{@code DefaultTooltipPositioner}）
+     * 却按<b>真实屏幕宽</b>计算——在 renderLabels 里直接调，tooltip 会整体
+     * 偏 (leftPos, topPos) 且出屏保护失真（"悬浮提示贴着屏幕右缘溢出"的病根）。
+     * 这里临时抵消平移，调用方传屏幕绝对坐标（mouseX/mouseY 就是），clamp 自然正确。
      */
-    private void drawPrefRow(GuiGraphics gfx, int y, String label, String value, int color) {
-        gfx.drawString(this.font, label, TEXT_PAD, y, 0x707070, false);
-        gfx.drawString(this.font, value, TEXT_PAD + 52, y, color, false);
+    private void renderScreenTooltip(GuiGraphics gfx, List<Component> lines, int absX, int absY) {
+        gfx.pose().pushPose();
+        gfx.pose().translate(-this.leftPos, -this.topPos, 0.0F);
+        gfx.renderComponentTooltip(this.font, lines, absX, absY);
+        gfx.pose().popPose();
+    }
+
+    /**
+     * 一条性格轴的坐标行：轴名 + 水平轨道 + 位置指针。
+     * 中性区 40~60 加深，中位刻度提示对称中心；指针紫色沿用旧性格文字色。
+     *
+     * @return 悬停在本行时返回该轴显示值，否则返回 -1（tooltip 由调用方在
+     *         剪刀区外统一渲染——剪刀区内画 tooltip 会被裁掉）
+     */
+    private int drawAxisRow(GuiGraphics gfx, PersonalityAxis axis, int[] axes,
+                            int rowTop, int mouseX, int mouseY) {
+        int v = axes == null || axes.length != PersonalityAxis.COUNT
+                ? PersonalityAxis.NEUTRAL
+                : Mth.clamp(axes[axis.ordinal()], 0, 100);
+        // 绘制用相对坐标（画笔在面板原点）；鼠标命中判定用绝对坐标
+        gfx.drawString(this.font, I18n.get(axis.displayName()),
+                TEXT_PAD, rowTop + 2, 0x505050, false);
+
+        int x0 = TEXT_PAD + AXIS_NAME_W;
+        int x1 = hobbyContentRight();
+        int trackW = x1 - x0;
+        int trackY = rowTop + 2;
+        // 轨道全程 0~100
+        gfx.fill(x0, trackY, x1, trackY + 4, 0xFFB4B4B4);
+        // 中性区 40~60 加深（"大多数镇民落在这里"的标尺段）
+        int nL = x0 + (int) (0.40D * trackW);
+        int nR = x0 + (int) (0.60D * trackW);
+        gfx.fill(nL, trackY, nR, trackY + 4, 0xFF8A8A8A);
+        // 中位刻度
+        gfx.fill(x0 + trackW / 2, trackY, x0 + trackW / 2 + 1, trackY + 4, 0xFF5A5A5A);
+        // 指针：锚定本居民的轴值位置
+        int px = x0 + (int) Math.round(v / 100.0D * (trackW - 2));
+        gfx.fill(px, rowTop, px + 2, rowTop + 8, 0xFF7B3FA0);
+
+        // 悬停判定：数值 + 两极方向 + 轴侧写由调用方渲染（档位标签依旧不显示）
+        boolean hovered = mouseX >= this.leftPos + TEXT_PAD && mouseX < this.leftPos + x1
+                && mouseY >= this.topPos + rowTop && mouseY < this.topPos + rowTop + AXIS_ROW_H;
+        return hovered ? v : -1;
+    }
+
+    /** 画喜好页滚动条：轨道常驻，内容不足一屏时不画滑块（相对坐标，text 层口径）。 */
+    private void drawHobbyScrollbar(GuiGraphics gfx, int contentH, int visibleH, int max) {
+        int trackX = this.imageWidth - 5 - SCROLLBAR_WIDTH;
+        int trackY = hobbyListTop();
+        gfx.fill(trackX, trackY, trackX + SCROLLBAR_WIDTH, trackY + visibleH, 0xFF9A9A9A);
+        if (max <= 0) {
+            return;
+        }
+        int thumbH = Math.max(8, visibleH * visibleH / contentH);
+        int thumbY = trackY + (visibleH - thumbH) * this.hobbyScroll / max;
+        gfx.fill(trackX, thumbY, trackX + SCROLLBAR_WIDTH, thumbY + thumbH, 0xFF4C4C4C);
+    }
+
+    /** 喜好页滚动区顶（相对面板；名字行固定在其上方，不滚）。 */
+    private int hobbyListTop() {
+        return ResidentMenu.PANEL_Y + LINE;
+    }
+
+    /** 喜好页滚动区底（相对面板）。 */
+    private int hobbyListBottom() {
+        return ResidentMenu.PANEL_Y + HOBBY_VISIBLE_ROWS * ROW_H + 2;
+    }
+
+    /** 喜好内容右缘（相对面板；滚动条贴在其右侧的缝里）。 */
+    private int hobbyContentRight() {
+        return this.imageWidth - 12;
+    }
+
+    /** 喜好段落换行宽度（深色框左右内边距已扣除）。 */
+    private int hobbyWrapWidth() {
+        return hobbyContentRight() - TEXT_PAD - 12;
+    }
+
+    /** 喜好页内容总高（px）：段落框 + 间隔 + "性格"标题行 + 10 条轴。 */
+    private int hobbyContentHeight(ResidentSnapshot p, ClientMoodState.MoodPrefs prefs) {
+        int lines = this.font.split(Component.literal(hobbyLikesSentence(p, prefs)),
+                hobbyWrapWidth()).size()
+                + this.font.split(Component.literal(hobbyDislikesSentence(prefs)),
+                hobbyWrapWidth()).size();
+        int boxH = 4 + lines * LINE + 4;
+        return 2 + boxH + 4 + LINE + PersonalityAxis.COUNT * AXIS_ROW_H + 2;
+    }
+
+    /**
+     * 拼喜好段落·喜欢半句：口味/工作/建材/动物/颜色/音乐依次罗列。
+     * 喜好来源不止出生随机（特性等会追加），这里只做拼接不筛选。
+     */
+    private String hobbyLikesSentence(ResidentSnapshot p, ClientMoodState.MoodPrefs prefs) {
+        List<String> items = new ArrayList<>();
+        if (p.hobbyFood() != null) {
+            items.add(I18n.get(p.hobbyFood().displayName()));
+        }
+        if (p.likedProfession() != null) {
+            items.add(I18n.get("gui.bmfstown.resident.hobby.job_item",
+                    I18n.get(p.likedProfession().displayName())));
+        }
+        for (var m : prefs.blocks()) {
+            items.add(I18n.get(m.displayName()));
+        }
+        if (prefs.animal() != null) {
+            items.add(I18n.get(prefs.animal().displayName()));
+        }
+        if (prefs.color() != null) {
+            items.add(I18n.get(prefs.color().displayName()));
+        }
+        if (prefs.music()) {
+            items.add(I18n.get("gui.bmfstown.resident.hobby.music_item"));
+        }
+        if (items.isEmpty()) {
+            return I18n.get("gui.bmfstown.resident.hobby.no_likes");
+        }
+        return I18n.get("gui.bmfstown.resident.hobby.likes",
+                String.join(I18n.get("gui.bmfstown.resident.hobby.separator"), items));
+    }
+
+    /** 拼喜好段落·讨厌半句：讨厌的天气 + 讨厌的生物。 */
+    private String hobbyDislikesSentence(ClientMoodState.MoodPrefs prefs) {
+        List<String> items = new ArrayList<>();
+        if (prefs.weather() != null) {
+            items.add(I18n.get(prefs.weather().displayName()));
+        }
+        if (prefs.mob() != null) {
+            items.add(I18n.get(prefs.mob().displayName()));
+        }
+        if (items.isEmpty()) {
+            return I18n.get("gui.bmfstown.resident.hobby.no_dislikes");
+        }
+        return I18n.get("gui.bmfstown.resident.hobby.dislikes",
+                String.join(I18n.get("gui.bmfstown.resident.hobby.separator"), items));
     }
 
     /** 想法页背景：整页深灰列表底 + 右缘滚动条。 */
@@ -2243,14 +2424,31 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 eff *= sm;
             }
 
-            double mm = com.bmf.bmfstown.entity.profile.EfficiencyMath.moodMultiplier(mood);
+            // v0.14 性格轴（坚韧阈值位移 + 专注段）：轴值走快照，与服务端同源
+            int[] axes = profile.axes();
+            int gritAxis = axes != null ? axes[com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT.ordinal()]
+                    : com.bmf.bmfstown.entity.profile.PersonalityAxis.NEUTRAL;
+            int focusAxis = axes != null ? axes[com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS.ordinal()]
+                    : com.bmf.bmfstown.entity.profile.PersonalityAxis.NEUTRAL;
+
+            double mm = com.bmf.bmfstown.entity.profile.EfficiencyMath.moodMultiplier(mood, gritAxis);
             if (mm < 1.0) {
                 int mmPct = (int) Math.round(mm * 100);
-                int threshold = com.bmf.bmfstown.config.Config.MOOD_SLOW_THRESHOLD.get();
+                int threshold = com.bmf.bmfstown.entity.profile.PersonalityFormulas.slowThreshold(gritAxis);
                 ex = drawSegment(gfx, ex, effY, " ", 0x555555);
                 ex = addEffPart(gfx, ex, effY, "× " + mm, 0xB02020,
                         List.of(Component.translatable("gui.bmfstown.resident.work.eff_mood", threshold, mmPct)));
                 eff *= mm;
+            }
+
+            // 专注段（v0.14，±5% 默认）：≠1 才显示（显示==生效）
+            double focusM = com.bmf.bmfstown.entity.profile.PersonalityFormulas.focusMultiplier(focusAxis);
+            if (Math.abs(focusM - 1.0) > 1.0E-4) {
+                int focusPct = (int) Math.round((focusM - 1.0) * 100);
+                ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(focusM), focusM > 1.0 ? 0x2E7D2E : 0xB02020,
+                        List.of(Component.translatable("gui.bmfstown.resident.work.eff_focus", focusPct)));
+                eff *= focusM;
             }
 
             double ws = 1.0;
@@ -2305,7 +2503,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     var prof = com.bmf.bmfstown.entity.profile.ProfessionType.byName(p.professionId());
                     if (prof.isReal() && prof.mainSkill() != null) {
                         double discipline = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
-                                profile.skillXp(prof.mainSkill()), mood, false);
+                                profile.skillXp(prof.mainSkill()), mood, false, gritAxis, focusAxis);
                         eff *= discipline;
                         ex = drawSegment(gfx, ex, effY, " ", 0x555555);
                         ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(discipline),
@@ -2383,15 +2581,14 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             }
 
             // 悬停提示：鼠标落在哪段公式上，就显示"这一段为什么是这个数"。
-            // 坐标口径（1.21.1 实测）：renderLabels 收到的是绝对鼠标坐标，
-            // 而本方法所有绘制都发生在 translate(leftPos, topPos) 平移后的
-            // 面板相对坐标系里——判定与提示都要换算回相对坐标。
+            // 判定用相对坐标（画笔已平移）；tooltip 走 renderScreenTooltip
+            //（屏幕绝对坐标 + 正确的右缘保护，不随画笔偏移）。
             int relX = mouseX - this.leftPos;
             int relY = mouseY - this.topPos;
             for (EffPart part : this.effParts) {
                 if (relX >= part.xStart() && relX < part.xEnd()
                         && relY >= effY && relY < effY + 10) {
-                    gfx.renderComponentTooltip(this.font, part.tooltip(), relX, relY + 12);
+                    renderScreenTooltip(gfx, part.tooltip(), mouseX, mouseY + 12);
                     break;
                 }
             }
@@ -2444,10 +2641,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     }
                 }
                 if (hoverProduct != null) {
-                    // 鼠标换算成面板相对坐标给 tooltip（renderLabels 在平移姿势里）
-                    gfx.renderComponentTooltip(this.font, List.of(Component.translatable(
-                            hoverProduct.getDescriptionId())),
-                            mouseX - this.leftPos + 8, mouseY - this.topPos + 8);
+                    // tooltip 走 renderScreenTooltip（屏幕绝对坐标 + 右缘保护）
+                    renderScreenTooltip(gfx, List.of(Component.translatable(
+                            hoverProduct.getDescriptionId())), mouseX + 8, mouseY + 8);
                 }
                 // 悬停高亮的白框最后描一遍
                 if (hoverIdx >= 0) {
@@ -2553,8 +2749,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     }
                 }
                 if (hoverStack != null) {
-                    gfx.renderComponentTooltip(this.font, List.of(hoverStack.getHoverName()),
-                            mouseX - this.leftPos + 8, mouseY - this.topPos + 8);
+                    renderScreenTooltip(gfx, List.of(hoverStack.getHoverName()),
+                            mouseX + 8, mouseY + 8);
                 }
                 // 滚动条（超出 2 行才画）
                 if (maxScroll > 0) {
@@ -3547,6 +3743,16 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 想法日志滚轮：新想法在上，向下滚 = 看更早的（滑块同步往下走）
             int max = thoughtMaxScroll();
             this.thoughtScroll = Mth.clamp(this.thoughtScroll - (int) Math.signum(scrollY), 0, max);
+            return true;
+        }
+        if (this.page == PAGE_HOBBY) {
+            // 喜好页整页滚（喜好段落 + 性格 10 轴）
+            Resident r = this.menu.getResident();
+            int visible = hobbyListBottom() - hobbyListTop();
+            int max = r == null ? 0
+                    : Math.max(0, hobbyContentHeight(r.getArchive(),
+                    ClientMoodState.prefsOf(r.getUUID())) - visible);
+            this.hobbyScroll = Mth.clamp(this.hobbyScroll - (int) Math.signum(scrollY), 0, max);
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);

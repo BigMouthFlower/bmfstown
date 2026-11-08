@@ -2,6 +2,8 @@ package com.bmf.bmfstown.entity;
 
 import com.bmf.bmfstown.BmfTown;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -74,6 +76,59 @@ public final class PersonalityEventHandler {
         for (Resident resident : residents) {
             if (resident.isAlive()) {
                 resident.getStatus().noteExplosionNearby(resident, level);
+            }
+        }
+    }
+
+    /**
+     * 附近有生物繁殖（新生命诞生）→ 暴力轴镜像事件（仁慈欣喜/嗜血嫌吵，v0.14）。
+     * 繁殖产下的幼体走实体出生事件；{@code loadedFromDisk} 过滤掉区块加载回放的
+     * 幼体（否则每次读图全镇都"看一遍"繁殖）。
+     */
+    @SubscribeEvent
+    public static void onEntityJoinLevel(net.neoforged.neoforge.event.entity.EntityJoinLevelEvent event) {
+        if (event.getLevel().isClientSide() || event.loadedFromDisk()
+                || !(event.getEntity() instanceof net.minecraft.world.entity.AgeableMob baby)
+                || !baby.isBaby()) {
+            return;
+        }
+        if (!(event.getLevel() instanceof ServerLevel level)) {
+            return;
+        }
+        AABB box = baby.getBoundingBox().inflate(NOTICE_RADIUS);
+        List<Resident> residents = level.getEntitiesOfClass(Resident.class, box);
+        for (Resident resident : residents) {
+            if (resident.isAlive()) {
+                resident.getStatus().noteBirthNearby(resident, level);
+            }
+        }
+    }
+
+    /**
+     * 群体支援呼救（v0.14，用户 2026-11-08 定稿）：居民被敌对生物袭击时，
+     * 向周围居民广播呼救——不胆小者（战士无条件、非战士勇气轴 ≥35）
+     * 由 {@link CourageGoals.AssistGoal} 入场助战，胆小者照旧只顾逃跑。
+     *
+     * <p>玩家袭击不呼救：镇民对玩家零仇恨（决不给玩家拉仇恨）。
+     * 用 {@code LivingIncomingDamageEvent}（伤害入账前）而不是死亡事件——
+     * 等人死了再呼救就只剩收尸了。
+     */
+    @SubscribeEvent
+    public static void onResidentAttacked(
+            net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent event) {
+        if (event.getEntity().level().isClientSide()
+                || !(event.getEntity() instanceof Resident victim)) {
+            return;
+        }
+        if (!(event.getSource().getEntity() instanceof LivingEntity attacker)
+                || attacker instanceof Player) {
+            return;
+        }
+        AABB box = victim.getBoundingBox().inflate(NOTICE_RADIUS);
+        List<Resident> residents = event.getEntity().level().getEntitiesOfClass(Resident.class, box);
+        for (Resident ally : residents) {
+            if (ally != victim && ally.isAlive()) {
+                ally.raiseAlarm(attacker);
             }
         }
     }

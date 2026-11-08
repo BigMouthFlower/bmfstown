@@ -58,9 +58,16 @@ public final class WarriorGoals {
         };
     }
 
-    /** 索敌半径：站岗用警戒半径，跟随用同半径（都在锚点周围）。 */
+    /**
+     * 索敌半径：站岗用警戒半径，跟随用同半径（都在锚点周围）。
+     * v0.14：叠加勇气轴修正——好战端最高 +10 格、胆小端最高 −5 格（线性，
+     * 下限钳 2 防跌破；锁敌与追击共用本值，修一处即可）。
+     */
     private static double aggroRadius(Resident resident) {
-        return Config.WARRIOR_GUARD_RADIUS.get();
+        double corrected = com.bmf.bmfstown.config.Config.WARRIOR_GUARD_RADIUS.get()
+                + com.bmf.bmfstown.entity.profile.PersonalityFormulas.aggroRadiusCorrection(
+                        resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.COURAGE));
+        return Math.max(2.0D, corrected);
     }
 
     /** 跟随目标的玩家（已校验维度一致）；不在本维度/已下线返回 null。 */

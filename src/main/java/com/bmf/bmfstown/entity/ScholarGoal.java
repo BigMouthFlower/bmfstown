@@ -720,7 +720,9 @@ public class ScholarGoal extends Goal {
         var skill = this.resident.getProfession().mainSkill();
         double efficiency = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
                 this.resident.getGrowth().skillXp(skill),
-                this.resident.getStatus().mood(), false);
+                this.resident.getStatus().mood(), false,
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT),
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
         if (content != null && content.draft() instanceof BookDraft.Perk p
                 && this.resident.hasPerk(
                         com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "dialectics")) {
@@ -728,7 +730,9 @@ public class ScholarGoal extends Goal {
             if (prof.isReal() && prof.mainSkill() != null) {
                 efficiency *= com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
                         this.resident.getGrowth().skillXp(prof.mainSkill()),
-                        this.resident.getStatus().mood(), false);
+                        this.resident.getStatus().mood(), false,
+                        this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT),
+                        this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
             }
         }
         if (this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_S_ADEPT, "division")) {
@@ -779,8 +783,9 @@ public class ScholarGoal extends Goal {
 
     private boolean inWorkHours(ServerLevel level) {
         long t = level.getDayTime() % 24000L;
-        int start = Config.SCHOLAR_WORK_START.get();
-        int end = Config.SCHOLAR_WORK_END.get();
+        int[] window = this.resident.scholarWorkWindow(); // v0.14：边界带晨夜轴个人偏移
+        int start = window[0];
+        int end = window[1];
         return start <= end ? (t >= start && t < end) : (t >= start || t < end);
     }
 

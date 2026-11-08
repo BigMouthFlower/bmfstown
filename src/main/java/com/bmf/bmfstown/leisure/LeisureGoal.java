@@ -48,31 +48,34 @@ public class LeisureGoal extends Goal {
     //  窗口判定
     // ------------------------------------------------------------
 
-    /** 是否处于"该上班"状态（有职业且在工作时段的工作日；此时不休闲）。 */
+    /** 是否处于"该上班"状态（有职业且在工作时段的工作日；此时不休闲）。
+     *  v0.14：窗口边界带晨夜轴个人偏移（resident.workWindow()/scholarWorkWindow()）。 */
     private boolean onDuty(ServerLevel level) {
         if (!TownCalendar.get(level).isWorkday(level)) {
             return false; // 周末：有职业者也休闲
         }
         return switch (this.resident.getProfession()) {
-            case WORKER -> inHours(level,
-                    Config.CRAFT_WORK_START.get(), Config.CRAFT_WORK_END.get());
+            case WORKER -> inHours(level, this.resident.workWindow());
             case SCHOLAR -> (this.resident.getWorkMode() == WorkMode.WRITE
                     || this.resident.getWorkMode() == WorkMode.COPY)
-                    && inHours(level,
-                            Config.SCHOLAR_WORK_START.get(), Config.SCHOLAR_WORK_END.get());
+                    && inHours(level, this.resident.scholarWorkWindow());
             default -> false; // 无业/簿记员无班表；战士另由模式门排除
         };
     }
 
-    private static boolean inHours(ServerLevel level, int start, int end) {
-        int t = (int) (level.getDayTime() % 24000L);
+    /** 窗口边界判定（支持跨午夜）。start/end 为已含晨夜轴偏移的边界。 */
+    private static boolean inHours(ServerLevel level, int[] window) {
+        int t = (int) Math.floorMod(level.getDayTime(), 24000L);
+        int start = window[0];
+        int end = window[1];
         return start <= end ? (t >= start && t < end) : (t >= start || t < end);
     }
 
-    /** 休闲窗口总门（不含冷却）：醒着、没在吃饭、没带路、不值班。 */
+    /** 休闲窗口总门（不含冷却）：醒着、没在吃饭、没带路、不值班。
+     *  v0.14：摸鱼窗口（专注轴负值触发）放行——摸鱼=上班时间开小差。 */
     private boolean windowOpen(ServerLevel level) {
-        // 夜间（睡觉窗口）绝不休闲——被叫醒的村民干等或自然游走，不去图书馆
-        if (Resident.isNightTime(level.getDayTime())) {
+        // 夜间（睡觉窗口，含晨夜轴偏移）绝不休闲——被叫醒的村民干等或自然游走，不去图书馆
+        if (this.resident.isNightForMe(level)) {
             return false;
         }
         if (this.resident.isSleepRoutineActive()
@@ -83,6 +86,9 @@ public class LeisureGoal extends Goal {
         WorkMode mode = this.resident.getWorkMode();
         if (mode == WorkMode.FOLLOW || mode == WorkMode.GUARD_POST) {
             return false; // 战士工作中：守夜/守岗
+        }
+        if (this.resident.isGoofingOff(level)) {
+            return true; // 摸鱼：上班时间的小差窗口（WorkerGoal/FireworksmanGoal 触发）
         }
         return !onDuty(level);
     }

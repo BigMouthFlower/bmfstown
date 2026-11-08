@@ -136,6 +136,11 @@ public class WorkerGoal extends Goal {
         if (!com.bmf.bmfstown.calendar.TownCalendar.get(level).isWorkday(level)) {
             return false; // 周末（周六日）不上班，进闲暇池
         }
+        // 专注轴摸鱼（v0.14）：每工作段 roll 一次，命中 → 开一个短窗口不上工
+        //（镇民落回漫步/闲暇池，窗口 = 正常闲暇 ×1/3，见 Resident.startGoofOff）
+        if (tryGoofOff(level)) {
+            return false;
+        }
         JobState job = this.resident.getJobState();
         if (!job.workerEnabled() || job.orderItem().isEmpty()) {
             return false;
@@ -649,11 +654,42 @@ public class WorkerGoal extends Goal {
     //  工具方法
     // ==========================================================
 
-    private static boolean inWorkHours(ServerLevel level) {
+    private boolean inWorkHours(ServerLevel level) {
         long t = level.getDayTime() % 24000L;
-        int start = Config.CRAFT_WORK_START.get();
-        int end = Config.CRAFT_WORK_END.get();
+        int[] window = this.resident.workWindow(); // v0.14：边界带晨夜轴个人偏移
+        int start = window[0];
+        int end = window[1];
         return start <= end ? (t >= start && t < end) : (t >= start || t < end);
+    }
+
+    /** 摸鱼判定游标：每工作段（约一件成品的耗时）判一次，防 canUse 每 tick 重摇。 */
+    private long nextGoofRollAt = 0;
+
+    /**
+     * 专注轴摸鱼判定（v0.14）：仅轴值 &lt;40 有概率，每工作段判一次，
+     * 命中开 400~800t 短窗口（正常闲暇段 1200~2400 的 1/3）。
+     * 窗口期间本 Goal 直接拒用，镇民落回漫步/闲暇池（LeisureGoal 的 windowOpen
+     * 对摸鱼窗口放行）。返回 true = 窗口已开（本 tick 拒绝开工）。
+     */
+    private boolean tryGoofOff(ServerLevel level) {
+        long now = level.getGameTime();
+        if (now < this.nextGoofRollAt) {
+            return false; // 本段还没到重判点
+        }
+        this.nextGoofRollAt = now + Config.CRAFT_TICKS_PER_ITEM.get();
+        double chance = com.bmf.bmfstown.entity.profile.PersonalityFormulas.goofChance(
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
+        if (chance <= 0) {
+            return false; // 专注轴中位以上永不摸鱼
+        }
+        if (level.getRandom().nextDouble() < chance) {
+            int session = Config.AXIS_GOOF_SESSION_MIN.get()
+                    + level.getRandom().nextInt(Math.max(1,
+                            Config.AXIS_GOOF_SESSION_MAX.get() - Config.AXIS_GOOF_SESSION_MIN.get() + 1));
+            this.resident.startGoofOff(level.getGameTime() + session);
+            return true;
+        }
+        return false;
     }
 
     /** 订单解析：产物注册名 → 真实配方目录条目。 */
@@ -671,7 +707,9 @@ public class WorkerGoal extends Goal {
         var skill = this.resident.getProfession().mainSkill();
         double efficiency = com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
                 this.resident.getGrowth().skillXp(skill),
-                this.resident.getStatus().mood(), false);
+                this.resident.getStatus().mood(), false,
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT),
+                this.resident.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.FOCUS));
         efficiency *= com.bmf.bmfstown.entity.profile.EfficiencyMath.workerSpeedMultiplier(
                 this.resident.getGrowth().perkChoice(ProfessionType.WORKER,
                         com.bmf.bmfstown.entity.profile.Perks.NODE_W_ADEPT));

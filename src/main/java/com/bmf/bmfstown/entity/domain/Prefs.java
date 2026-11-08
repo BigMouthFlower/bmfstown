@@ -3,7 +3,6 @@ package com.bmf.bmfstown.entity.domain;
 import com.bmf.bmfstown.entity.profile.BlockMaterial;
 import com.bmf.bmfstown.entity.profile.Hobbies;
 import com.bmf.bmfstown.entity.profile.MobPref;
-import com.bmf.bmfstown.entity.profile.PersonalityType;
 import com.bmf.bmfstown.entity.profile.PrefAnimal;
 import com.bmf.bmfstown.entity.profile.PrefColor;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
@@ -39,7 +38,7 @@ public final class Prefs {
         /** 口味（必出：甜 或 肉）。判定点：FoodTraits.matches。 */
         FOOD {
             @Override
-            Object roll(RandomSource random) {
+            Object roll(RandomSource random, boolean cowardly) {
                 return Hobbies.Food.random(random);
             }
 
@@ -56,8 +55,10 @@ public final class Prefs {
         /** 喜欢的职业（必出）。判定点：每日结算 jobLiked。 */
         LIKED_PROFESSION {
             @Override
-            Object roll(RandomSource random) {
-                return randomRealProfession(random, null);
+            Object roll(RandomSource random, boolean cowardly) {
+                // 胆小（勇气<35）不喜战士（用户定稿 2026-11-08）：
+                // 战士的活随时要跟怪物拼命，胆小人喜好它纯属自相矛盾
+                return randomRealProfession(random, null, cowardly);
             }
 
             @Override
@@ -74,13 +75,15 @@ public final class Prefs {
                         return p;
                     }
                 }
-                return randomRealProfession(RandomSource.create(), null);
+                // 载入时性格轴可能还没读出来：不排除战士，
+                // 矛盾组合交给 Status.ensureGenerated 的对账修正
+                return randomRealProfession(RandomSource.create(), null, false);
             }
         },
         /** 喜欢的建筑材质（1/2 概率 × 2 次，0~2 种）。判定点：住宅材质扫描。 */
         BLOCK {
             @Override
-            Object roll(RandomSource random) {
+            Object roll(RandomSource random, boolean cowardly) {
                 List<BlockMaterial> blocks = new ArrayList<>();
                 for (int i = 0; i < 2; i++) {
                     if (random.nextBoolean()) {
@@ -125,7 +128,7 @@ public final class Prefs {
         /** 喜欢的动物（1/2 概率）。判定点：感知扫描。 */
         ANIMAL {
             @Override
-            Object roll(RandomSource random) {
+            Object roll(RandomSource random, boolean cowardly) {
                 return random.nextBoolean() ? PrefAnimal.random(random) : null;
             }
 
@@ -144,7 +147,7 @@ public final class Prefs {
         /** 喜欢的颜色（1/2 概率）。判定点：住宅颜色扫描。 */
         COLOR {
             @Override
-            Object roll(RandomSource random) {
+            Object roll(RandomSource random, boolean cowardly) {
                 return random.nextBoolean() ? PrefColor.random(random) : null;
             }
 
@@ -163,7 +166,7 @@ public final class Prefs {
         /** 喜欢音乐（1/2 概率）。判定点：唱片机感知。 */
         MUSIC {
             @Override
-            Object roll(RandomSource random) {
+            Object roll(RandomSource random, boolean cowardly) {
                 return random.nextBoolean();
             }
 
@@ -180,7 +183,7 @@ public final class Prefs {
         /** 讨厌的天气（1/3 概率，权重 晴1/雨15/雷暴5）。判定点：天气感知。 */
         WEATHER {
             @Override
-            Object roll(RandomSource random) {
+            Object roll(RandomSource random, boolean cowardly) {
                 return random.nextInt(3) == 0 ? WeatherPref.randomDisliked(random) : null;
             }
 
@@ -199,7 +202,7 @@ public final class Prefs {
         /** 讨厌的敌对生物（1/4 概率，14 选 1）。判定点：生物感知。 */
         MOB {
             @Override
-            Object roll(RandomSource random) {
+            Object roll(RandomSource random, boolean cowardly) {
                 return random.nextInt(4) == 0 ? MobPref.random(random) : null;
             }
 
@@ -217,7 +220,7 @@ public final class Prefs {
         };
 
         /** 抽一个本类别的值（可空 = 该类别本胎没出）。 */
-        abstract Object roll(RandomSource random);
+        abstract Object roll(RandomSource random, boolean cowardly);
 
         /** 写 NBT（key 约定与旧版平铺字段一致，老档天然兼容）。 */
         abstract void saveValue(CompoundTag tag, Object v);
@@ -225,11 +228,18 @@ public final class Prefs {
         /** 读 NBT（缺 key 返回 null/false/空列表）。 */
         abstract Object loadValue(CompoundTag tag);
 
-        /** 从真实职业里均匀抽一个，排除 exclude（好恶互斥用；当前只有"喜欢"）。 */
+        /**
+         * 从真实职业里均匀抽一个，排除 exclude（好恶互斥用；当前只有"喜欢"）；
+         * cowardly 时额外排除战士（用户定稿：胆小不喜战士）。
+         *
+         * <p>候选池每次调用都从 {@link ProfessionType#values()} 现读现滤——
+         * 以后加新职业自动入池，无需改这里。
+         */
         static ProfessionType randomRealProfession(RandomSource random,
-                ProfessionType exclude) {
+                ProfessionType exclude, boolean cowardly) {
             ProfessionType[] real = java.util.Arrays.stream(ProfessionType.values())
                     .filter(ProfessionType::isReal)
+                    .filter(p -> !cowardly || p != ProfessionType.WARRIOR)
                     .toArray(ProfessionType[]::new);
             if (real.length <= 1 || real.length == 1 && real[0] == exclude) {
                 return real.length == 0 ? ProfessionType.NONE : real[0];
@@ -258,10 +268,10 @@ public final class Prefs {
     /** 偏好值仓库：key = 类别，value 类型见各枚举值注释。 */
     private final Map<PrefKind, Object> values = new EnumMap<>(PrefKind.class);
 
-    /** 性格标签（必出 1 条，9 选 1，终生不变——除非 reroll/GATTACA）。 */
-    private PersonalityType personality = PersonalityType.OPTIMIST;
-
-    /** 偏好是否已生成。false = 下次 ensureGenerated 时抽取并落档。 */
+    /**
+     * 偏好是否已生成。false = 下次 ensureGenerated 时抽取并落档。
+     * 性格不再存这里（v0.14 多轴改版：10 条轴值移居 {@link Status} 的 "Axes"）。
+     */
     private boolean generated = false;
 
     // ---- 懒生成 / 重摇 ----
@@ -270,25 +280,39 @@ public final class Prefs {
         return this.generated;
     }
 
-    /** 第一次用到时抽取全部偏好（幂等；已生成直接返回）。 */
-    public void ensureGenerated(RandomSource random) {
+    /**
+     * 第一次用到时抽取全部偏好（幂等；已生成直接返回）。
+     *
+     * @param cowardly 是否胆小（勇气轴低于还手/逃跑分界线）——
+     *                 抽"喜欢的职业"时据此排除战士；调用方需先保证性格轴已生成
+     */
+    public void ensureGenerated(RandomSource random, boolean cowardly) {
         if (this.generated) {
             return;
         }
         this.generated = true;
         for (PrefKind kind : PrefKind.values()) {
-            this.values.put(kind, kind.roll(random));
+            this.values.put(kind, kind.roll(random, cowardly));
         }
-        this.personality = PersonalityType.random(random);
     }
 
     /**
      * 重摇偏好与性格（调试命令 /bmfstown reroll 用）。
      * 打回未生成再抽一遍——等价于"这个镇民今天刚出生"。
      */
-    public void reroll(RandomSource random) {
+    public void reroll(RandomSource random, boolean cowardly) {
         this.generated = false;
-        ensureGenerated(random);
+        ensureGenerated(random, cowardly);
+    }
+
+    /**
+     * 单独重摇"喜欢的职业"（性格对账专用，用户定稿 2026-11-08）：
+     * 旧档/继承来的"胆小却喜好战士"在此修正。整体替换偏好仓会连累
+     * 其他已定偏好，所以只动这一项。
+     */
+    public void rerollLikedProfession(RandomSource random, boolean cowardly) {
+        this.values.put(PrefKind.LIKED_PROFESSION,
+                PrefKind.randomRealProfession(random, null, cowardly));
     }
 
     // ---- 读（类型安全封装；调用前应先 ensureGenerated） ----
@@ -335,17 +359,12 @@ public final class Prefs {
         return get(PrefKind.MOB);
     }
 
-    public PersonalityType personality() {
-        return this.personality;
-    }
-
     // ---- 写（reroll/GATTACA 走整体替换；单独写入口留给将来） ----
 
-    /** GATTACA 复制用：整体覆盖对方的偏好与性格。 */
+    /** GATTACA 复制用：整体覆盖对方的偏好（性格轴在 Status 域，不随此复制）。 */
     public void copyFrom(Prefs other) {
         this.values.clear();
         this.values.putAll(other.values);
-        this.personality = other.personality;
         this.generated = true;
     }
 
@@ -372,9 +391,9 @@ public final class Prefs {
     }
 
     /**
-     * 偏好的紧凑网络编码（MoodSyncPayload 用，格式与旧版完全一致）：
-     * {@code blocks|animal|color|music|weather|mob|personality}，
-     * blocks 段内逗号分隔；空段 = 没有这项偏好。
+     * 偏好的紧凑网络编码（MoodSyncPayload 用）：
+     * {@code blocks|animal|color|music|weather|mob}（v0.14 起移除性格段，
+     * 性格轴走 ResidentSnapshot "Axes"），blocks 段内逗号分隔；空段 = 没有这项偏好。
      */
     public String prefsString() {
         StringBuilder blocks = new StringBuilder();
@@ -390,8 +409,7 @@ public final class Prefs {
                 likedColor() != null ? likedColor().name() : "",
                 likesMusic() ? "1" : "0",
                 dislikedWeather() != null ? dislikedWeather().name() : "",
-                dislikedMob() != null ? dislikedMob().name() : "",
-                this.personality.name());
+                dislikedMob() != null ? dislikedMob().name() : "");
     }
 
     // ==========================================================
@@ -408,7 +426,6 @@ public final class Prefs {
                     kind.saveValue(tag, v);
                 }
             }
-            tag.putString("Personality", this.personality.name());
         }
         return tag;
     }
@@ -424,8 +441,6 @@ public final class Prefs {
                     p.values.put(kind, v);
                 }
             }
-            p.personality = getEnum(tag, "Personality", PersonalityType.class,
-                    PersonalityType.OPTIMIST);
         }
         // 自愈（v0.9.1 实测事故）：generated=true 但偏好仓全空 = 中间版本把
         // 空壳档写了回去。这种档若不处理，懒生成永远跳过、全员卡在
