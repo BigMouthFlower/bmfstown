@@ -23,9 +23,7 @@ import org.slf4j.Logger;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -72,19 +70,11 @@ public class WorkerGoal extends Goal {
     /** 一批最多做几套（用户定稿：整批取送、单件合成）。 */
     private static final int BATCH_MAX = 3;
 
-    /** 岗位认领的过期时间（毫秒）：持有者长时间不刷新视为失踪，允许接管。 */
-    private static final long CLAIM_STALE_MS = 30_000L;
-
     private enum Phase {
         GO_POST, FETCH_GO, FETCH_TAKE, CRAFT, STORE_GO, STORE_PUT
     }
 
-    /** 岗位占用记录（服务端内存级；重启清空 → 工人重新认领，无副作用）。 */
-    private record Claim(UUID holder, long at) {
-    }
-
-    /** 工作台 asLong → 占用记录。 */
-    private static final Map<Long, Claim> CLAIMS = new HashMap<>();
+    // v0.13：认领表提取为 WorkshopClaims（工人/烟火工匠共池先到先得，决策 #30）
 
     private final Resident resident;
 
@@ -258,8 +248,7 @@ public class WorkerGoal extends Goal {
         }
         // 认领心跳：持有者持续刷新时间戳，失踪 30 秒后别的工人可接管
         if (this.tablePos != null) {
-            CLAIMS.put(this.tablePos.asLong(),
-                    new Claim(this.resident.getUUID(), System.currentTimeMillis()));
+            WorkshopClaims.put(this.tablePos.asLong(), this.resident.getUUID());
         }
         switch (this.phase) {
             case GO_POST -> tickGoPost(level);
@@ -502,10 +491,7 @@ public class WorkerGoal extends Goal {
             if (!isCraftingTable(level, pos)) {
                 continue; // 被拆了：等登记表惰性清理，这里直接跳过
             }
-            Claim claim = CLAIMS.get(p);
-            boolean taken = claim != null && !claim.holder().equals(self)
-                    && System.currentTimeMillis() - claim.at() < CLAIM_STALE_MS;
-            if (taken) {
+            if (WorkshopClaims.isTaken(p, self)) {
                 continue;
             }
             double d = pos.distSqr(this.resident.blockPosition());
@@ -517,7 +503,7 @@ public class WorkerGoal extends Goal {
         if (bestTable == null) {
             return false;
         }
-        CLAIMS.put(bestTable.asLong(), new Claim(self, System.currentTimeMillis()));
+        WorkshopClaims.put(bestTable.asLong(), self);
         this.tablePos = bestTable;
         this.townId = town.id();
         return true;
@@ -525,12 +511,7 @@ public class WorkerGoal extends Goal {
 
     private void releaseClaim() {
         if (this.tablePos != null) {
-            long key = this.tablePos.asLong();
-            Claim claim = CLAIMS.get(key);
-            // 只释放自己的认领：接管过别人的陈旧记录时不误删
-            if (claim != null && this.resident.getUUID().equals(claim.holder())) {
-                CLAIMS.remove(key);
-            }
+            WorkshopClaims.release(this.tablePos.asLong(), this.resident.getUUID());
             this.tablePos = null;
         }
     }

@@ -544,6 +544,40 @@ public final class Config {
                     "Day time when the worker stops working")
             .defineInRange("craft.workEndTick", 10000, 1, 24000);
 
+    // ==========================================================
+    //  烟火工匠（v0.13，firework.*）
+    // ==========================================================
+
+    /** 烟火工匠每件（每次组装=一套）基础耗时（tick；与工人同构除以效率）。 */
+    public static final ModConfigSpec.IntValue FIREWORK_TICKS_PER_ITEM = BUILDER
+            .comment("烟火工匠每造一颗星/每组装一套烟花的基础耗时（tick，受熟练度/心情效率缩放）",
+                    "Base ticks for the fireworksman per star or per rocket batch (scaled by efficiency)")
+            .defineInRange("firework.ticksPerItem", 100, 10, 24000);
+
+    /** 烟火经验：每件成品 +30（决策 #40 用户定稿，注册键 firework.xpPerItem）。 */
+    public static final ModConfigSpec.IntValue FIREWORK_XP_PER_ITEM = BUILDER
+            .comment("烟火工匠每件成品（每次组装 3 支为一件）获得的合成经验（决策 #40）",
+                    "Fireworksman crafting xp per finished item (one batch of 3 rockets)")
+            .defineInRange("firework.xpPerItem", 30, 0, 1000);
+
+    /** 烟火'惜色'perk：造星掷一次，命中该星染料（主色+渐变）全免消耗（百分比）。 */
+    public static final ModConfigSpec.IntValue FIREWORK_DYE_THRIFT_PERCENT = BUILDER
+            .comment("烟火工匠'惜色'perk：造星时整星染料免消耗的概率（百分比）",
+                    "Fireworksman 'Dye Thrift' perk: chance per star for free dyes (percent)")
+            .defineInRange("firework.dyeThriftPercent", 10, 0, 100);
+
+    /** 烟火'惜辉'perk：造星掷一次，命中该星钻石+荧石全免消耗（百分比）。 */
+    public static final ModConfigSpec.IntValue FIREWORK_MOD_THRIFT_PERCENT = BUILDER
+            .comment("烟火工匠'惜辉'perk：造星时钻石与荧石免消耗的概率（百分比）",
+                    "Fireworksman 'Spark Thrift' perk: chance per star for free diamond & glowstone (percent)")
+            .defineInRange("firework.modThriftPercent", 20, 0, 100);
+
+    /** '回响'perk：二段爆炸的延迟（tick）。 */
+    public static final ModConfigSpec.IntValue FIREWORK_ECHO_DELAY = BUILDER
+            .comment("'回响'perk：首爆后延迟多少 tick 再爆一次（伤害=第一次的一半）",
+                    "'Echo' perk: delay in ticks before the second explosion (half damage)")
+            .defineInRange("firework.echoDelayTicks", 10, 1, 200);
+
     // ---- v0.9.1 特性权重 ----
 
     /**

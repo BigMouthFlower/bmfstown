@@ -462,6 +462,10 @@ public class Resident extends PathfinderMob {
         this.goalSelector.addGoal(4, new ScholarFollowGoal(this));
         // ---- 炼金术士真酿造（v0.12：酿造台岗位池自动认领，见 AlchemistGoal） ----
         this.goalSelector.addGoal(4, new AlchemistGoal(this));
+        // ---- 烟火工匠两段真合成（v0.13：工作台岗位池自动认领，与工人共池先到先得，
+        //      见 FireworksmanGoal 与 designs/fireworksmaker.md） ----
+        this.fireworksGoal = new FireworksmanGoal(this);
+        this.goalSelector.addGoal(4, this.fireworksGoal);
         // ---- 闲暇活动（v0.10.3：动态活动池——闲逛/图书馆看闲书，优先级 5
         //      低于工作/战士 Goal；窗口判定见 LeisureGoal，读书逻辑在
         //      leisure.LibraryReadActivity，替代已废弃的 ReadingGoal） ----
@@ -776,22 +780,48 @@ public class Resident extends PathfinderMob {
     private com.bmf.bmfstown.leisure.LeisureGoal leisureGoal;
     @Nullable
     private WorkerGoal workerGoal;
+    /** 烟火工匠 Goal 引用（v0.13；面板状态显示用）。 */
+    @Nullable
+    private FireworksmanGoal fireworksGoal;
 
-
-    /** 工人 Goal 是否在执行（面板状态显示用）。 */
-    public boolean workerGoalRunning() {
-        return this.workerGoal != null && this.workerGoal.isRunningGoal();
+    /**
+     * 当前职业的工作 Goal（面板状态打包用）：
+     * 工人查 WorkerGoal、烟火工匠查 FireworksmanGoal，其余职业无定点加工 Goal。
+     */
+    @Nullable
+    private Goal runningWorkGoal() {
+        return switch (this.getProfession()) {
+            case WORKER -> this.workerGoal;
+            case FIREWORKSMAN -> this.fireworksGoal;
+            default -> null;
+        };
     }
 
-    /** 工人 Goal 当前阶段序号（未执行返回 -1）。 */
+    /** 定点加工 Goal 是否在执行（面板状态显示用）。 */
+    public boolean workerGoalRunning() {
+        return switch (this.runningWorkGoal()) {
+            case WorkerGoal g -> g.isRunningGoal();
+            case FireworksmanGoal g -> g.isRunningGoal();
+            case null, default -> false;
+        };
+    }
+
+    /** 定点加工 Goal 当前阶段序号（未执行返回 -1）。 */
     public int workerGoalPhase() {
-        return this.workerGoal != null && this.workerGoal.isRunningGoal()
-                ? this.workerGoal.phaseOrdinal() : -1;
+        return switch (this.runningWorkGoal()) {
+            case WorkerGoal g -> g.isRunningGoal() ? g.phaseOrdinal() : -1;
+            case FireworksmanGoal g -> g.isRunningGoal() ? g.phaseOrdinal() : -1;
+            case null, default -> -1;
+        };
     }
 
     /** 工人是否已认领岗位（面板状态显示用；v0.12 工坊区自动认领）。 */
     public boolean workerClaimed() {
-        return this.workerGoal != null && this.workerGoal.hasClaim();
+        return switch (this.runningWorkGoal()) {
+            case WorkerGoal g -> g.hasClaim();
+            case FireworksmanGoal g -> g.hasClaim();
+            case null, default -> false;
+        };
     }
 
     /** 是否正在觅食（工人 Goal 据此让位：饿了先吃饭，吃完回来接着干活）。 */

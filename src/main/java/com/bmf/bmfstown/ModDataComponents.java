@@ -104,6 +104,17 @@ public final class ModDataComponents {
                     .networkSynchronized(net.minecraft.network.codec.ByteBufCodecs.BOOL)
                     .build());
 
+    /**
+     * 烟火工匠章（v0.13）：工匠战斗向 perk 的产物标记——爆炸挂点（FireworkRocketEntityMixin）
+     * 读章生效（破片半径/装药伤害/回响二段爆），无章火箭走原版伤害。与炼金 stamp 同模式：
+     * 效果在出厂时固化进产物，工匠不在场照样生效。
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<com.bmf.bmfstown.fireworks.FireworksMark>> FIREWORKS_MARK =
+            COMPONENTS.register("fireworks_mark", () -> DataComponentType.<com.bmf.bmfstown.fireworks.FireworksMark>builder()
+                    .persistent(com.bmf.bmfstown.fireworks.FireworksMark.CODEC)
+                    .networkSynchronized(com.bmf.bmfstown.fireworks.FireworksMark.STREAM_CODEC)
+                    .build());
+
     private ModDataComponents() {
     }
 

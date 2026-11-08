@@ -61,7 +61,14 @@ public enum ProfessionType implements StringRepresentable {
      * 酿造台岗位池）真酿造药水——放料→原版酿造 tick→取料打纯度+手艺补第 4 瓶。
      * 秘传配方走隐藏配方书门禁（决策 #25/#27）；Perk 树内容留空待用户定稿。
      */
-    ALCHEMIST("alchemist", "炼金术士", 10);
+    ALCHEMIST("alchemist", "炼金术士", 10),
+
+    /**
+     * 烟火工匠（v0.13，.ai/designs/fireworksmaker.md）：白天在登记工作台（与工人
+     * 共池先到先得）两段真合成烟花——先造星（真实特殊配方 assemble）再组装火箭。
+     * 产物=完全原版烟花（火箭不带药，决策 #30），工匠是照单代工方。
+     */
+    FIREWORKSMAN("fireworksman", "烟火工匠", 10);
 
     private final String name;
     private final String zhName;
@@ -109,6 +116,7 @@ public enum ProfessionType implements StringRepresentable {
             case BOOKKEEPER -> SkillType.BOOKKEEPING;
             case SCHOLAR -> SkillType.SCHOLARSHIP;
             case ALCHEMIST -> SkillType.CRAFTING;
+            case FIREWORKSMAN -> SkillType.CRAFTING;
             default -> null;
         };
     }

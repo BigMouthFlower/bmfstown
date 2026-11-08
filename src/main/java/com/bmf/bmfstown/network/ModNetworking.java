@@ -680,6 +680,29 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：烟火订单（订单键 {@code fw|<火药n>|<星1>|…}，完整指定制——
+     * 星列表编码进一个键字符串，按钮协议 int id 装不下）。
+     * 服务端复核职业与 8 格约束（FireworksCatalog.parse 拒绝野键/超约束）。
+     */
+    public record FireworksOrderPayload(int entityId, String orderKey)
+            implements CustomPacketPayload {
+
+        public static final Type<FireworksOrderPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "fireworks_order"));
+
+        public static final StreamCodec<ByteBuf, FireworksOrderPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, FireworksOrderPayload::entityId,
+                        ByteBufCodecs.STRING_UTF8, FireworksOrderPayload::orderKey,
+                        FireworksOrderPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * S → C：炼金目录同步（客户端 PotionBrewing 是 vanilla 自举实例，
      * 反查必须服务端做——条目 "potionId|hasLong|hasStrong"）。
      */
@@ -1113,7 +1136,8 @@ public final class ModNetworking {
             }
             var prof = resident.getProfession();
             if (prof != com.bmf.bmfstown.entity.profile.ProfessionType.WORKER
-                    && prof != com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
+                    && prof != com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST
+                    && prof != com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.work.need_worker"), true);
                 return;
@@ -1204,6 +1228,44 @@ public final class ModNetworking {
                                     "item.minecraft.potion.effect.")).getString();
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.workshop.order_set", name), false);
+        });
+    }
+
+    /** 烟火订单：校验职业与订单键合法性（parse 拒绝野键/超 8 格约束），落账。 */
+    private static void handleFireworksOrder(FireworksOrderPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            if (resident.getProfession()
+                    != com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_worker"), true);
+                return;
+            }
+            var order = com.bmf.bmfstown.fireworks.FireworksCatalog.parse(payload.orderKey());
+            if (order == null) {
+                // 野键/超约束：可见拒绝（静默丢弃曾让"订单保存不上"无从排查）
+                BmfTown.LOGGER.warn("[BmfTown][烟火] {} 下单被拒（非法订单键：{}）",
+                        resident.getName().getString(), payload.orderKey());
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.workshop.order_invalid"), true);
+                return;
+            }
+            resident.getJobState().setOrderItem(payload.orderKey());
+            // 反馈：产物展示名（等价重放出真实组件烟花）
+            var stack = com.bmf.bmfstown.fireworks.FireworksCatalog.displayStack(payload.orderKey());
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.workshop.order_set",
+                    stack.isEmpty() ? payload.orderKey() : stack.getHoverName()), false);
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.workshop.order_set",
+                    stack.isEmpty() ? payload.orderKey() : stack.getHoverName()), true);
         });
     }
 
@@ -1653,6 +1715,8 @@ public final class ModNetworking {
                 ModNetworking::handleWorkerOrder);
         registrar.playToServer(AlchemistOrderPayload.TYPE, AlchemistOrderPayload.STREAM_CODEC,
                 ModNetworking::handleAlchemistOrder);
+        registrar.playToServer(FireworksOrderPayload.TYPE, FireworksOrderPayload.STREAM_CODEC,
+                ModNetworking::handleFireworksOrder);
         registrar.playToClient(AlchemyCatalogSyncPayload.TYPE, AlchemyCatalogSyncPayload.STREAM_CODEC,
                 ModNetworking::handleAlchemyCatalogSync);
         registrar.playToServer(AlchemyCatalogRequestPayload.TYPE, AlchemyCatalogRequestPayload.STREAM_CODEC,

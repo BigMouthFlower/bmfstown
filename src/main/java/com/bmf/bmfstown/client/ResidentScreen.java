@@ -1066,6 +1066,86 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** 炼金弹层药水列表滚动行（固定显示 2 行 + 滚动条）。 */
     private int alchScroll;
 
+    // ---- 烟火工匠星配置器（v0.13，炼金弹层同构：Screen 客户端暂存，提交一次性发包） ----
+
+    /** 星配置器展开态（false = 收合态工作页）。 */
+    private boolean fwPickerOpen;
+    /** 展开态两段：0 = 订单概览（火药档位+星列表），1 = 加星（形状/主色/渐变/修饰）。 */
+    private int fwStage;
+    /** 火药档位 1~3（= 飞行时长；星位可用 8−n）。 */
+    private int fwGunpowder = 1;
+    /** 星列表（Screen 客户端暂存；提交时编码成订单键一次性发包）。 */
+    private final java.util.List<com.bmf.bmfstown.fireworks.FireworksCatalog.StarSpec> fwStars
+            = new java.util.ArrayList<>();
+    /** 星列表滚动行（固定显示 3 行）。 */
+    private int fwScroll;
+    // 加星草稿（段二）
+    private int fwShape;
+    /** 主色多选（原版星配方多染料全进主色 colors；上限=8−形状物−钻石−荧石）。 */
+    private final java.util.LinkedHashSet<Integer> fwColors = new java.util.LinkedHashSet<>();
+    private final java.util.LinkedHashSet<Integer> fwFades = new java.util.LinkedHashSet<>();
+    private boolean fwTrail;
+    private boolean fwTwinkle;
+
+    /** 主色上限（原版星配方格子账）：8 − 形状物 − 轨迹钻石 − 闪烁荧石。 */
+    private int fwMaxColors() {
+        int cap = 8;
+        if (this.fwShape != 0) {
+            cap--;
+        }
+        if (this.fwTrail) {
+            cap--;
+        }
+        if (this.fwTwinkle) {
+            cap--;
+        }
+        return cap;
+    }
+
+    /** 上限缩水时（切形状/开修饰）裁掉最早选的主色，保持 ≤ 格子账。 */
+    private void fwTrimColors() {
+        while (this.fwColors.size() > fwMaxColors()) {
+            this.fwColors.remove(this.fwColors.iterator().next());
+        }
+    }
+
+    /** 草稿 → 订单键（材料预估与提交共用）。 */
+    private String fwDraftKey() {
+        var order = new com.bmf.bmfstown.fireworks.FireworksCatalog.FwOrder(
+                this.fwGunpowder, List.copyOf(this.fwStars));
+        return order.encode();
+    }
+
+    /** 星摘要行（形状名+主色名+渐变数+修饰）。 */
+    private String fwStarSummary(com.bmf.bmfstown.fireworks.FireworksCatalog.StarSpec star) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(I18n.get("gui.bmfstown.resident.work.fw_shape_" + star.shape().ordinal()));
+        var dyes = net.minecraft.world.item.DyeColor.values();
+        sb.append('·');
+        for (int i = 0; i < star.colors().length; i++) {
+            var dyeStack = new net.minecraft.world.item.ItemStack(
+                    net.minecraft.world.item.DyeItem.byColor(dyes[star.colors()[i]]));
+            String dyeName = net.minecraft.world.item.DyeItem.byColor(dyes[star.colors()[i]])
+                    .getName(dyeStack).getString();
+            // 摘要行求短：去掉染料名尾缀（zh"黄色染料"→"黄色"，en"Yellow Dye"→"Yellow"）
+            sb.append(dyeName.replace("染料", "").replace(" Dye", ""));
+            if (i < star.colors().length - 1) {
+                sb.append('+');
+            }
+        }
+        if (star.fades().length > 0) {
+            sb.append('·').append(I18n.get("gui.bmfstown.resident.work.fw_fade_short",
+                    star.fades().length));
+        }
+        if (star.trail()) {
+            sb.append('·').append(I18n.get("gui.bmfstown.resident.work.fw_mod_trail"));
+        }
+        if (star.twinkle()) {
+            sb.append('·').append(I18n.get("gui.bmfstown.resident.work.fw_mod_twinkle"));
+        }
+        return sb.toString();
+    }
+
     /** 工人订单物品格：20×20（含边框），空 = 未设置；有单显示产物图标。 */
     private void drawOrderSlot(GuiGraphics gfx, int x, int y, ItemStack orderStack,
             int mouseX, int mouseY) {
@@ -1132,11 +1212,6 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
     // ---- perk 节点区（工作页效率行与玩家背包之间的固定高滚动菜单） ----
 
-    /** 产物选择弹层的行数（每行 5 格）。 */
-    private static int pickerRows(int count) {
-        return (count + 4) / 5;
-    }
-
     /** 展开的 perk 节点下标（-1 = 全部收起）。选择结果走 PerkChoosePayload 落档。 */
     private int perkExpandedNode = -1;
 
@@ -1166,6 +1241,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
             return com.bmf.bmfstown.entity.profile.Perks.ALCHEMIST_NODES;
         }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+            return com.bmf.bmfstown.entity.profile.Perks.FIREWORKSMAN_NODES;
+        }
         return com.bmf.bmfstown.entity.profile.Perks.NODES;
     }
 
@@ -1180,10 +1258,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
             return com.bmf.bmfstown.entity.profile.Perks.ALCHEMIST_BRANCHES;
         }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+            return com.bmf.bmfstown.entity.profile.Perks.FIREWORKSMAN_BRANCHES;
+        }
         return com.bmf.bmfstown.entity.profile.Perks.BRANCHES;
     }
 
-    /** 分支名/描述的语言键前缀（战士/工人/学者各一套文案）。 */
+    /** 分支名/描述的语言键前缀（各职业一套文案）。 */
     private String branchKeyPrefix() {
         var prof = currentProfession();
         if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
@@ -1195,6 +1276,9 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
             return "gui.bmfstown.resident.perk.ab";
         }
+        if (prof == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+            return "gui.bmfstown.resident.perk.fwb";
+        }
         return "gui.bmfstown.resident.perk.b";
     }
 
@@ -1204,6 +1288,508 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     /** perk 区顶（GUI 相对）：效率行下方留 2px。 */
     private int perkAreaTop() {
         return ResidentMenu.STATS_Y + 32;
+    }
+
+    // ==========================================================
+    //  烟火工匠星配置器（v0.13）：两段式弹层（炼金弹层同构）
+    //  段一 = 订单概览（火药档位 chips + 星列表 + 提交）
+    //  段二 = 加星（形状 5 宫格 → 主色 16 色板 → 渐变多选 ≤7 → 修饰 chips）
+    // ==========================================================
+
+    private static final int FW_VIS_STAR_ROWS = 3;
+
+    /**
+     * 居中模态矩形（面板相对坐标）：宽高给定、位置随屏幕居中——
+     * 渲染与点击共用同一份几何，分辨率 / GUI 缩放无关。
+     */
+    private int[] modalRect(int pw, int ph) {
+        int px = Math.max(2, (this.width - pw) / 2) - this.leftPos;
+        int py = Math.max(2, (this.height - ph) / 2) - this.topPos;
+        return new int[]{px, py, pw, ph};
+    }
+
+    /** 模态遮罩：全屏半透明（在 translate(leftPos, topPos) 相对坐标系里盖满屏幕）。 */
+    private void renderModalBackdrop(GuiGraphics gfx) {
+        gfx.fill(-this.leftPos, -this.topPos,
+                -this.leftPos + this.width, -this.topPos + this.height, 0x88000000);
+    }
+
+    /**
+     * 弹层内的悬停明细：优先鼠标右下方；下边放不下整块上翻到鼠标上方；
+     * 上下都放不下时垂直居中于屏幕（最大化显示，仍超屏的部分只能裁掉）。
+     */
+    private void renderClampedTooltip(GuiGraphics gfx, List<Component> tips, int mx, int my) {
+        int w = 0;
+        for (Component c : tips) {
+            w = Math.max(w, this.font.width(c));
+        }
+        int h = tips.size() * 10 + 6;
+        int top = -this.topPos;
+        int bottom = top + this.height;
+        int y;
+        if (my + 8 + h <= bottom - 2) {
+            y = my + 8;                      // 常规：右下方
+        } else if (my - h - 6 >= top + 2) {
+            y = my - h - 6;                  // 下边放不下：整块翻到鼠标上方
+        } else {
+            y = Math.max(top + 2, top + (this.height - h) / 2); // 屏幕垂直居中
+        }
+        int minX = top; // 即 -this.leftPos
+        int x = Math.min(Math.max(mx + 8, minX + 2),
+                Math.max(minX + 2, minX + this.width - w - 10));
+        gfx.renderComponentTooltip(this.font, tips, x, y);
+    }
+
+    /**
+     * 按钮内居中画字：先按可用宽截断、再以**截断后的实际宽度**求居中起点。
+     * 直接拿原文宽求居中会在文字超宽时把起点算成负偏移、从按钮两侧漏出去。
+     */
+    private void drawChipText(GuiGraphics gfx, String raw, int boxX, int textY,
+            int boxW, int color) {
+        String t = this.font.plainSubstrByWidth(raw, boxW - 4);
+        gfx.drawString(this.font, t, boxX + (boxW - this.font.width(t)) / 2,
+                textY, color, false);
+    }
+
+    /** 烟火弹层几何（两段共用）：居中模态，宽度按屏收放（上限 190，短窗自动收窄）。 */
+    private int[] fwPickerRect() {
+        int ph = this.fwStage == 0 ? 98 : 142;
+        return modalRect(Math.min(this.width - 10, 190), ph);
+    }
+
+    /** 炼金弹层几何：居中模态（标题 14 + 两行格子 + 底缝 = 88；渲染/点击/滚轮共用）。 */
+    private int[] alchPickerRect() {
+        return modalRect(this.imageWidth - 8, 46 + 2 * 20 + 2);
+    }
+
+    /** 弹层渲染（在工作页背包区上覆盖；两段）。 */
+    private void renderFireworksPicker(GuiGraphics gfx, int mouseX, int mouseY) {
+        int[] r = this.fwPickerRect();
+        int px = r[0];
+        int py = r[1];
+        int pw = r[2];
+        int ph = r[3];
+        renderModalBackdrop(gfx);
+        gfx.fill(px, py, px + pw, py + ph, 0xFFE9E3D5);
+        gfx.fill(px, py, px + pw, py + 1, 0xFF8A7A55);
+        String title = I18n.get(this.fwStage == 0
+                ? "gui.bmfstown.resident.work.fw_picker_title"
+                : "gui.bmfstown.resident.work.fw_stage_add");
+        drawCenteredInPanel(gfx, title, px, pw, py + 3, 0x4A3B22);
+        int mx = mouseX - this.leftPos;
+        int my = mouseY - this.topPos;
+        if (this.fwStage == 0) {
+            renderFireworksStage1(gfx, px, py, pw, ph, mx, my);
+        } else {
+            renderFireworksStage2(gfx, px, py, pw, ph, mx, my);
+        }
+    }
+
+    private void renderFireworksStage1(GuiGraphics gfx, int px, int py, int pw, int ph,
+            int mx, int my) {
+        // ---- 火药档位 chips（1/2/3；飞行时长与星位上限走悬停提示，不塞进按钮） ----
+        List<Component> powderTip = null;
+        int chipW = (pw - 8 - 8) / 3;
+        for (int c = 0; c < 3; c++) {
+            int n = c + 1;
+            int chipX = px + 4 + c * (chipW + 2);
+            boolean sel = this.fwGunpowder == n;
+            boolean hov = mx >= chipX && mx < chipX + chipW && my >= py + 15 && my < py + 27;
+            gfx.fill(chipX, py + 15, chipX + chipW, py + 27, 0xFF8A7A55);
+            gfx.fill(chipX + 1, py + 16, chipX + chipW - 1, py + 26,
+                    sel ? 0xFF8A7A55 : hov ? 0xFFE2D9BF : 0xFFEFE9D8);
+            drawChipText(gfx, I18n.get(
+                    "gui.bmfstown.resident.work.fw_chip_powder", n), chipX, py + 18,
+                    chipW, sel ? 0xFFFFFF : 0x4A3B22);
+            if (hov) {
+                powderTip = List.of(Component.translatable(
+                        "gui.bmfstown.resident.work.fw_chip_powder_tip", n, 8 - n));
+            }
+        }
+        // ---- 星列表（摘要行 + 删/复制；固定 3 行 + 滚动） ----
+        int rowY0 = py + 31;
+        int rowH = 12;
+        int delW = 20;
+        int rowTextW = pw - 12 - 2 * (delW + 2);
+        if (this.fwStars.isEmpty()) {
+            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.work.fw_no_star"),
+                    px + 6, rowY0 + 12, 0x8A7A55, false);
+        }
+        int first = this.fwScroll;
+        for (int v = 0; v < FW_VIS_STAR_ROWS; v++) {
+            int i = first + v;
+            if (i >= this.fwStars.size()) {
+                break;
+            }
+            var star = this.fwStars.get(i);
+            int rowY = rowY0 + v * rowH;
+            boolean rowHov = mx >= px + 4 && mx < px + pw - 4 - 2 * (delW + 2)
+                    && my >= rowY && my < rowY + rowH;
+            gfx.fill(px + 4, rowY, px + pw - 4 - 2 * (delW + 2), rowY + rowH,
+                    rowHov ? 0xFFD8D0B8 : 0xFFEFE9D8);
+            gfx.drawString(this.font, this.font.plainSubstrByWidth(
+                    fwStarSummary(star), rowTextW), px + 8, rowY + 2, 0x4A3B22, false);
+            // [删] [复]
+            for (int b = 0; b < 2; b++) {
+                int bx = px + pw - 4 - (2 - b) * (delW + 2) + 2;
+                boolean hov = mx >= bx && mx < bx + delW && my >= rowY && my < rowY + rowH;
+                gfx.fill(bx, rowY, bx + delW, rowY + rowH, hov ? 0xFFCFC5A2 : 0xFFD8D0B8);
+                String bl = I18n.get(b == 0
+                        ? "gui.bmfstown.resident.work.fw_btn_delete"
+                        : "gui.bmfstown.resident.work.fw_btn_copy");
+                gfx.drawString(this.font, bl, bx + 3, rowY + 2, 0x4A3B22, false);
+            }
+        }
+        // 滚动条（星 >3 行才画）
+        int maxScroll = Math.max(0, this.fwStars.size() - FW_VIS_STAR_ROWS);
+        if (maxScroll > 0) {
+            int trackY = rowY0;
+            int trackH = FW_VIS_STAR_ROWS * rowH;
+            gfx.fill(px + pw - 2, trackY, px + pw, trackY + trackH, 0xFFD8D0B8);
+            int thumbH = Math.max(6, trackH * FW_VIS_STAR_ROWS / this.fwStars.size());
+            int thumbY = trackY + (trackH - thumbH) * this.fwScroll / maxScroll;
+            gfx.fill(px + pw - 2, thumbY, px + pw, thumbY + thumbH, 0xFF8A7A55);
+        }
+        // ---- 按钮行：+添加星 / 提交订单 / 取消 ----
+        int btnY = py + 71;
+        int btnW = (pw - 8 - 4) / 3;
+        String[] labels = {I18n.get("gui.bmfstown.resident.work.fw_btn_addstar"),
+                I18n.get("gui.bmfstown.resident.work.fw_btn_submit"),
+                I18n.get("gui.bmfstown.resident.work.fw_btn_cancel")};
+        for (int b = 0; b < 3; b++) {
+            int bx = px + 4 + b * (btnW + 2);
+            boolean hov = mx >= bx && mx < bx + btnW && my >= btnY && my < btnY + 14;
+            gfx.fill(bx, btnY, bx + btnW, btnY + 14, hov ? 0xFFCFC5A2 : 0xFFD8D0B8);
+            gfx.fill(bx, btnY, bx + btnW, btnY + 1, 0xFF8A7A55);
+            gfx.drawString(this.font,
+                    this.font.plainSubstrByWidth(labels[b], btnW - 4),
+                    bx + (btnW - Math.min(this.font.width(labels[b]), btnW - 4)) / 2,
+                    btnY + 3, 0x4A3B22, false);
+        }
+        // ---- 材料预估行（放不下补"…"，悬停看明细；缺料标红不阻塞——补料即下单） ----
+        String key = fwDraftKey();
+        var lines = com.bmf.bmfstown.fireworks.FireworksCatalog.materialLines(key);
+        String matText = lines.isEmpty()
+                ? I18n.get("gui.bmfstown.resident.work.fw_material_none")
+                : I18n.get("gui.bmfstown.resident.work.fw_material_line",
+                        String.join(" ", lines));
+        int matY = py + 86;
+        boolean matHov = mx >= px + 4 && mx < px + pw - 4 && my >= matY && my < matY + 11;
+        // 装不下一行时显式补"…"——让玩家知道材料没列全，悬停有明细
+        boolean matTrunc = this.font.width(matText) > pw - 8;
+        String matShown = matTrunc
+                ? this.font.plainSubstrByWidth(matText, pw - 8 - this.font.width("…")) + "…"
+                : matText;
+        gfx.drawString(this.font, matShown,
+                px + 4, matY + 1, matHov ? 0x2E4A7D : 0x6B5A38, false);
+        if (matHov && !lines.isEmpty()) {
+            var tooltips = new ArrayList<Component>();
+            tooltips.add(Component.translatable("gui.bmfstown.resident.work.fw_material_title"));
+            for (String line : lines) {
+                tooltips.add(Component.literal(" " + line));
+            }
+            renderClampedTooltip(gfx, tooltips, mx, my);
+        }
+        // 火药档位悬停提示（最后画，避免被星行/按钮覆盖）
+        if (powderTip != null) {
+            renderClampedTooltip(gfx, powderTip, mx, my);
+        }
+    }
+
+    private void renderFireworksStage2(GuiGraphics gfx, int px, int py, int pw, int ph,
+            int mx, int my) {
+        var dyeColors = net.minecraft.world.item.DyeColor.values();
+        // ---- 形状 5 chips ----
+        int chipW = (pw - 8 - 8) / 5;
+        for (int c = 0; c < 5; c++) {
+            int chipX = px + 4 + c * (chipW + 2);
+            boolean sel = this.fwShape == c;
+            boolean hov = mx >= chipX && mx < chipX + chipW && my >= py + 15 && my < py + 27;
+            gfx.fill(chipX, py + 15, chipX + chipW, py + 27, 0xFF8A7A55);
+            gfx.fill(chipX + 1, py + 16, chipX + chipW - 1, py + 26,
+                    sel ? 0xFF8A7A55 : hov ? 0xFFE2D9BF : 0xFFEFE9D8);
+            String t = I18n.get("gui.bmfstown.resident.work.fw_shape_" + c);
+            drawChipText(gfx, t, chipX, py + 18, chipW,
+                    sel ? 0xFFFFFF : 0x4A3B22);
+        }
+        // ---- 主色 16 色板（2 行 × 8；多选 ≤格子账上限，悬停即选） ----
+        int cell = 13;
+        int pitch = 16;
+        int cols = 8;
+        int boardW = cols * pitch;
+        int boardX = px + (pw - boardW) / 2;
+        for (int i = 0; i < 16; i++) {
+            int cxx = boardX + (i % cols) * pitch;
+            int cyy = py + 30 + (i / cols) * pitch;
+            boolean hov = mx >= cxx && mx < cxx + cell && my >= cyy && my < cyy + cell;
+            int argb = 0xFF000000 | dyeColors[i].getFireworkColor();
+            gfx.fill(cxx, cyy, cxx + cell, cyy + cell, argb);
+            if (this.fwColors.contains(i)) {
+                gfx.fill(cxx, cyy, cxx + cell, cyy + 1, 0xFFFFFFFF);
+                gfx.fill(cxx, cyy + cell - 1, cxx + cell, cyy + cell, 0xFFFFFFFF);
+                gfx.fill(cxx, cyy, cxx + 1, cyy + cell, 0xFFFFFFFF);
+                gfx.fill(cxx + cell - 1, cyy, cxx + cell, cyy + cell, 0xFFFFFFFF);
+            } else if (hov) {
+                gfx.fill(cxx, cyy, cxx + cell, cyy + 1, 0xFF8A7A55);
+                gfx.fill(cxx, cyy + cell - 1, cxx + cell, cyy + cell, 0xFF8A7A55);
+            }
+        }
+        // 主色计数贴板右上（格子账上限随形状/修饰联动，如 5/7）
+        String colorCount = this.fwColors.size() + "/" + fwMaxColors();
+        gfx.drawString(this.font, colorCount,
+                boardX + boardW + 4, py + 31, 0x6B5A38, false);
+        // ---- 渐变 16 色板（多选 ≤8；高亮已选；[清空] 一键清空） ----
+        gfx.drawString(this.font,
+                I18n.get("gui.bmfstown.resident.work.fw_fade_label",
+                        this.fwFades.size()),
+                px + 4, py + 65, 0x6B5A38, false);
+        int clearX = px + pw - 30;
+        boolean clearHov = mx >= clearX && mx < clearX + 26 && my >= py + 64 && my < py + 76;
+        gfx.fill(clearX, py + 64, clearX + 26, py + 76,
+                clearHov ? 0xFFCFC5A2 : 0xFFD8D0B8);
+        drawChipText(gfx, I18n.get("gui.bmfstown.resident.work.fw_fade_clear"),
+                clearX, py + 66, 26, 0x4A3B22);
+        for (int i = 0; i < 16; i++) {
+            int cxx = boardX + (i % cols) * pitch;
+            int cyy = py + 77 + (i / cols) * pitch;
+            boolean hov = mx >= cxx && mx < cxx + cell && my >= cyy && my < cyy + cell;
+            int argb = 0xFF000000 | dyeColors[i].getFireworkColor();
+            gfx.fill(cxx, cyy, cxx + cell, cyy + cell, argb);
+            if (this.fwFades.contains(i)) {
+                gfx.fill(cxx, cyy, cxx + cell, cyy + 1, 0xFFFFFFFF);
+                gfx.fill(cxx, cyy + cell - 1, cxx + cell, cyy + cell, 0xFFFFFFFF);
+                gfx.fill(cxx, cyy, cxx + 1, cyy + cell, 0xFFFFFFFF);
+                gfx.fill(cxx + cell - 1, cyy, cxx + cell, cyy + cell, 0xFFFFFFFF);
+            } else if (hov) {
+                gfx.fill(cxx, cyy, cxx + cell, cyy + 1, 0xFF8A7A55);
+                gfx.fill(cxx, cyy + cell - 1, cxx + cell, cyy + cell, 0xFF8A7A55);
+            }
+        }
+        // ---- 修饰 chips（轨迹/闪烁，各 0~1 开关） ----
+        int modY = py + 111;
+        int modW = (pw - 8 - 4) / 2;
+        String[] modLabels = {I18n.get("gui.bmfstown.resident.work.fw_mod_trail"),
+                I18n.get("gui.bmfstown.resident.work.fw_mod_twinkle")};
+        boolean[] modVals = {this.fwTrail, this.fwTwinkle};
+        for (int b = 0; b < 2; b++) {
+            int bx = px + 4 + b * (modW + 2);
+            boolean hov = mx >= bx && mx < bx + modW && my >= modY && my < modY + 13;
+            gfx.fill(bx, modY, bx + modW, modY + 13, 0xFF8A7A55);
+            gfx.fill(bx + 1, modY + 1, bx + modW - 1, modY + 12,
+                    modVals[b] ? 0xFF8A7A55 : hov ? 0xFFE2D9BF : 0xFFEFE9D8);
+            drawChipText(gfx, (modVals[b] ? "✔ " : "") + modLabels[b],
+                    bx, modY + 3, modW, modVals[b] ? 0xFFFFFF : 0x4A3B22);
+        }
+        // ---- 按钮行：确认加星 / 取消 ----
+        int btnY = py + 125;
+        int btnW = (pw - 8 - 4) / 2;
+        String[] btnLabels = {I18n.get("gui.bmfstown.resident.work.fw_btn_confirm"),
+                I18n.get("gui.bmfstown.resident.work.fw_btn_cancel")};
+        for (int b = 0; b < 2; b++) {
+            int bx = px + 4 + b * (btnW + 2);
+            boolean hov = mx >= bx && mx < bx + btnW && my >= btnY && my < btnY + 14;
+            gfx.fill(bx, btnY, bx + btnW, btnY + 14, hov ? 0xFFCFC5A2 : 0xFFD8D0B8);
+            gfx.fill(bx, btnY, bx + btnW, btnY + 1, 0xFF8A7A55);
+            gfx.drawString(this.font,
+                    this.font.plainSubstrByWidth(btnLabels[b], btnW - 4),
+                    bx + (btnW - Math.min(this.font.width(btnLabels[b]), btnW - 4)) / 2,
+                    btnY + 3, 0x4A3B22, false);
+        }
+    }
+
+    /**
+     * 弹层点击（工作页 mouseClicked 前置调用；返回 true = 已吞）。
+     * 段一：火药档位 / 星删除复制 / 三按钮；段二：形状 / 主色 / 渐变 / 修饰 / 确认取消。
+     */
+    private boolean clickFireworksPicker(double mouseX, double mouseY) {
+        int[] r = this.fwPickerRect();
+        int px = r[0];
+        int py = r[1];
+        int pw = r[2];
+        int mx = (int) mouseX - this.leftPos;
+        int my = (int) mouseY - this.topPos;
+        if (mx < px || mx >= px + pw || my < py || my >= py + r[3]) {
+            this.fwPickerOpen = false; // 点弹层外：收起
+            return true;
+        }
+        int boardX = px + (pw - 8 * 16) / 2;
+        int boardW = 8 * 16;
+        if (this.fwStage == 0) {
+            // 火药档位
+            int chipW = (pw - 8 - 8) / 3;
+            if (my >= py + 15 && my < py + 27) {
+                for (int c = 0; c < 3; c++) {
+                    int chipX = px + 4 + c * (chipW + 2);
+                    if (mx >= chipX && mx < chipX + chipW) {
+                        this.fwGunpowder = c + 1;
+                        return true;
+                    }
+                }
+                return true;
+            }
+            // 星行（删/复制）
+            int rowY0 = py + 31;
+            int delW = 20;
+            if (my >= rowY0 && my < rowY0 + FW_VIS_STAR_ROWS * 12
+                    && mx >= px + 4 && mx < px + pw - 2) {
+                int v = (my - rowY0) / 12;
+                int i = this.fwScroll + v;
+                if (i < this.fwStars.size()) {
+                    int delZoneX = px + pw - 4 - 2 * (delW + 2) + 2;
+                    if (mx >= delZoneX && mx < delZoneX + 2 * (delW + 2)) {
+                        int b = mx >= delZoneX + delW + 2 ? 1 : 0;
+                        if (b == 0) {
+                            this.fwStars.remove(i);
+                        } else {
+                            this.fwStars.add(i + 1, this.fwStars.get(i));
+                        }
+                        int maxScroll = Math.max(0, this.fwStars.size() - FW_VIS_STAR_ROWS);
+                        this.fwScroll = Mth.clamp(this.fwScroll, 0, maxScroll);
+                        return true;
+                    }
+                }
+                return true;
+            }
+            // 按钮行
+            int btnY = py + 71;
+            if (my >= btnY && my < btnY + 14) {
+                int btnW = (pw - 8 - 4) / 3;
+                for (int b = 0; b < 3; b++) {
+                    int bx = px + 4 + b * (btnW + 2);
+                    if (mx >= bx && mx < bx + btnW) {
+                        if (b == 0) {
+                            // +烟火之星 → 段二（草稿重置）
+                            this.fwStage = 1;
+                            this.fwShape = 0;
+                            this.fwColors.clear();
+                            this.fwFades.clear();
+                            this.fwTrail = false;
+                            this.fwTwinkle = false;
+                        } else if (b == 1) {
+                            submitFireworksOrder();
+                        } else {
+                            this.fwPickerOpen = false;
+                        }
+                        return true;
+                    }
+                }
+                return true;
+            }
+            return true; // 弹层内其他区域吞掉
+        }
+        // ---- 段二 ----
+        if (my >= py + 15 && my < py + 27) {
+            int chipW = (pw - 8 - 8) / 5;
+            for (int c = 0; c < 5; c++) {
+                int chipX = px + 4 + c * (chipW + 2);
+                if (mx >= chipX && mx < chipX + chipW) {
+                    this.fwShape = c;
+                    fwTrimColors(); // 形状物占格子 → 主色上限可能缩
+                    return true;
+                }
+            }
+            return true;
+        }
+        // 主色色板（多选切换，≤格子账上限）
+        if (my >= py + 30 && my < py + 30 + 2 * 16) {
+            int col = (mx - boardX) / 16;
+            int row = (my - (py + 30)) / 16;
+            if (mx >= boardX && mx < boardX + boardW && col >= 0 && col < 8) {
+                int idx = row * 8 + col;
+                if (this.fwColors.contains(idx)) {
+                    this.fwColors.remove(idx);
+                } else if (this.fwColors.size() < fwMaxColors()) {
+                    this.fwColors.add(idx);
+                }
+                return true;
+            }
+            return true;
+        }
+        // 渐变清空
+        int clearX = px + pw - 30;
+        if (mx >= clearX && mx < clearX + 26 && my >= py + 64 && my < py + 76) {
+            this.fwFades.clear();
+            return true;
+        }
+        // 渐变色板（多选 ≤8）
+        if (my >= py + 77 && my < py + 77 + 2 * 16) {
+            int col = (mx - boardX) / 16;
+            int row = (my - (py + 77)) / 16;
+            if (mx >= boardX && mx < boardX + boardW && col >= 0 && col < 8) {
+                int idx = row * 8 + col;
+                if (this.fwFades.contains(idx)) {
+                    this.fwFades.remove(idx);
+                } else if (this.fwFades.size() < 8) {
+                    this.fwFades.add(idx);
+                }
+                return true;
+            }
+            return true;
+        }
+        // 修饰 chips
+        int modY = py + 111;
+        if (my >= modY && my < modY + 13) {
+            int modW = (pw - 8 - 4) / 2;
+            for (int b = 0; b < 2; b++) {
+                int bx = px + 4 + b * (modW + 2);
+                if (mx >= bx && mx < bx + modW) {
+                    if (b == 0) {
+                        this.fwTrail = !this.fwTrail;
+                    } else {
+                        this.fwTwinkle = !this.fwTwinkle;
+                    }
+                    fwTrimColors(); // 钻石/荧石占格子 → 主色上限可能缩
+                    return true;
+                }
+            }
+            return true;
+        }
+        // 确认/取消
+        int btnY = py + 125;
+        if (my >= btnY && my < btnY + 14) {
+            int btnW = (pw - 8 - 4) / 2;
+            for (int b = 0; b < 2; b++) {
+                int bx = px + 4 + b * (btnW + 2);
+                if (mx >= bx && mx < bx + btnW) {
+                    if (b == 0) {
+                        // 确认加星 → 回段一（主色多选按选择顺序进 colors）
+                        int[] colors = this.fwColors.stream().mapToInt(Integer::intValue)
+                                .toArray();
+                        int[] fades = this.fwFades.stream().mapToInt(Integer::intValue)
+                                .sorted().toArray();
+                        this.fwStars.add(new com.bmf.bmfstown.fireworks.FireworksCatalog.StarSpec(
+                                net.minecraft.world.item.component.FireworkExplosion.Shape
+                                        .values()[this.fwShape],
+                                colors, fades, this.fwTrail, this.fwTwinkle));
+                        int maxScroll = Math.max(0,
+                                this.fwStars.size() - FW_VIS_STAR_ROWS);
+                        this.fwScroll = maxScroll;
+                        this.fwStage = 0;
+                    } else {
+                        this.fwStage = 0;
+                    }
+                    return true;
+                }
+            }
+            return true;
+        }
+        return true;
+    }
+
+    /** 提交订单（乐观更新缓存 + 服务端复核落账；8 格约束服务端再校验一次）。 */
+    private void submitFireworksOrder() {
+        Resident r = this.menu.getResident();
+        if (r == null) {
+            return;
+        }
+        if (!com.bmf.bmfstown.fireworks.FireworksCatalog.FwOrder.fitsGrid(
+                this.fwGunpowder, this.fwStars.size())) {
+            return; // UI 自身已按 8−n 联动，这里兜底
+        }
+        String key = fwDraftKey();
+        ModNetworking.sendToServer(new ModNetworking.FireworksOrderPayload(r.getId(), key));
+        com.bmf.bmfstown.client.ClientMoodState.setWorkerOrder(r.getUUID(), key);
+        this.fwPickerOpen = false;
     }
 
     /**
@@ -1564,6 +2150,27 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             drawCenteredInPanel(gfx,
                     I18n.get("gui.bmfstown.resident.work.alch_order_line", alchOrderTxt),
                     5, bw, perkAreaTop() - 10, 0x9E9E9E);
+        } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+            // 烟火工匠（v0.13）：开工开关 + 星配置器入口（与工人共池工作台自动认领）
+            boolean enabled = resident.workerEnabledSynced();
+            drawCenteredInPanel(gfx, I18n.get(enabled
+                            ? "gui.bmfstown.resident.work.ws_toggle_on"
+                            : "gui.bmfstown.resident.work.ws_toggle_off"),
+                    5, bw, followY + 3, enabled ? 0xA8FFA8 : 0xE0E0E0);
+            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.fw_config_label"),
+                    5, bw, guardY + 3, 0xE0E0E0);
+            // ---- 当前订单预览（炼金同款：右上物品槽 + perk 区上方状态行）----
+            String fwOrderKey = com.bmf.bmfstown.client.ClientMoodState.workerOrderOf(
+                    resident.getUUID());
+            var fwOrderStack = com.bmf.bmfstown.fireworks.FireworksCatalog
+                    .displayStack(fwOrderKey);
+            drawOrderSlot(gfx, this.imageWidth - 29, guardY - 2, fwOrderStack, mouseX, mouseY);
+            String fwOrderTxt = fwOrderStack.isEmpty()
+                    ? I18n.get("gui.bmfstown.resident.work.ws_no_order")
+                    : fwOrderStack.getHoverName().getString();
+            drawCenteredInPanel(gfx,
+                    I18n.get("gui.bmfstown.resident.work.fw_order_line", fwOrderTxt),
+                    5, bw, perkAreaTop() - 10, 0x9E9E9E);
         }
 
         // ---- 经验条（原版风格：灰底空槽 + 原版经验绿的进度，黑色外框）----
@@ -1662,6 +2269,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     eff *= ws;
                 }
                 // 特殊书研读增益（天工开物/考工记：合成速度）
+                int craftBonus = equippedLearnedBonus(profile,
+                        com.bmf.bmfstown.book.SpecialBookEffect.Type.CRAFT_SPEED);
+                if (craftBonus != 0) {
+                    ex = drawSegment(gfx, ex, effY, " ", 0x555555);
+                    ex = addEffPart(gfx, ex, effY, "× " + fmtFactor(1 + craftBonus / 100.0),
+                            0x2E7D2E,
+                            List.of(Component.translatable(
+                                    "gui.bmfstown.resident.work.eff_craftspeed",
+                                    specialBookName(profile.equippedBookId()), craftBonus)));
+                    eff *= 1 + craftBonus / 100.0;
+                }
+            } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+                // 烟火工匠（v0.13，效率公式 §6.2）：无速度类 perk（装饰向=随机馈赠），
+                // 段位段 × 特殊书 CRAFT_SPEED 段——与 FireworksmanGoal.craftTicks 对齐
                 int craftBonus = equippedLearnedBonus(profile,
                         com.bmf.bmfstown.book.SpecialBookEffect.Type.CRAFT_SPEED);
                 if (craftBonus != 0) {
@@ -1795,8 +2416,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 int rows = (unlocked.size() + cols - 1) / cols;
                 int pw = cols * 20 + 8;
                 int ph = 16 + rows * 20 + 6;
-                int px = 4;
-                int py = perkAreaTop() - 2;
+                int[] or = this.modalRect(pw, ph);
+                int px = or[0];
+                int py = or[1];
+                renderModalBackdrop(gfx);
                 // 米白纸面板（合成书质感）+ 顶部深线
                 gfx.fill(px, py, px + pw, py + ph, 0xFFE9E3D5);
                 gfx.fill(px, py, px + pw, py + 1, 0xFF8A7A55);
@@ -1833,6 +2456,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     gfx.fill(hoverCellX, hoverCellY, hoverCellX + 1, hoverCellY + 18, 0xFFFFFFFF);
                     gfx.fill(hoverCellX + 17, hoverCellY, hoverCellX + 18, hoverCellY + 18, 0xFFFFFFFF);
                 }
+            } else if (this.fwPickerOpen
+                    && current == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+                // 烟火星配置器弹层（v0.13）：段一订单概览 / 段二加星
+                renderFireworksPicker(gfx, mouseX, mouseY);
             } else if (this.alchPickerOpen
                     && current == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
                 // 炼金药水选择弹层（工人产物选择同款：真实物品图标格子网格）。
@@ -1845,11 +2472,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 int arows = (potions.size() + cols - 1) / cols;
                 int maxScroll = Math.max(0, arows - visRows);
                 this.alchScroll = Mth.clamp(this.alchScroll, 0, maxScroll);
-                int pw = this.imageWidth - 8;
-                int ph = 46 + visRows * 20 + 2;
-                int px = 4;
-                int py = perkAreaBottom() + 2;
-                gfx.fill(px, py, px + pw, py + ph, 0xFFE9E3D5);
+                int[] ar = this.alchPickerRect();
+                int pw = ar[2];
+                int px = ar[0];
+                int py = ar[1];
+                renderModalBackdrop(gfx);
+                gfx.fill(px, py, px + pw, py + ar[3], 0xFFE9E3D5);
                 gfx.fill(px, py, px + pw, py + 1, 0xFF8A7A55);
                 drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.alch_picker_title"),
                         px, pw, py + 3, 0x4A3B22);
@@ -2059,6 +2687,20 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
      * 已知限制，当前按"数值以服务端为准，文案尽力而为"处理。
      */
     private Object[] perkDescArgs(int node, int branch) {
+        // 烟火工匠树（v0.13）：数值全部来自 common 配置（文案占位见 lang fwb.desc.*）
+        if (currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+            return switch (node) {
+                case 0 -> branch == 0
+                        ? new Object[]{com.bmf.bmfstown.config.Config.FIREWORK_DYE_THRIFT_PERCENT.get()}
+                        : new Object[]{""}; // 破片：静态文案（含字面 %% 需 ≥1 参撑起格式化管道）
+                case 1 -> branch == 0
+                        ? new Object[]{com.bmf.bmfstown.config.Config.FIREWORK_MOD_THRIFT_PERCENT.get()}
+                        : new Object[]{""}; // 装药足量：静态文案
+                default -> branch == 1
+                        ? new Object[]{com.bmf.bmfstown.config.Config.FIREWORK_ECHO_DELAY.get()}
+                        : new Object[]{""}; // 模具复用：静态文案
+            };
+        }
         // 学者树（v0.10.3）：数值全部来自 common 配置
         if (currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR) {
             return switch (node) {
@@ -2378,29 +3020,44 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
             var clickedProf = currentProfession();
 
+            // ---- 烟火星配置器打开：点击优先归弹层（段内控件 / 点外面收起） ----
+            if (this.fwPickerOpen
+                    && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+                if (clickFireworksPicker(mouseX, mouseY)) {
+                    return true;
+                }
+            }
+
             // ---- 产物选择弹层打开：点击优先归弹层（格子下单 / 点外面收起） ----
             if (this.orderPickerOpen
                     && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.WORKER) {
                 Resident r = this.menu.getResident();
+                if (r == null) {
+                    this.orderPickerOpen = false;
+                    return true;
+                }
                 int relX = (int) (mouseX - this.leftPos);
                 int relY = (int) (mouseY - this.topPos);
-                int px = 4;
-                int py = perkAreaTop() - 2;
                 var catalog = com.bmf.bmfstown.entity.profile.WorkshopCrafts.whitelist();
+                // 可见清单与渲染侧同口径（按线别过滤），矩形随行数自适应、两处共用
+                java.util.List<Item> unlocked = new java.util.ArrayList<>();
+                for (var entry : catalog) {
+                    if (com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
+                            r.getArchive(), entry.getKey())) {
+                        unlocked.add(entry.getKey());
+                    }
+                }
                 int cols = 5;
-                boolean insidePopup = relX >= px && relX < px + cols * 20 + 8
-                        && relY >= py && relY < py + 16 + pickerRows(catalog.size()) * 20 + 6;
-                if (insidePopup && r != null
+                int rows = (unlocked.size() + cols - 1) / cols;
+                int[] or = this.modalRect(cols * 20 + 8, 16 + rows * 20 + 6);
+                int px = or[0];
+                int py = or[1];
+                boolean insidePopup = relX >= px && relX < px + or[2]
+                        && relY >= py && relY < py + or[3];
+                if (insidePopup
                         && relY >= py + 16 && relX >= px + 4 && relX < px + 4 + cols * 20) {
                     int row = (relY - (py + 16)) / 20;
                     int col = (relX - (px + 4)) / 20;
-                    java.util.List<Item> unlocked = new java.util.ArrayList<>();
-                    for (var entry : catalog) {
-                        if (com.bmf.bmfstown.entity.profile.WorkshopCrafts.lineAllowed(
-                                r.getArchive(), entry.getKey())) {
-                            unlocked.add(entry.getKey());
-                        }
-                    }
                     int cellIndex = row * cols + col;
                     if (row >= 0 && cellIndex >= 0 && cellIndex < unlocked.size()) {
                         Item product = unlocked.get(cellIndex);
@@ -2424,9 +3081,10 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 Resident r = this.menu.getResident();
                 int relX = (int) (mouseX - this.leftPos);
                 int relY = (int) (mouseY - this.topPos);
-                int px = 4;
-                int py = perkAreaBottom() + 2;
-                int pw = this.imageWidth - 8;
+                int[] ar = this.alchPickerRect();
+                int px = ar[0];
+                int py = ar[1];
+                int pw = ar[2];
                 int cols = 8;
                 String[] chipMods = {"long", "strong", "splash", "lingering"};
                 var potions = com.bmf.bmfstown.client.ClientAlchemyCatalog.entries();
@@ -2574,6 +3232,34 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     this.alchPickerOpen = true;
                     // 自愈式拉取：目录不靠登录时的一次性推送，开弹层即向服务端要
                     ModNetworking.sendToServer(new ModNetworking.AlchemyCatalogRequestPayload());
+                    return true;
+                }
+            }
+            // ---- 烟火工匠：开工开关 + 星配置器入口 ----
+            if (workControlsVisible() && mouseX >= listX && mouseX < listX + listW
+                    && clickedProf == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+                Resident r = this.menu.getResident();
+                if (r == null) {
+                    return true;
+                }
+                if (mouseY >= followY && mouseY < followY + WORK_BTN_H) {
+                    ModNetworking.sendToServer(new ModNetworking.WorkerTogglePayload(r.getId()));
+                    return true;
+                }
+                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H) {
+                    this.fwStage = 0;
+                    this.fwScroll = 0;
+                    // 打开时从当前订单回填草稿（改订单 = 在旧单基础上改）
+                    this.fwStars.clear();
+                    var existing = com.bmf.bmfstown.fireworks.FireworksCatalog.parse(
+                            com.bmf.bmfstown.client.ClientMoodState.workerOrderOf(r.getUUID()));
+                    if (existing != null) {
+                        this.fwGunpowder = existing.gunpowder();
+                        this.fwStars.addAll(existing.stars());
+                    } else {
+                        this.fwGunpowder = 1;
+                    }
+                    this.fwPickerOpen = true;
                     return true;
                 }
             }
@@ -2810,17 +3496,32 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (this.page == PAGE_WORK) {
+            // 悬停在烟火星配置器弹层上：滚星列表（段一固定 3 行）
+            if (this.fwPickerOpen && this.fwStage == 0
+                    && currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
+                int[] r = this.fwPickerRect();
+                if (mouseX >= this.leftPos + r[0] && mouseX < this.leftPos + r[0] + r[2]
+                        && mouseY >= this.topPos + r[1] && mouseY < this.topPos + r[1] + r[3]) {
+                    int maxScroll = Math.max(0, this.fwStars.size() - FW_VIS_STAR_ROWS);
+                    if (maxScroll > 0) {
+                        this.fwScroll = Mth.clamp(
+                                this.fwScroll - (int) Math.signum(scrollY), 0, maxScroll);
+                    }
+                    return true;
+                }
+            }
             // 悬停在炼金药水弹层上：滚药水列表（固定 2 行 + 滚动条）
             if (this.alchPickerOpen
                     && currentProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.ALCHEMIST) {
                 var potions = com.bmf.bmfstown.client.ClientAlchemyCatalog.entries();
                 int arows = (potions.size() + 7) / 8;
                 int maxScroll = Math.max(0, arows - 2);
-                int px = 4;
-                int py = perkAreaBottom() + 2;
-                int pw = this.imageWidth - 8;
+                int[] ar = this.alchPickerRect();
+                int px = ar[0];
+                int py = ar[1];
+                int pw = ar[2];
                 if (maxScroll > 0 && mouseX >= this.leftPos + px && mouseX < this.leftPos + px + pw
-                        && mouseY >= this.topPos + py && mouseY < this.topPos + py + 88) {
+                        && mouseY >= this.topPos + py && mouseY < this.topPos + py + ar[3]) {
                     this.alchScroll = Mth.clamp(this.alchScroll - (int) Math.signum(scrollY),
                             0, maxScroll);
                     return true;

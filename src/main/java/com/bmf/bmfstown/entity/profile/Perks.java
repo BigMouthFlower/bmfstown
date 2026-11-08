@@ -98,6 +98,24 @@ public final class Perks {
             {"double_time", "boost_one"},
     };
 
+    // ---- 烟火工匠节点（v0.13，用户 2026-11-07 拍板；同构 3 节点 × 2 分支） ----
+    // A 位=装饰向（随机馈赠），B 位=战斗向（爆炸强化）。开源/节流与工人同名同机制。
+
+    /** 烟火精通：开源（每颗烟花成品 10% 概率多产 1 个，工人同款）/ 破片（爆炸判定半径 +1）。 */
+    public static final String NODE_FW_ADEPT = "fireworksman.adept";
+    /** 烟火大师：节流（20% 概率整份材料免消耗，工人同款）/ 装药足量（工匠产烟花爆炸伤害 +25%）。 */
+    public static final String NODE_FW_MASTER = "fireworksman.master";
+    /** 烟火传奇：模具复用（造星时形状物不消耗）/ 回响（首爆后 10t 再爆一次，伤害=第一次的一半）。 */
+    public static final String NODE_FW_LEGEND = "fireworksman.legend";
+
+    public static final String[] FIREWORKSMAN_NODES = {NODE_FW_ADEPT, NODE_FW_MASTER, NODE_FW_LEGEND};
+
+    public static final String[][] FIREWORKSMAN_BRANCHES = {
+            {"dye_thrift", "shrapnel"},       // 精通：惜色 / 破片
+            {"mod_thrift", "packed"},         // 大师：惜辉 / 装药足量
+            {"mold_reuse", "echo"},           // 传奇：模具复用 / 回响
+    };
+
     /** 节点解锁所需段位（与 {@code SkillTiers.PERK_TIERS} 对齐：精通/大师/传奇）。 */
     public static final int[] UNLOCK_TIER = {3, 6, 9};
 
@@ -114,6 +132,9 @@ public final class Perks {
         }
         if (node.startsWith("alchemist.")) {
             return ProfessionType.ALCHEMIST;
+        }
+        if (node.startsWith("fireworksman.")) {
+            return ProfessionType.FIREWORKSMAN;
         }
         return ProfessionType.WARRIOR;
     }
@@ -136,6 +157,7 @@ public final class Perks {
         boolean workerTree = node.startsWith("worker.");
         boolean scholarTree = node.startsWith("scholar.");
         boolean alchTree = node.startsWith("alchemist.");
+        boolean fireworksTree = node.startsWith("fireworksman.");
         // 节点树前缀必须与职业匹配
         if (workerTree && profession != ProfessionType.WORKER) {
             return false;
@@ -146,15 +168,21 @@ public final class Perks {
         if (alchTree && profession != ProfessionType.ALCHEMIST) {
             return false;
         }
-        if (!workerTree && !scholarTree && !alchTree && profession != ProfessionType.WARRIOR) {
+        if (fireworksTree && profession != ProfessionType.FIREWORKSMAN) {
+            return false;
+        }
+        if (!workerTree && !scholarTree && !alchTree && !fireworksTree
+                && profession != ProfessionType.WARRIOR) {
             return false;
         }
         String[] nodes = workerTree ? WORKER_NODES
                 : scholarTree ? SCHOLAR_NODES
-                : alchTree ? ALCHEMIST_NODES : NODES;
+                : alchTree ? ALCHEMIST_NODES
+                : fireworksTree ? FIREWORKSMAN_NODES : NODES;
         String[][] branches = workerTree ? WORKER_BRANCHES
                 : scholarTree ? SCHOLAR_BRANCHES
-                : alchTree ? ALCHEMIST_BRANCHES : BRANCHES;
+                : alchTree ? ALCHEMIST_BRANCHES
+                : fireworksTree ? FIREWORKSMAN_BRANCHES : BRANCHES;
         for (int n = 0; n < nodes.length; n++) {
             if (!nodes[n].equals(node)) {
                 continue;

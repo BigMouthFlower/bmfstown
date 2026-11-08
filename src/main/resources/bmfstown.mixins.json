@@ -6,7 +6,9 @@
   "mixins": [
     "PotionBrewingMixin",
     "BrewingStandBlockEntityMixin",
-    "BrewingStandBlockEntityAccessor"
+    "BrewingStandBlockEntityAccessor",
+    "FireworkRocketEntityMixin",
+    "FireworkRocketEntityAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
