@@ -4,7 +4,7 @@
 
 - **mod id**：`bmfstown`　**包名**：`com.bmf.bmfstown`
 - **MC**：1.21.1　**NeoForge**：21.1.x
-- **当前版本**：v0.14.0
+- **当前版本**：v0.14.1
 
 ## 📖 文档
 

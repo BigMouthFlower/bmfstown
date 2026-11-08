@@ -180,7 +180,7 @@ public final class PersonalityFormulas {
 
     /**
      * 晨夜 → 作息窗口偏移（tick）：早鸟（v>50）全窗口提前、夜猫子推迟。
-     * 返回值直接加到各窗口边界上：早鸟为负（更早），最高 ±{@code Config.AXIS_CHRONO_OFFSET}（默认 1005t）。
+     * 返回值直接加到各窗口边界上：早鸟为负（更早），最高 ±{@code Config.AXIS_CHRONO_OFFSET}（默认 1000t）。
      */
     public static int chronoShift(int chrono) {
         return -(int) Math.round(Config.AXIS_CHRONO_OFFSET.get()

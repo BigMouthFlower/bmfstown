@@ -294,9 +294,9 @@ public final class Config {
 
     /** 晨夜轴：作息窗口的偏移上限（tick，两端对称）。 */
     public static final ModConfigSpec.IntValue AXIS_CHRONO_OFFSET = BUILDER
-            .comment("晨夜轴：作息窗口偏移上限（tick，早鸟提前/夜猫子推迟，默认 ±1005）",
-                    "Chrono axis: max schedule-window offset in ticks (early birds earlier, night owls later; default ±1005)")
-            .defineInRange("personality.chronoOffsetTicks", 1005, 0, 6000);
+            .comment("晨夜轴：作息窗口偏移上限（tick，早鸟提前/夜猫子推迟，默认 ±1000）",
+                    "Chrono axis: max schedule-window offset in ticks (early birds earlier, night owls later; default ±1000)")
+            .defineInRange("personality.chronoOffsetTicks", 1000, 0, 6000);
 
     /** 专注轴：摸鱼概率上限（百分比，轴值 0 时每工作段最多四成概率开小差）。 */
     public static final ModConfigSpec.IntValue AXIS_GOOF_PERCENT = BUILDER

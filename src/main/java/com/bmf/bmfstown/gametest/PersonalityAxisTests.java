@@ -213,10 +213,10 @@ public class PersonalityAxisTests {
         c.eq(1.05, PersonalityFormulas.focusMultiplier(100), 1e-9, "专注满格 ×1.05");
         c.eq(1.0, PersonalityFormulas.focusMultiplier(50), 1e-9, "专注中位 ×1.0");
         c.eq(0.95, PersonalityFormulas.focusMultiplier(0), 1e-9, "专注零格 ×0.95");
-        // 晨夜偏移 ±1005t（早鸟为负=提前）
-        c.eq(-1005, PersonalityFormulas.chronoShift(100), "早鸟 −1005");
+        // 晨夜偏移 ±1000t（早鸟为负=提前）
+        c.eq(-1000, PersonalityFormulas.chronoShift(100), "早鸟 −1000");
         c.eq(0, PersonalityFormulas.chronoShift(50), "中位零偏移");
-        c.eq(1005, PersonalityFormulas.chronoShift(0), "夜猫子 +1005");
+        c.eq(1000, PersonalityFormulas.chronoShift(0), "夜猫子 +1000");
         // 摸鱼：仅 v<40，v=0 四成
         c.eq(0.4, PersonalityFormulas.goofChance(0), 1e-9, "摸鱼 40% 极值");
         c.eq(0.2, PersonalityFormulas.goofChance(20), 1e-9, "摸鱼 20 半额");
@@ -689,16 +689,16 @@ public class PersonalityAxisTests {
 
         r.getStatus().setAxis(PersonalityAxis.CHRONO, 100);
         int[] early = r.sleepWindow();
-        c.eq(base - 1005, early[0], "早鸟睡眠起点 −1005");
-        c.eq(base - 1005, early[1] - (Config.SLEEP_END_TIME.get() - base),
+        c.eq(base - 1000, early[0], "早鸟睡眠起点 −1000");
+        c.eq(base - 1000, early[1] - (Config.SLEEP_END_TIME.get() - base),
                 "早鸟睡眠终点同步前移");
         int[] earlyWork = r.workWindow();
-        c.eq(Config.CRAFT_WORK_START.get() - 1005, earlyWork[0], "早鸟开工提前");
+        c.eq(Config.CRAFT_WORK_START.get() - 1000, earlyWork[0], "早鸟开工提前");
 
         r.getStatus().setAxis(PersonalityAxis.CHRONO, 0);
         int[] late = r.sleepWindow();
-        c.eq(base + 1005, late[0], "夜猫子睡眠起点 +1005");
-        c.eq(Config.CRAFT_WORK_START.get() + 1005, r.workWindow()[0], "夜猫子开工推迟");
+        c.eq(base + 1000, late[0], "夜猫子睡眠起点 +1000");
+        c.eq(Config.CRAFT_WORK_START.get() + 1000, r.workWindow()[0], "夜猫子开工推迟");
 
         r.getStatus().setAxis(PersonalityAxis.CHRONO, 50);
         c.eq(base, r.sleepWindow()[0], "中位零偏移");
