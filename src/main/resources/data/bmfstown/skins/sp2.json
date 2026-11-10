@@ -1,0 +1,75 @@
+{
+ "pack": "sp2",
+ "skins": [
+  {
+   "id": "elf",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/elf.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "enderman",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/enderman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "nakedsheep",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/nakedsheep.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "ninja",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/ninja.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "pig",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/pig.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "pilot",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/pilot.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "pirate",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/pirate.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "sailor",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/sailor.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "sheep",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/sheep.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "spider",
+   "texture": "bmfstown:textures/entity/resident_skins/sp2/spider.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

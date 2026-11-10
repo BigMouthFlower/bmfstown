@@ -146,9 +146,14 @@ public class ResidentMenu extends AbstractContainerMenu {
     public static final int DATA_MOOD = 2;
     /** 数据槽索引：工作模式（{@code WorkMode.ordinal()}：0 无 / 1 跟随 / 2 站岗）。 */
     public static final int DATA_WORKMODE = 3;
+    /**
+     * 数据槽索引：战士武器偏好（{@code WeaponPref.ordinal()}：
+     * 0 剑 / 1 斧 / 2 重锤 / 3 无偏好）。
+     */
+    public static final int DATA_WEAPONPREF = 4;
     /** 数据槽总数。客户端和服务端必须一致，否则索引会错位。
      *  （工人状态行改走实体同步通道 DATA_WORKER_STATUS——数据槽实测不可靠。） */
-    public static final int DATA_COUNT = 4;
+    public static final int DATA_COUNT = 5;
 
     // ==========================================================
     //  菜单按钮（归属城镇，v0.5）
@@ -235,6 +240,12 @@ public class ResidentMenu extends AbstractContainerMenu {
      * 玩家右键确认后走 {@code WorkGuardPostPayload} 由服务端落账。
      */
     public static final int BTN_GUARD_POST = 601;
+
+    /**
+     * 按钮编号：武器偏好循环切换（仅战士有效；每次点击
+     * SWORD → AXE → MACE → NONE 循环一档，与学者模式切换同一交互范式）。
+     */
+    public static final int BTN_WEAPON_PREF = 602;
 
     /**
      * 按钮编号基准：分配职业 = 700 + {@code ProfessionType.values()} 下标。
@@ -350,6 +361,16 @@ public class ResidentMenu extends AbstractContainerMenu {
             }
             // 职业合法：客户端已经在本地进入"选取岗哨位置"状态，
             // 服务端等 WorkGuardPostPayload 确认包再落账，这里无事可做。
+            return true;
+        }
+
+        // ---- 工作页：武器偏好循环切换（决策 #49，仅战士；数据槽自动推送新值）----
+        if (id == BTN_WEAPON_PREF) {
+            if (this.resident.isWarrior()) {
+                var pref = this.resident.getJobState().weaponPref().next();
+                this.resident.getJobState().setWeaponPref(pref);
+                this.resident.syncClient();
+            }
             return true;
         }
 
@@ -609,6 +630,7 @@ public class ResidentMenu extends AbstractContainerMenu {
                     case DATA_HUNGER -> resident.getStatus().hunger();
                     case DATA_MOOD -> resident.getStatus().mood();
                     case DATA_WORKMODE -> resident.getWorkMode().ordinal();
+                    case DATA_WEAPONPREF -> resident.getJobState().weaponPref().ordinal();
                     default -> 0;
                 };
             }

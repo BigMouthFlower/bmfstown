@@ -1,0 +1,124 @@
+{
+ "pack": "birthday_1",
+ "skins": [
+  {
+   "id": "birthdaycakeman",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/birthdaycakeman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "birthdaypresentman",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/birthdaypresentman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "cakezombie",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/cakezombie.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "creepersteveboxhead",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/creepersteveboxhead.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "farmervillager",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/farmervillager.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "mooshroom",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/mooshroom.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partycow",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partycow.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partyenderman",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partyenderman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partyherobrine",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partyherobrine.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partypig",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partypig.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partypigman",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partypigman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partysquid",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partysquid.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partysteve",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partysteve.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "partytuxedocreeper",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/partytuxedocreeper.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "slimeman",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/slimeman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "stevecreeperboxhead",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/stevecreeperboxhead.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tophattuxedosheep",
+   "texture": "bmfstown:textures/entity/resident_skins/birthday_1/tophattuxedosheep.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · 1st Birthday Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

@@ -1,0 +1,124 @@
+{
+ "pack": "biome_settlers_2",
+ "skins": [
+  {
+   "id": "mooshroomarcher",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/mooshroomarcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "mooshroombrewer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/mooshroombrewer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "mooshroomengineer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/mooshroomengineer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "mooshroomgriefer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/mooshroomgriefer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "mooshroommara",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/mooshroommara.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "mooshroomtamer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/mooshroomtamer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherarcher",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherarcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherbrawler",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherbrawler.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherbrewer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherbrewer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherengineer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherengineer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherexplorer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherexplorer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherextinguisher",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherextinguisher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherfarmer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherfarmer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "nethergriefer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/nethergriefer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherhunter",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherhunter.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "netherminer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/netherminer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "nethertamer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_2/nethertamer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 2（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

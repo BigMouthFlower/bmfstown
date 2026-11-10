@@ -1,0 +1,82 @@
+{
+ "pack": "redstone_specialists",
+ "skins": [
+  {
+   "id": "architect",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/architect.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "artisan",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/artisan.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "composer",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/composer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "duster",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/duster.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "prospector",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/prospector.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "redstonemiser",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/redstonemiser.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "scholar",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/scholar.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tinkerer",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/tinkerer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tnttech",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/tnttech.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "trapper",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/trapper.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "vanguard",
+   "texture": "bmfstown:textures/entity/resident_skins/redstone_specialists/vanguard.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Redstone Specialists（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

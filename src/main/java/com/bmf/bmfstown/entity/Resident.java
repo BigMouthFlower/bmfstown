@@ -56,6 +56,7 @@ import net.minecraft.world.entity.ai.goal.WaterAvoidingRandomStrollGoal;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.ServerLevelAccessor;
@@ -134,6 +135,16 @@ public class Resident extends PathfinderMob {
      */
     private static final EntityDataAccessor<Integer> DATA_WORKER_STATUS =
             SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.INT);
+
+    /**
+     * 皮肤 id（v0.15 皮肤系统，如 "townsfolk/townsfolk_01"）。
+     *
+     * <p>为什么单独一条 accessor 而不塞 {@link #DATA_ARCHIVE}：皮肤生而不变，
+     * 快照每次 syncClient 都重建对象，塞进去白耗 equals；单独 accessor 只在
+     * spawn 与指派时各发一次包。空串 = 未指派/目录为空 → 客户端回退占位贴图。
+     */
+    private static final EntityDataAccessor<String> DATA_SKIN =
+            SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.STRING);
 
     /**
      * 背包（27 格）。
@@ -566,6 +577,7 @@ public class Resident extends PathfinderMob {
         builder.define(DATA_WORKER_VISUAL, false);
         builder.define(DATA_SCHOLAR_VISUAL, false);
         builder.define(DATA_WORKER_STATUS, 0);
+        builder.define(DATA_SKIN, "");
     }
 
     /**
@@ -600,6 +612,36 @@ public class Resident extends PathfinderMob {
 
     public boolean isScholarVisual() {
         return this.entityData.get(DATA_SCHOLAR_VISUAL);
+    }
+
+    /** 皮肤 id（空串 = 未指派/目录为空；客户端据此回退占位贴图）。 */
+    public String getSkinId() {
+        return this.entityData.get(DATA_SKIN);
+    }
+
+    /** 指派皮肤（服务端指令/生成/懒生成用；set 内部比较，同值不发包）。 */
+    public void setSkinId(String skinId) {
+        this.entityData.set(DATA_SKIN, skinId == null ? "" : skinId);
+    }
+
+    /**
+     * 首次指派：skinId 为空时从皮肤目录随机抽一张（终身保留，之后不再动）。
+     *
+     * <p>覆盖三条生成路径：自然生成/刷怪蛋（finalizeSpawn）、旧档读档后、
+     * /summon（不走 finalizeSpawn，靠首 tick 懒生成兜底）。目录为空保持空串，
+     * 下次调用再试（等用户往目录里加皮肤，不用重开存档也能补上）。
+     */
+    public void ensureSkinAssigned() {
+        if (this.level().isClientSide()) {
+            return;
+        }
+        if (!this.entityData.get(DATA_SKIN).isEmpty()) {
+            return;
+        }
+        String id = com.bmf.bmfstown.skin.SkinCatalog.randomId(this.getRandom());
+        if (id != null) {
+            this.setSkinId(id);
+        }
     }
 
     public com.bmf.bmfstown.entity.domain.KnowledgeState getKnowledge() {
@@ -925,6 +967,18 @@ public class Resident extends PathfinderMob {
     /** 工人 Goal 引用（注册时挂上；面板状态显示用）。 */
     @Nullable
     private com.bmf.bmfstown.leisure.LeisureGoal leisureGoal;
+
+    /**
+     * 手装导演（决策 #49）：主手物品的唯一决策者。
+     * 行为（进食/看书）只管自己物品的去向，主手放什么由导演在
+     * 目标变化/主手空档时决定。见 {@link HandDirector}。
+     */
+    private final HandDirector handDirector = new HandDirector(this);
+
+    /** 导演实例访问器（GameTest 直接驱动 tick 用；业务代码一律走 customServerAiStep）。 */
+    public HandDirector handDirector() {
+        return this.handDirector;
+    }
     @Nullable
     private WorkerGoal workerGoal;
     /** 烟火工匠 Goal 引用（v0.13；面板状态显示用）。 */
@@ -1281,12 +1335,17 @@ public class Resident extends PathfinderMob {
 
         // 只在还没有名字时取名，避免覆盖玩家用命名牌改过的名字
         if (!this.hasCustomName()) {
-            this.setCustomName(Component.literal(ResidentNames.random(level.getRandom())));
+            String name = ResidentNames.random(level.getRandom(), level);
+            if (name != null) {
+                this.setCustomName(Component.literal(name));
+            }
         }
 
         // 生成一份全新的镇民数据：饥饿满、心情初值、偏好懒生成（首 tick 补抽）、无专长
         this.status.setHunger(Status.MAX_HUNGER);
         this.status.setMood(com.bmf.bmfstown.config.Config.INITIAL_MOOD.get());
+        // 皮肤首指派（目录为空则保持空串，首 tick 还会再试）
+        this.ensureSkinAssigned();
         this.syncClient();
 
         LOGGER.debug("[BmfTown] 生成镇民：{}（偏好与性格在首次 tick 懒生成，见 Prefs 域）",
@@ -1304,11 +1363,13 @@ public class Resident extends PathfinderMob {
         // 边界情况：恰好存档时正在吃那一口。
         //
         // 此时主手和背包第 eatingSlot 格处于"对调"状态：
-        // 那一格里是剑、主手上是食物。如果把中间状态存下来，
-        // 读档后 eatingSlot 这些瞬态字段就没了，剑会永久留在背包里。
+        // 那一格里是原主手物品、主手上是食物。如果把中间状态存下来，
+        // 读档后 eatingSlot 这些瞬态字段就没了，食物余量与原物的
+        // 对账关系就断了。
         //
-        // 所以干脆在存档前撤销对调（settleBite 的全部数据操作），
-        // 存下去就是干净状态。代价只是当前这一口白吃了，玩家察觉不到。
+        // 所以存档前先走 settleBite 收尾：食物余量回原格、原物回背包、
+        // 主手清空（导演体系下空手是合法态）。存下去就是干净状态。
+        // 代价只是当前这一口白吃了，玩家察觉不到。
         if (this.eatingSlot >= 0) {
             this.settleBite();
         }
@@ -1335,6 +1396,10 @@ public class Resident extends PathfinderMob {
 
         if (this.followResidentId != null) {
             tag.putUUID("FollowResident", this.followResidentId);
+        }
+        // 皮肤 id（v0.15；空串不写，保持 NBT 干净，读档后懒生成兜底）
+        if (!this.getSkinId().isEmpty()) {
+            tag.putString("SkinId", this.getSkinId());
         }
     }
 
@@ -1393,13 +1458,22 @@ public class Resident extends PathfinderMob {
         this.followResidentId = tag.hasUUID("FollowResident")
                 ? tag.getUUID("FollowResident") : null;
 
+        // 皮肤 id（v0.15）：旧档无此键 → 保持空串，首 tick ensureSkinAssigned 懒补抽
+        this.setSkinId(tag.contains("SkinId", Tag.TAG_STRING)
+                ? tag.getString("SkinId") : "");
+
         // 同步通道初值：读档后立刻推一份快照 + 工作模式位
         this.syncClient();
         this.entityData.set(DATA_WORK, this.jobState.workMode().ordinal());
 
         // 兜底：老存档 / summon 出来的镇民没有名字，补一个
         if (!this.hasCustomName()) {
-            this.setCustomName(Component.literal(ResidentNames.random(this.getRandom())));
+            String name = this.level() instanceof ServerLevel serverLevel
+                    ? ResidentNames.random(this.getRandom(), serverLevel)
+                    : ResidentNames.rawRandom(this.getRandom());
+            if (name != null) {
+                this.setCustomName(Component.literal(name));
+            }
         }
     }
 
@@ -1452,6 +1526,9 @@ public class Resident extends PathfinderMob {
                     this, sl, this.leisureGoal.isReadingNow());
         }
         super.customServerAiStep();
+        // ---- 0. 皮肤懒指派（v0.15）：/summon 不走 finalizeSpawn、旧档无 SkinId，
+        //      都在这里补抽；已指派或目录为空时是纯空判，开销可忽略 ----
+        this.ensureSkinAssigned();
         // ---- 0. 工人状态打包同步（面板状态行用；set 同值不发包） ----
         this.refreshWorkerStatus();
         // ---- 0.4 特性逐 tick 行为（轻浮漂浮等；内部含 null 补抽，老档兼容） ----
@@ -1477,6 +1554,10 @@ public class Resident extends PathfinderMob {
 
         // ---- 2. 进食 ----
         this.tickEating();
+
+        // ---- 2.2 手装导演（决策 #49）：目标变化/主手空档时决定主手拿什么 ----
+        // 放在进食之后：进食收尾清空的主手，若此刻带着战斗目标，下一刻就补装武器
+        this.handDirector.tick();
 
         // ---- 2.5 交互互斥兜底（占用者下线/死亡/换容器就释放） ----
         this.tickInteractionMutex();
@@ -2979,7 +3060,7 @@ public class Resident extends PathfinderMob {
      *     ▲                                                    │
      *     │                                            32 tick 嚼完
      *     │                                                    ▼
-     *     └──────────────── [空闲] ◀──── 撤销对调 ◀──── [结算]
+     *     └──────────────── [空闲] ◀── 余量归位+主手清空 ◀── [结算]
      *                          ▲                            │
      *                          └──还饿且这一堆还有──┐         │
      *                                               └─────────┘
@@ -3181,7 +3262,7 @@ public class Resident extends PathfinderMob {
      * 食物和剑都还在各自的位置上——<b>对调状态依然成立</b>。
      * 所以"同一堆继续吃"只要再 {@code startUsingItem} 一次，
      * 完全不用碰背包。只有这堆吃完/吃饱/被打断才需要 {@link #settleBite()}
-     * 把剑换回主手。
+     * 把主手清空、余量归位。
      *
      * <h2>"继续吃"的判据必须和挑食物时一致</h2>
      * {@link HungerSystem#findFoodSlot} 挑食物用的是
@@ -3260,7 +3341,7 @@ public class Resident extends PathfinderMob {
             }
         }
 
-        // 这一堆吃完了（或吃饱了）→ 撤销对调，剑回主手。
+        // 这一堆吃完了（或吃饱了）→ 余量归位、主手清空（去向交导演）。
         // 若还饿且背包里还有别的食物，冷却结束后 tickEating 会重新挑一堆。
         if (stillHungry) {
             LOGGER.debug("[BmfTown] {} 这一口会让饥饿溢出（{} + {} > {}），停下不再吃",
@@ -3278,35 +3359,38 @@ public class Resident extends PathfinderMob {
      */
     private void abortBite() {
         LOGGER.debug("[BmfTown] {} 进食被打断", this.getName().getString());
-        // 手上的食物退回背包，主手换回原物
+        // 手上的食物余量退回背包，主手清空（去向交导演）
         this.rollbackBite();
     }
 
     /**
-     * 收尾：撤销对调 —— 主手上剩下的放回原格，原格里的东西（剑）回到主手。
+     * 收尾：食物余量归位原格，主手<b>清空</b>交还导演。
      *
      * <h2>为什么这是唯一的收尾实现</h2>
      * 吃完、被打断、启动失败、存档四条路径都走这里。
-     * 它们的共同点是：<b>主手和背包槽之间还处于"对调"状态</b>，
-     * 必须把这个交换撤销。
      *
-     * <h2>撤销对调的两步</h2>
+     * <h2>手装导演重构（决策 #49）后的职责收窄</h2>
+     * 旧版在这里把"原主手物品（剑）"换回主手——每个行为都自己管恢复，
+     * 换手逻辑越堆越乱。重构后的规矩：<b>行为只管自己物品的去向；
+     * 主手上放什么，行为无权过问。</b>所以收尾只做两件事：
      * <ol>
-     *   <li>先把 {@code eatingSlot} 那一格的内容（剑）读到 {@code displaced}；</li>
-     *   <li>把主手上剩下的食物（可能是吃剩的几个，也可能是碗/瓶）写回那一格；</li>
-     *   <li>把 {@code displaced} 放回主手。</li>
+     *   <li>主手上剩下的（吃剩的食物/碗/瓶）写回 {@code eatingSlot} 原格
+     *       ——对调时原主手物品（剑）本来就在那一格，现在食物写回去
+     *       与它并成一格？不——原主手物品在对调时占的就是这一格，
+     *       食物余量写回会<b>覆盖</b>它？也不会：对调是双向交换，
+     *       这一口期间那格存的是剑，食物余量写回前必须先把剑挪走——
+     *       剑的去向：优先回背包任意空位（addItem），满了掉地上。
+     *       注意这仍是"行为管去向"：剑是在进食开始时被对调进来的，
+     *       它的安置属于进食行为的收尾责任。</li>
+     *   <li>主手置空。若此刻镇民有战斗目标，{@link HandDirector} 会在
+     *       随后的 tick 检测到主手可装填而换上武器；没有目标就保持空手
+     *       ——空手是合法默认态。</li>
      * </ol>
-     *
-     * <h2>为什么不直接把两边互换引用</h2>
-     * 主手可能因为原版的容器返还逻辑变成了"碗"，也可能因为被打断而
-     * 变成了别的东西，甚至被玩家从面板里拿走变成空气。逐项写入并
-     * 全程 copy()，是唯一能保证"那格的内容只由这里决定"的写法。
      *
      * <h2>为什么不用 addItem 随便塞</h2>
      * 之前用 {@code inventory.addItem(hand)} 把手上东西丢进背包任意空格，
-     * 结果是"剑不见了、背包里多出一堆曲奇"——玩家完全看不出发生过什么。
-     * 现在固定放回<b>原来那一格</b>，玩家打开面板就能看到
-     * "剑还在原来的位置，曲奇少了几口"。
+     * 出过"剑不见了、背包里多出一堆曲奇"的事故。所以食物余量固定写回
+     * <b>原来那一格</b>（覆盖前先把剑挪走），玩家打开面板就能对上账。
      */
     private void settleBite() {
         int slot = this.eatingSlot;
@@ -3317,14 +3401,18 @@ public class Resident extends PathfinderMob {
         ItemStack hand = this.getItemBySlot(EquipmentSlot.MAINHAND);
 
         if (slot >= 0) {
-            // 那一格里是原来的剑（对调时写进去的）
+            // 那一格里是原来的剑（对调时写进去的）——先把它安置掉，
+            // 才能把食物余量写回这一格
             ItemStack displaced = this.inventory.getItem(slot);
+            if (!displaced.isEmpty()) {
+                ItemStack over = this.inventory.addItem(displaced.copy());
+                if (!over.isEmpty()) {
+                    this.spawnAtLocation(over);
+                }
+            }
             // 手上剩下的放回原格。可能为空（吃光了），那也照写，
             // 保证"那一格的内容只由这里决定"。
             this.inventory.setItem(slot, hand.isEmpty() ? ItemStack.EMPTY : hand.copy());
-            // 剑回主手
-            this.setItemSlot(EquipmentSlot.MAINHAND,
-                    displaced.isEmpty() ? ItemStack.EMPTY : displaced.copy());
         } else {
             // slot < 0 表示没建立过对调（正常流程不会发生），保守处理：
             // 手上东西塞进背包，塞不下就掉在地上
@@ -3334,8 +3422,11 @@ public class Resident extends PathfinderMob {
                     this.spawnAtLocation(over);
                 }
             }
-            this.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY);
         }
+
+        // 主手清空：去向交给 HandDirector（有战斗目标会立刻换武器），
+        // 没有目标就空手待命——这是导演体系下的合法默认态。
+        this.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY);
 
         // ---- 心情事件：吃到了爱吃的（v0.7）----
         // 必须在 eatingFood 清空前判定（开始吃前就存好了整堆食物）。
@@ -3365,7 +3456,7 @@ public class Resident extends PathfinderMob {
     /**
      * 回滚：等同于收尾。保留这个名字作为语义标记——
      * 调用方写 {@code rollbackBite()} 时意图是"这一口不算数"，
-     * 而实际的数据操作和 {@link #settleBite()} 完全一样（撤销对调）。
+     * 而实际的数据操作和 {@link #settleBite()} 完全一样（余量归位+主手清空）。
      */
     private void rollbackBite() {
         this.settleBite();

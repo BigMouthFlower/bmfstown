@@ -1,0 +1,68 @@
+{
+ "pack": "builder",
+ "skins": [
+  {
+   "id": "bee",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/bee.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "bee2",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/bee2.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "builder",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/builder.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "butcher",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/butcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "butcher2",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/butcher2.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "healer",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/healer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "pig",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/pig.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "pig2",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/pig2.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "ranger",
+   "texture": "bmfstown:textures/entity/resident_skins/builder/ranger.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Builders & Biomes（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

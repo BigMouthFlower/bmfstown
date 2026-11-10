@@ -1,0 +1,131 @@
+{
+ "pack": "festive_pack",
+ "skins": [
+  {
+   "id": "badsanta",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/badsanta.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "christmascreeper",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/christmascreeper.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "christmaspudding",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/christmaspudding.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "gingerbreadman",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/gingerbreadman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "gingerbreadwoman",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/gingerbreadwoman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "greenelf",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/greenelf.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "mrsclaus",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/mrsclaus.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "parkasteve",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/parkasteve.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "present",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/present.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "redelf",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/redelf.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "reindeer",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/reindeer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "santa",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/santa.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "santasteve",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/santasteve.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "scrooge",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/scrooge.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "snowman",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/snowman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "wintersteve",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/wintersteve.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "zombiepudding",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/zombiepudding.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "zombieturkey",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_pack/zombieturkey.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Skin Pack（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

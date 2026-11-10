@@ -1,0 +1,47 @@
+{
+ "pack": "villains",
+ "skins": [
+  {
+   "id": "bisector",
+   "texture": "bmfstown:textures/entity/resident_skins/villains/bisector.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Villains（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "doorman",
+   "texture": "bmfstown:textures/entity/resident_skins/villains/doorman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Villains（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "enchantro",
+   "texture": "bmfstown:textures/entity/resident_skins/villains/enchantro.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Villains（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "patchkin",
+   "texture": "bmfstown:textures/entity/resident_skins/villains/patchkin.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Villains（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "silverfishmonger",
+   "texture": "bmfstown:textures/entity/resident_skins/villains/silverfishmonger.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Villains（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "slymime",
+   "texture": "bmfstown:textures/entity/resident_skins/villains/slymime.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Villains（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

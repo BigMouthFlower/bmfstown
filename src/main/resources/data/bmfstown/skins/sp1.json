@@ -1,0 +1,131 @@
+{
+ "pack": "sp1",
+ "skins": [
+  {
+   "id": "blackknight",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/blackknight.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "creeper",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/creeper.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "deepseadiver",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/deepseadiver.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "herobrine",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/herobrine.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "jester",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/jester.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "king",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/king.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "knighttemplar",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/knighttemplar.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "nurse",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/nurse.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "prisoner",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/prisoner.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "queen",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/queen.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "racingdriver1",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/racingdriver1.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "racingdriver2",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/racingdriver2.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "racingdriver3",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/racingdriver3.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "racingdriver4",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/racingdriver4.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "squid",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/squid.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "victorianswimmer",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/victorianswimmer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "wizard",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/wizard.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "zombie",
+   "texture": "bmfstown:textures/entity/resident_skins/sp1/zombie.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

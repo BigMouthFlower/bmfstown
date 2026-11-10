@@ -3,8 +3,10 @@ package com.bmf.bmfstown.client;
 import com.bmf.bmfstown.BmfTown;
 import com.bmf.bmfstown.ModEntities;
 import com.bmf.bmfstown.entity.Resident;
-import net.minecraft.client.model.geom.ModelLayerLocation;
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelLayers;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.MobRenderer;
 import net.minecraft.client.renderer.entity.layers.CustomHeadLayer;
@@ -18,7 +20,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 
 /**
- * 镇民渲染器。
+ * 镇民渲染器（v0.15 皮肤系统：双模型 + 按皮肤选贴图）。
  *
  * <h2>为什么不能直接复用 VillagerRenderer</h2>
  * 原版 {@code VillagerRenderer extends MobRenderer<Villager, VillagerModel<Villager>>}，
@@ -34,45 +36,49 @@ import net.neoforged.neoforge.client.event.EntityRenderersEvent;
  *
  * <p>解决办法只有一个：<b>自己继承 MobRenderer，把类型参数写成 Resident</b>。
  *
- * <h2>三个渲染层（Layer）</h2>
- * {@code MobRenderer} 默认只画模型本体。要让装备可见，必须手动挂层——
- * 每层各自负责一类附加物，按添加顺序从内到外叠画：
- * <ol>
- *   <li><b>HumanoidArmorLayer</b> —— 四件护甲。它拿两份"膨胀模型"
- *       （内层贴身、外层略大），按物品的 {@code ArmorMaterial} 查贴图。
- *       <b>必须先挂</b>，否则外面的武器会被胸甲遮住。</li>
- *   <li><b>ItemInHandLayer</b> —— 主手/副手物品。用
- *       {@code ArmedModel.translateToHand} 定位到手掌，然后按物品类型
- *       选 {@code ItemDisplayContext}（剑是 THIRD_PERSON_RIGHT_HAND）。</li>
- *   <li><b>CustomHeadLayer</b> —— 头盔以外的"戴在头上"的东西：
- *       头颅方块、南瓜头、雕刻南瓜。护甲层只管 {@code ArmorItem}，
- *       这些不属于护甲，得单独一层。</li>
- * </ol>
+ * <h2>双模型：经典（4px 臂）+ 纤细（3px 臂）</h2>
+ * 皮肤 PNG 头/身/腿 UV 完全通用，唯一分歧是手臂：经典臂 4px 粗（UV 窗口宽 16px）、
+ * 纤细臂 3px 粗（UV 窗口宽 12px）。所以目录里每张皮肤带 slim 标志，渲染时：
+ * <ul>
+ *   <li><b>本体模型</b>：烘 {@code PLAYER}（经典）与 {@code PLAYER_SLIM}（纤细）
+ *       两套（几何同为标准 HumanoidModel 网格），在 {@link #render} 里按皮肤的
+ *       slim 标志直接换 {@code this.model} 引用——原版渲染链（动画/手持/头部）
+ *       全部跟着新模型走；</li>
+ *   <li><b>护甲</b>：HumanoidArmorLayer 的模型在构造期固定，换不了——
+ *       挂<b>两层</b>（经典对 + 纤细对），各在 render 前按 slim 标志二选一放行。</li>
+ * </ul>
+ * 目录查不到（未指派/目录为空/皮肤被删）→ 经典模型 + 僵尸占位贴图（语义兜底）。
  *
- * <h2>贴图</h2>
- * 现在是僵尸贴图占位（浅绿），因为它是标准 {@code HumanoidModel} 的 UV 布局。
- * 换成村民外观的自定义皮肤时，只需要替换 {@link #TEXTURE} 这一行，
- * 并且新贴图必须按 {@code HumanoidModel} 的 UV 排布画（不能用村民的贴图直接套，
- * 村民贴图的 UV 是另一套布局，套上去会错位）。
+ * <h2>四个渲染层（Layer）</h2>
+ * {@code MobRenderer} 默认只画模型本体。要让装备可见，必须手动挂层：
+ * <ol>
+ *   <li><b>HumanoidArmorLayer ×2</b> —— 四件护甲，经典/纤细各一对；
+ *       <b>必须先挂</b>，否则外面的武器会被胸甲遮住。</li>
+ *   <li><b>ItemInHandLayer</b> —— 主手/副手物品。</li>
+ *   <li><b>CustomHeadLayer</b> —— 头盔以外的"戴在头上"的东西。</li>
+ * </ol>
  */
 @EventBusSubscriber(modid = BmfTown.MOD_ID, value = Dist.CLIENT)
 public class ResidentRenderer extends MobRenderer<Resident, ResidentModel> {
 
-    /** 占位贴图：僵尸。换自定义皮肤时只改这一行。 */
-    private static final ResourceLocation TEXTURE =
+    /** 占位贴图：僵尸（皮肤目录查不到时的语义兜底——"这是没脸居民的临时样子"）。 */
+    private static final ResourceLocation FALLBACK_TEXTURE =
             ResourceLocation.withDefaultNamespace("textures/entity/zombie/zombie.png");
 
-    public ResidentRenderer(EntityRendererProvider.Context context) {
-        // 第三个参数 0.5F 是影子大小（方块单位）
-        super(context, new ResidentModel(context.bakeLayer(ModelLayers.ZOMBIE)), 0.5F);
+    private final ResidentModel classicModel;
+    private final ResidentModel slimModel;
 
-        // ---- 层 1：护甲 ----
-        // 参数说明：渲染器自己、内层模型、外层模型、模型管理器（查盔甲贴图集用）
-        this.addLayer(new HumanoidArmorLayer<>(
-                this,
-                new ResidentModel(context.bakeLayer(ModelLayers.ZOMBIE_INNER_ARMOR)),
-                new ResidentModel(context.bakeLayer(ModelLayers.ZOMBIE_OUTER_ARMOR)),
-                context.getModelManager()));
+    public ResidentRenderer(EntityRendererProvider.Context context) {
+        // 第三个参数 0.5F 是影子大小（方块单位）。
+        // 底模型默认经典；render() 里按皮肤 slim 标志实时换引用。
+        super(context, new ResidentModel(context.bakeLayer(ModelLayers.PLAYER)), 0.5F);
+        this.classicModel = this.model;
+        this.slimModel = new ResidentModel(context.bakeLayer(ModelLayers.PLAYER_SLIM));
+
+        // ---- 层 1a：护甲（经典 4px 臂对）----
+        this.addLayer(armorLayer(context, false));
+        // ---- 层 1b：护甲（纤细 3px 臂对）----
+        this.addLayer(armorLayer(context, true));
 
         // ---- 层 2：手持物 ----
         this.addLayer(new ItemInHandLayer<>(this, context.getItemInHandRenderer()));
@@ -81,45 +87,56 @@ public class ResidentRenderer extends MobRenderer<Resident, ResidentModel> {
         this.addLayer(new CustomHeadLayer<>(this, context.getModelSet(), context.getItemInHandRenderer()));
     }
 
+    /**
+     * 造一对护甲层：slim=false 用经典护甲烘焙层，true 用纤细对。
+     * 两层都常驻，render 前按实体皮肤的 slim 标志放行其一——
+     * HumanoidArmorLayer 的模型是构造期固定的，per-entity 选模型只能靠这个办法。
+     */
+    private HumanoidArmorLayer<Resident, ResidentModel, HumanoidModel<Resident>> armorLayer(
+            EntityRendererProvider.Context context, boolean slim) {
+        HumanoidModel<Resident> inner = new HumanoidModel<>(context.bakeLayer(
+                slim ? ModelLayers.PLAYER_SLIM_INNER_ARMOR : ModelLayers.PLAYER_INNER_ARMOR));
+        HumanoidModel<Resident> outer = new HumanoidModel<>(context.bakeLayer(
+                slim ? ModelLayers.PLAYER_SLIM_OUTER_ARMOR : ModelLayers.PLAYER_OUTER_ARMOR));
+        return new HumanoidArmorLayer<>(this, inner, outer, context.getModelManager()) {
+            @Override
+            public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight,
+                               Resident entity, float limbSwing, float limbSwingAmount,
+                               float partialTicks, float ageInTicks, float netHeadYaw, float headPitch) {
+                if (ClientSkinCatalog.isSlim(entity.getSkinId()) != slim) {
+                    return; // 不是本层的模型变体：跳过（由另一层负责）
+                }
+                super.render(poseStack, buffer, packedLight, entity, limbSwing, limbSwingAmount,
+                        partialTicks, ageInTicks, netHeadYaw, headPitch);
+            }
+        };
+    }
+
+    @Override
+    public void render(Resident entity, float entityYaw, float partialTicks,
+                       PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
+        // 本体模型按皮肤 slim 标志切换：动画/手持/头部装饰全跟父渲染链走
+        this.model = ClientSkinCatalog.isSlim(entity.getSkinId()) ? this.slimModel : this.classicModel;
+        super.render(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);
+    }
+
     @Override
     public ResourceLocation getTextureLocation(Resident entity) {
-        return TEXTURE;
+        ResourceLocation tex = ClientSkinCatalog.locationOf(entity.getSkinId());
+        return tex != null ? tex : FALLBACK_TEXTURE;
     }
 
     // ==========================================================
     //  注册
     // ==========================================================
 
-    /**
-     * 注册到实体渲染器表。
-     *
-     * <p>注意这里用的是 {@code ResidentRenderer::new}，类型参数是 Resident，
-     * 与 {@code EntityType<Resident>} 匹配，不会再出现泛型冲突。
-     */
     @SubscribeEvent
     public static void onRegisterRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntities.RESIDENT.get(), ResidentRenderer::new);
     }
 
-    /**
-     * 注册自定义模型层（烘焙用的网格）。
-     *
-     * <p>为什么需要这一步：{@code context.bakeLayer(ModelLayers.ZOMBIE)} 用的是
-     * <b>原版已经注册好的</b>僵尸层，不需要我们做什么。但如果以后要做
-     * 独立的镇民模型（不同身高、不同体型），就得在这里注册自己的
-     * {@link ModelLayerLocation}，否则 {@code bakeLayer} 会抛
-     * "Unknown model layer"。
-     *
-     * <p>现在留个空实现 + 注释，是为了让你知道扩展点在哪。
-     */
-    @SubscribeEvent
-    public static void onRegisterLayers(EntityRenderersEvent.RegisterLayerDefinitions event) {
-        // 目前复用原版 ZOMBIE 层，无需注册。将来自定义体型时在这里加：
-        // event.registerLayerDefinition(ResidentModel.LAYER, ResidentModel::createMesh);
-    }
-
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
-        BmfTown.LOGGER.info("[BmfTown] 镇民渲染器已注册（人形模型 + 护甲 + 手持 + 头部装饰）");
+        BmfTown.LOGGER.info("[BmfTown] 镇民渲染器已注册（经典+纤细双模型 + 护甲 + 手持 + 头部装饰）");
     }
 }

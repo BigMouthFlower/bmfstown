@@ -34,10 +34,12 @@ import java.util.UUID;
  * 学识循环：闲书 +1 / 技能书 −5（{@code leisure.literacyCost}）——
  * 两种书结构性互锁，货架经济不会倒向任何一边。
  *
- * <p><b>收尾是一条直线</b>（v0.10.3 实测修复）：清主手 → 最近空位就地入架 →
- * 全满才留背包 → 按"同物品同组件"从背包找回原主手换回。<b>主手交换铁律</b>：
- * 拿书前原主手先进背包（绝不丢弃）；被打断当场还书（技能书进度已按 tick
- * 落档，不丢），绝不占着书过夜。
+ * <p><b>收尾是一条直线</b>（手装导演重构，决策 #49）：清主手 → 最近空位就地入架
+ * → 全满才留身上。<b>主手去向不再由本行为过问</b>：旧版"原主手进背包、读完后
+ * 找回换回"的 prevMainhand 机制已删（它是 v0.10.4.1"孤儿书无限流转"事故的
+ * 直接受害者）；取书时主手若是空手（导演体系下的默认态），本行为直接拿书；
+ * 主手若有物品则本次活动放弃（不抢手），物品绝不被挪动。
+ * 被打断当场还书（技能书进度已按 tick 落档，不丢），绝不占着书过夜。
  */
 public class LibraryReadActivity implements LeisureActivity {
 
@@ -50,7 +52,6 @@ public class LibraryReadActivity implements LeisureActivity {
     private boolean skillBook;
     /** 技能书的登记表 id（闲书为 null）。 */
     private String skillBookId;
-    private ItemStack prevMainhand = ItemStack.EMPTY;
     /** 闲书的倒计时（600t，读完结算）。 */
     private int readTicksLeft;
     /**
@@ -274,13 +275,11 @@ public class LibraryReadActivity implements LeisureActivity {
         var content = this.heldBook.get(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get());
         this.skillBookId = content == null ? null : content.draft().bookId();
         this.skillBook = this.skillBookId != null;
-        // ---- 主手交换：原主手进背包，放不下 = 本次放弃，书回架 ----
-        this.prevMainhand = resident.getMainHandItem().copy();
-        if (!this.prevMainhand.isEmpty()
-                && !resident.getInventory().addItem(this.prevMainhand).isEmpty()) {
+        // ---- 主手占用检查（决策 #49）：主手不空说明导演/行为正持有物品，
+        //      本行为不抢手——直接放弃本次取书，书回架，什么都不挪动 ----
+        if (!resident.getMainHandItem().isEmpty()) {
             shelf.setItem(slot, this.heldBook); // 放回（原版 setItem 校验标签+updateState）
             this.heldBook = ItemStack.EMPTY;
-            this.prevMainhand = ItemStack.EMPTY;
             return false;
         }
         resident.setItemInHand(InteractionHand.MAIN_HAND, this.heldBook);
@@ -350,8 +349,7 @@ public class LibraryReadActivity implements LeisureActivity {
     /**
      * 收尾一条直线（结算已由调用方完成，这里只管还书）：
      * 清主手 → 把书放进<b>离他最近的书架空位</b>（就地入架，不寻路）→
-     * 全满 → 书进背包（用户定稿的兜底）→ 按"同物品同组件"从背包找回
-     * 原主手物品换回。
+     * 全满 → 书进背包（用户定稿的兜底）。主手之后放什么，交 HandDirector。
      */
     private boolean finishReading(Resident resident, ServerLevel level) {
         // 1. 清主手（书从这里拿下来）
@@ -380,28 +378,7 @@ public class LibraryReadActivity implements LeisureActivity {
                     resident.getName().getString(), book.getItem().toString());
         }
         this.heldBook = ItemStack.EMPTY;
-        // 4. 换回原主手
-        restorePrevMainhand(resident);
-        this.prevMainhand = ItemStack.EMPTY;
         return false; // 活动结束
-    }
-
-    /** 按"同物品同组件"从背包找回原主手物品换回；找不回就空手并记日志。 */
-    private void restorePrevMainhand(Resident resident) {
-        if (this.prevMainhand.isEmpty()) {
-            return;
-        }
-        var inv = resident.getInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack candidate = inv.getItem(i);
-            if (ItemStack.isSameItemSameComponents(candidate, this.prevMainhand)
-                    && candidate.getCount() >= 1) {
-                resident.setItemInHand(InteractionHand.MAIN_HAND, inv.removeItem(i, 1));
-                return;
-            }
-        }
-        com.bmf.bmfstown.BmfTown.LOGGER.warn("[BmfTown][休闲] {} 原主手物品未找回（应为 {}）",
-                resident.getName().getString(), this.prevMainhand.getItem());
     }
 
     /** 看书气泡：闲书按书名词位填台词；技能书对着书名感慨。 */
@@ -525,6 +502,5 @@ public class LibraryReadActivity implements LeisureActivity {
         resident.getNavigation().stop();
         this.phase = Phase.WALK_TO_SHELF;
         this.heldBook = ItemStack.EMPTY;
-        this.prevMainhand = ItemStack.EMPTY;
     }
 }

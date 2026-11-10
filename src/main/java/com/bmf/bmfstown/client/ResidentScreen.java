@@ -1391,6 +1391,18 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return workListBottom() + 4;
     }
 
+    /**
+     * 当前武器偏好档位名（数据槽实时值；越界兜底 NONE——面板刚开时
+     * 数据包可能还没到，SimpleContainerData 初值是 0，恰好是 SWORD 的
+     * ordinal，会造成"一瞬显示成剑"，故用范围校验兜住负值即可）。
+     */
+    private String weaponPrefLabel() {
+        int ord = this.menu.getStat(ResidentMenu.DATA_WEAPONPREF);
+        com.bmf.bmfstown.entity.WeaponPref[] all = com.bmf.bmfstown.entity.WeaponPref.values();
+        var pref = ord >= 0 && ord < all.length ? all[ord] : com.bmf.bmfstown.entity.WeaponPref.NONE;
+        return I18n.get("gui.bmfstown.resident.work.weapon." + pref.name().toLowerCase(java.util.Locale.ROOT));
+    }
+
     // ---- perk 节点区（工作页效率行与玩家背包之间的固定高滚动菜单） ----
 
     /** 展开的 perk 节点下标（-1 = 全部收起）。选择结果走 PerkChoosePayload 落档。 */
@@ -2110,6 +2122,14 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
             drawWorkButton(gfx, bx, bw, followY, workMode == 1, mouseX, mouseY);
             drawWorkButton(gfx, bx, bw, guardY, workMode == 2, mouseX, mouseY);
+            if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR) {
+                // 武器偏好（决策 #49）：循环切换按钮，永远凸起（无按下态）
+                int weaponY = guardY + WORK_BTN_H + WORK_BTN_GAP;
+                boolean weaponHovered = mouseX >= bx && mouseX < bx + bw
+                        && mouseY >= weaponY && mouseY < weaponY + WORK_BTN_H;
+                drawWorkButton(gfx, bx, bw, weaponY, false,
+                        weaponHovered ? mouseX : -1, weaponHovered ? mouseY : -1);
+            }
         }
 
         // ---- perk 节点区（固定高滚动菜单）：深灰框，行背景与文字在文字层画 ----
@@ -2262,7 +2282,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 不提前 return——段位名+经验栏是各职业共用的尾段骨架
         }
         if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR) {
-            // 战士：跟随/站岗两枚按钮
+            // 战士：跟随/站岗两枚按钮 + 武器偏好循环按钮（决策 #49）
             int workMode = currentWorkMode();
             String followLabel = I18n.get(workMode == 1
                     ? "gui.bmfstown.resident.work.follow_btn_on"
@@ -2273,6 +2293,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             // 开启态文字用亮绿（配合凹陷底），关闭态普通亮灰——一眼分清开关
             drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
             drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
+            // 武器偏好：档位名走数据槽（服务端实时推送），点击循环切档
+            int weaponY = guardY + WORK_BTN_H + WORK_BTN_GAP;
+            String prefLabel = I18n.get("gui.bmfstown.resident.work.weapon_pref",
+                    weaponPrefLabel());
+            drawCenteredInPanel(gfx, prefLabel, 5, bw, weaponY + 3, 0xE0E0E0);
         } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER) {
             // 簿记员：查询物资按钮（统计+寻物都从这里进）
             drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.census_btn"),
@@ -3510,6 +3535,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                         GuardPostClient.startPick(r.getId());
                     }
                     return true; // 非战士点也吞掉（服务端会给提示）
+                }
+                // 武器偏好循环按钮（决策 #49）：走菜单按钮协议，服务端切档
+                int weaponY = guardY + WORK_BTN_H + WORK_BTN_GAP;
+                if (mouseY >= weaponY && mouseY < weaponY + WORK_BTN_H) {
+                    clickMenu(ResidentMenu.BTN_WEAPON_PREF);
+                    return true;
                 }
             }
 

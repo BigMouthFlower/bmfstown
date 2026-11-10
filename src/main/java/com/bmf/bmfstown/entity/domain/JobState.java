@@ -50,6 +50,22 @@ public final class JobState {
         return this.workMode;
     }
 
+    // ---- 武器偏好（决策 #49 手装导演，2026-11-09 用户拍板四档） ----
+
+    /** 通用槽键：战士武器类别偏好（存枚举名；""=无偏好）。 */
+    public static final String KEY_WEAPON_PREF = "WeaponPref";
+
+    /** 战士武器偏好；未设/非法名回落 NONE（旧档兼容）。 */
+    public com.bmf.bmfstown.entity.WeaponPref weaponPref() {
+        return com.bmf.bmfstown.entity.WeaponPref.parse(this.data.getString(KEY_WEAPON_PREF));
+    }
+
+    public void setWeaponPref(com.bmf.bmfstown.entity.WeaponPref pref) {
+        this.data.putString(KEY_WEAPON_PREF,
+                pref == null || pref == com.bmf.bmfstown.entity.WeaponPref.NONE
+                        ? "" : pref.name());
+    }
+
     public BlockPos guardPost() {
         return this.guardPost;
     }

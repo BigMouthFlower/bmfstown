@@ -1,0 +1,243 @@
+{
+ "pack": "festive_mashup",
+ "skins": [
+  {
+   "id": "alexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/alexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "athletealexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/athletealexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "athletestevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/athletestevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "bigfoot",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/bigfoot.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "blitzen",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/blitzen.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "bluesanta",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/bluesanta.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "boxeralexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/boxeralexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "boxerstevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/boxerstevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "comet",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/comet.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "cupid",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/cupid.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "cyclistalexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/cyclistalexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "cycliststevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/cycliststevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "dancer",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/dancer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "dasher",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/dasher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "donner",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/donner.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "fatsanta",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/fatsanta.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "greensanta",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/greensanta.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "krampus",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/krampus.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "prancer",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/prancer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "prisoneralexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/prisoneralexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "prisonerstevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/prisonerstevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "scottishalexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/scottishalexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "scottishstevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/scottishstevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "skier",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/skier.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "skisteve",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/skisteve.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "stevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/stevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tennisalexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/tennisalexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tennisstevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/tennisstevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "treefairy",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/treefairy.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tuxedoalexxmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/tuxedoalexxmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tuxedostevexmassweater",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/tuxedostevexmassweater.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "vixen",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/vixen.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "xmasherobrine",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/xmasherobrine.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "yeti",
+   "texture": "bmfstown:textures/entity/resident_skins/festive_mashup/yeti.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Festive Mash-Up（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

@@ -735,6 +735,57 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：请求重发皮肤目录（自愈式拉取，同炼金目录请求——不依赖登录时序）。
+     */
+    public record SkinCatalogRequestPayload() implements CustomPacketPayload {
+
+        public static final SkinCatalogRequestPayload INSTANCE = new SkinCatalogRequestPayload();
+
+        public static final Type<SkinCatalogRequestPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "skin_catalog_request"));
+
+        public static final StreamCodec<ByteBuf, SkinCatalogRequestPayload> STREAM_CODEC =
+                StreamCodec.unit(INSTANCE);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * S → C：皮肤目录同步（条目 "id|贴图路径|slim(0/1)"——贴图与 slim 是客户端
+     * 选模型、查贴图的全部所需；author/tags 服务端留档，不同步省流量）。
+     */
+    public record SkinCatalogSyncPayload(java.util.List<String> entries)
+            implements CustomPacketPayload {
+
+        public static final Type<SkinCatalogSyncPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "skin_catalog_sync"));
+
+        public static final StreamCodec<ByteBuf, SkinCatalogSyncPayload> STREAM_CODEC = StreamCodec.of(
+                (buf, payload) -> {
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.entries().size());
+                    for (String e : payload.entries()) {
+                        ByteBufCodecs.STRING_UTF8.encode(buf, e);
+                    }
+                },
+                buf -> {
+                    int n = ByteBufCodecs.VAR_INT.decode(buf);
+                    java.util.List<String> entries = new java.util.ArrayList<>(n);
+                    for (int i = 0; i < n; i++) {
+                        entries.add(ByteBufCodecs.STRING_UTF8.decode(buf));
+                    }
+                    return new SkinCatalogSyncPayload(entries);
+                });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：perk 选档（成长区分支行点击）。
      *
      * <p>服务端用 {@code Perks.canChoose} 复核段位与分支合法性后才落档，
@@ -1177,6 +1228,29 @@ public final class ModNetworking {
     /** S2C 处理：写入客户端炼金目录缓存。 */
     private static void handleAlchemyCatalogSync(AlchemyCatalogSyncPayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() -> com.bmf.bmfstown.client.ClientAlchemyCatalog.accept(payload.entries()));
+    }
+
+    /** 服务端把皮肤目录（id→贴图/slim）发给玩家。 */
+    public static void sendSkinCatalogSync(ServerPlayer player) {
+        java.util.List<String> entries = new java.util.ArrayList<>();
+        for (var e : com.bmf.bmfstown.skin.SkinCatalog.entries()) {
+            entries.add(e.id() + "|" + e.texture() + "|" + (e.slim() ? "1" : "0"));
+        }
+        player.connection.send(new SkinCatalogSyncPayload(entries));
+    }
+
+    /** C2S 处理：按请求重发皮肤目录（自愈）。 */
+    private static void handleSkinCatalogRequest(SkinCatalogRequestPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof ServerPlayer serverPlayer) {
+                sendSkinCatalogSync(serverPlayer);
+            }
+        });
+    }
+
+    /** S2C 处理：写入客户端皮肤目录缓存。 */
+    private static void handleSkinCatalogSync(SkinCatalogSyncPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> com.bmf.bmfstown.client.ClientSkinCatalog.accept(payload.entries()));
     }
 
     /** 炼金订单：校验职业与目录存在性（反查拒绝野键），落账。 */
@@ -1721,6 +1795,10 @@ public final class ModNetworking {
                 ModNetworking::handleAlchemyCatalogSync);
         registrar.playToServer(AlchemyCatalogRequestPayload.TYPE, AlchemyCatalogRequestPayload.STREAM_CODEC,
                 ModNetworking::handleAlchemyCatalogRequest);
+        registrar.playToClient(SkinCatalogSyncPayload.TYPE, SkinCatalogSyncPayload.STREAM_CODEC,
+                ModNetworking::handleSkinCatalogSync);
+        registrar.playToServer(SkinCatalogRequestPayload.TYPE, SkinCatalogRequestPayload.STREAM_CODEC,
+                ModNetworking::handleSkinCatalogRequest);
         registrar.playToServer(WorkerTogglePayload.TYPE, WorkerTogglePayload.STREAM_CODEC,
                 ModNetworking::handleWorkerToggle);
         registrar.playToServer(CensusRequestPayload.TYPE, CensusRequestPayload.STREAM_CODEC,

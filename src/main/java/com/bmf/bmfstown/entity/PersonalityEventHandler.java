@@ -117,18 +117,31 @@ public final class PersonalityEventHandler {
     public static void onResidentAttacked(
             net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent event) {
         if (event.getEntity().level().isClientSide()
-                || !(event.getEntity() instanceof Resident victim)) {
-            return;
-        }
-        if (!(event.getSource().getEntity() instanceof LivingEntity attacker)
+                || !(event.getSource().getEntity() instanceof LivingEntity attacker)
                 || attacker instanceof Player) {
             return;
         }
-        AABB box = victim.getBoundingBox().inflate(NOTICE_RADIUS);
-        List<Resident> residents = event.getEntity().level().getEntitiesOfClass(Resident.class, box);
-        for (Resident ally : residents) {
-            if (ally != victim && ally.isAlive()) {
-                ally.raiseAlarm(attacker);
+        // ---- 受害者是居民：广播给周围居民 ----
+        if (event.getEntity() instanceof Resident victim) {
+            AABB box = victim.getBoundingBox().inflate(NOTICE_RADIUS);
+            List<Resident> residents = event.getEntity().level().getEntitiesOfClass(Resident.class, box);
+            for (Resident ally : residents) {
+                if (ally != victim && ally.isAlive()) {
+                    ally.raiseAlarm(attacker);
+                }
+            }
+            return;
+        }
+        // ---- 受害者是玩家（2026-11-09 用户拍板：助战覆盖所有玩家）----
+        // 玩家被怪打 = 公共威胁，周围居民同样呼救入场。
+        // 攻击者仍须非玩家（零仇恨铁律不动——玩家打玩家绝不给镇民拉仇恨）。
+        if (event.getEntity() instanceof Player playerVictim) {
+            AABB box = playerVictim.getBoundingBox().inflate(NOTICE_RADIUS);
+            List<Resident> residents = event.getEntity().level().getEntitiesOfClass(Resident.class, box);
+            for (Resident ally : residents) {
+                if (ally.isAlive()) {
+                    ally.raiseAlarm(attacker);
+                }
             }
         }
     }

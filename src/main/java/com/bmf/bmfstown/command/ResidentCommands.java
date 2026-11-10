@@ -120,6 +120,22 @@ public final class ResidentCommands {
                                 ctx,
                                 EntityArgument.getEntities(ctx, "targets")))));
 
+        // ---- /bmfstown skin reroll <目标> | skin set <目标> <皮肤id> ----
+        // 皮肤调试/管理（v0.15）：重抽或指定镇民皮肤（id 全局唯一，格式 包名/皮肤id）。
+        root.then(Commands.literal("skin")
+                .then(Commands.literal("reroll")
+                        .then(Commands.argument("targets", EntityArgument.entities())
+                                .executes(ctx -> skinReroll(
+                                        ctx,
+                                        EntityArgument.getEntities(ctx, "targets")))))
+                .then(Commands.literal("set")
+                        .then(Commands.argument("targets", EntityArgument.entities())
+                                .then(Commands.argument("skin", StringArgumentType.string())
+                                        .executes(ctx -> skinSet(
+                                                ctx,
+                                                EntityArgument.getEntities(ctx, "targets"),
+                                                StringArgumentType.getString(ctx, "skin")))))));
+
         // ---- /bmfstown say <文字> ----
         // 台词调试命令：让最近的镇民头顶显示这句原文（验证展示链路用）。
         root.then(Commands.literal("say")
@@ -778,6 +794,59 @@ public final class ResidentCommands {
             ctx.getSource().sendSuccess(() -> Component.translatable(
                     "msg.bmfstown.command.reroll_done",
                     resident.getName().getString()), false);
+        }
+        if (changed == 0) {
+            ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));
+        }
+        return changed;
+    }
+
+    /** /bmfstown skin reroll：给每个目标镇民从目录重抽一张皮肤（目录空则报错）。 */
+    private static int skinReroll(CommandContext<CommandSourceStack> ctx,
+                                  Collection<? extends Entity> targets) {
+        if (com.bmf.bmfstown.skin.SkinCatalog.entries().isEmpty()) {
+            ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.skin.catalog_empty"));
+            return 0;
+        }
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (!(entity instanceof Resident resident)) {
+                continue;
+            }
+            String id = com.bmf.bmfstown.skin.SkinCatalog.randomId(resident.getRandom());
+            if (id == null) {
+                continue;
+            }
+            resident.setSkinId(id);
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    "msg.bmfstown.skin.rerolled",
+                    resident.getName().getString(), id), false);
+            changed++;
+        }
+        if (changed == 0) {
+            ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));
+        }
+        return changed;
+    }
+
+    /** /bmfstown skin set：把目标镇民皮肤设为指定 id（野 id 可见拒绝，不静默）。 */
+    private static int skinSet(CommandContext<CommandSourceStack> ctx,
+                               Collection<? extends Entity> targets, String skinId) {
+        if (com.bmf.bmfstown.skin.SkinCatalog.get(skinId) == null) {
+            ctx.getSource().sendFailure(Component.translatable(
+                    "msg.bmfstown.skin.invalid", skinId));
+            return 0;
+        }
+        int changed = 0;
+        for (Entity entity : targets) {
+            if (!(entity instanceof Resident resident)) {
+                continue;
+            }
+            resident.setSkinId(skinId);
+            ctx.getSource().sendSuccess(() -> Component.translatable(
+                    "msg.bmfstown.skin.set",
+                    resident.getName().getString(), skinId), false);
+            changed++;
         }
         if (changed == 0) {
             ctx.getSource().sendFailure(Component.translatable("msg.bmfstown.command.no_resident"));

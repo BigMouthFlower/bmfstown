@@ -1,0 +1,166 @@
+{
+ "pack": "biome_settlers_1",
+ "skins": [
+  {
+   "id": "desertarcher",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/desertarcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "desertbrawler",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/desertbrawler.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "desertbrewer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/desertbrewer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "desertengineer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/desertengineer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "desertgriefer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/desertgriefer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "deserthunter",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/deserthunter.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "deserthusk",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/deserthusk.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "deserttamer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/deserttamer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "forestarcher",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/forestarcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "forestbrawler",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/forestbrawler.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "forestbrewer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/forestbrewer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "forestengineer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/forestengineer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "forestgriefer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/forestgriefer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "foresthunter",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/foresthunter.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "foresttamer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/foresttamer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "forestwoodbeast",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/forestwoodbeast.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tundraarcher",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/tundraarcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tundrabrawler",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/tundrabrawler.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tundrabrewer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/tundrabrewer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tundraengineer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/tundraengineer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tundragriefer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/tundragriefer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tundrahunter",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/tundrahunter.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "tundratamer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_1/tundratamer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 1（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

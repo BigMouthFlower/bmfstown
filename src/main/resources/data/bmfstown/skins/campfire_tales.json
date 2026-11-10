@@ -1,0 +1,40 @@
+{
+ "pack": "campfire_tales",
+ "skins": [
+  {
+   "id": "anne",
+   "texture": "bmfstown:textures/entity/resident_skins/campfire_tales/anne.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Campfire Tales（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "jack",
+   "texture": "bmfstown:textures/entity/resident_skins/campfire_tales/jack.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Campfire Tales（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "lapislady",
+   "texture": "bmfstown:textures/entity/resident_skins/campfire_tales/lapislady.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Campfire Tales（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "rose",
+   "texture": "bmfstown:textures/entity/resident_skins/campfire_tales/rose.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Campfire Tales（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "silksnatcher",
+   "texture": "bmfstown:textures/entity/resident_skins/campfire_tales/silksnatcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Campfire Tales（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

@@ -1,0 +1,26 @@
+{
+ "pack": "beach",
+ "skins": [
+  {
+   "id": "beachqueen",
+   "texture": "bmfstown:textures/entity/resident_skins/beach/beachqueen.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Beach Party（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "coolncasual",
+   "texture": "bmfstown:textures/entity/resident_skins/beach/coolncasual.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Beach Party（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "lobsterman",
+   "texture": "bmfstown:textures/entity/resident_skins/beach/lobsterman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Beach Party（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

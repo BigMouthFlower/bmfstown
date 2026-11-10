@@ -1,0 +1,68 @@
+{
+ "pack": "sp3",
+ "skins": [
+  {
+   "id": "baron",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/baron.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "blacksmith",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/blacksmith.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "carpenter",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/carpenter.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "castaway",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/castaway.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "farmer",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/farmer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "peasant",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/peasant.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "scribe",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/scribe.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "vagrant",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/vagrant.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "watchman",
+   "texture": "bmfstown:textures/entity/resident_skins/sp3/watchman.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Skin Pack 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}

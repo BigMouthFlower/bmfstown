@@ -2,6 +2,7 @@ package com.bmf.bmfstown;
 
 import com.bmf.bmfstown.client.ResidentScreen;
 import com.bmf.bmfstown.menu.ModMenus;
+import com.bmf.bmfstown.network.ModNetworking;
 import net.minecraft.world.entity.EntityType;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -88,5 +89,16 @@ public final class BmfTownClient {
     public static void onLoggingOut(final net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
         com.bmf.bmfstown.client.ClientTauntState.clear();
         com.bmf.bmfstown.client.ClientMoodState.clear();
+        com.bmf.bmfstown.client.ClientSkinCatalog.clear();
+    }
+
+    /**
+     * 进服主动拉一次皮肤目录（自愈式，同炼金目录的弹层拉取思路）：
+     * 服务端登录推送 SkinCatalogSync 与本地区块实体 spawn 存在时序竞争，
+     * 先到的镇民可能皮肤查不到——这条请求保证几十 tick 内目录必然就位。
+     */
+    @SubscribeEvent
+    public static void onLoggingIn(final net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingIn event) {
+        ModNetworking.sendToServer(ModNetworking.SkinCatalogRequestPayload.INSTANCE);
     }
 }

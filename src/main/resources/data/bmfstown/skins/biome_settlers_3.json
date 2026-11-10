@@ -1,0 +1,68 @@
+{
+ "pack": "biome_settlers_3",
+ "skins": [
+  {
+   "id": "endarcher",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/endarcher.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "endbrawler",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/endbrawler.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "endbrewer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/endbrewer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "endhunter",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/endhunter.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "endtamer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/endtamer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "endzealot",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/endzealot.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "farlandengineer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/farlandengineer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "farlandgriefer",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/farlandgriefer.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  },
+  {
+   "id": "farlandzealot",
+   "texture": "bmfstown:textures/entity/resident_skins/biome_settlers_3/farlandzealot.png",
+   "slim": false,
+   "author": "Mojang/4J Studios · Biome Settlers 3（移植 Nostalgica-Reverie, CC-BY-SA-4.0）",
+   "tags": []
+  }
+ ]
+}
