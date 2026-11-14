@@ -501,6 +501,46 @@ public class FireworksTests {
         });
     }
 
+    /** 缺料待工（决策 #62）：全池空 → 释放认领收工闲逛；玩家补料 → 自动复工交付。 */
+    @GameTest(template = "room13x6x11", timeoutTicks = 40000)
+    public static void workerShortageGoesIdleRestockResumes(GameTestHelper helper) {
+        Setup s = prepareTown(helper, 1);
+        Resident worker = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(6, 1, 5));
+        worker.getIdentity().setProfession(ProfessionType.WORKER);
+        worker.getIdentity().setTownId(s.town().id());
+        worker.syncClient();
+        worker.getJobState().setOrderItem("minecraft:redstone_torch");
+        s.residents().add(worker);
+        BlockPos table = helper.absolutePos(s.tableRels().get(0));
+        helper.startSequence()
+                .thenExecuteAfter(300, () -> {
+                    // 缺料期不蹲岗：工作台认领必须已释放（旧实现会占桌死等）
+                    if (com.bmf.bmfstown.entity.WorkshopClaims.isTaken(
+                            table.asLong(), worker.getUUID())) {
+                        helper.fail("全池空 300t 后仍占桌蹲岗（应释放认领收工闲逛）");
+                    }
+                    // 玩家回填原料
+                    var chest = s.chest(helper);
+                    chest.setItem(0, new ItemStack(Items.STICK));
+                    chest.setItem(1, new ItemStack(Items.REDSTONE));
+                    chest.setChanged();
+                })
+                .thenWaitUntil(() -> {
+                    var c = s.chest(helper);
+                    boolean torch = false;
+                    for (int i = 0; i < c.getContainerSize(); i++) {
+                        if (c.getItem(i).is(Items.REDSTONE_TORCH)) {
+                            torch = true;
+                            break;
+                        }
+                    }
+                    if (!torch) {
+                        throw new GameTestAssertException("补料后应自动复工并交付红石火把");
+                    }
+                })
+                .thenSucceed();
+    }
+
     // ==========================================================
     //  工匠章战斗三件（mixin 挂点）
     // ==========================================================

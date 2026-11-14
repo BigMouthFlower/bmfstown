@@ -47,6 +47,10 @@ public final class PersonalityEventHandler {
         if (!(event.getEntity().level() instanceof ServerLevel level)) {
             return; // 客户端侧的事件直接忽略
         }
+        // ---- 过客死在半路（决策 #61）：世界级新闻，全镇可见 ----
+        if (event.getEntity() instanceof Resident dead) {
+            com.bmf.bmfstown.town.Wanderers.onWandererDied(dead, level);
+        }
         AABB box = event.getEntity().getBoundingBox().inflate(NOTICE_RADIUS);
         List<Resident> residents = level.getEntitiesOfClass(Resident.class, box);
         for (Resident resident : residents) {

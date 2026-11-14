@@ -54,9 +54,50 @@ public class FinishedBookItem extends Item {
         return switch (content.draft()) {
             // 特殊书名在登记表 lang：book.bmfstown.special.<id>.name
             case BookDraft.Perk p -> Component.translatable("book.bmfstown.special." + p.perkId() + ".name");
-            case BookDraft.Unlock u -> Component.translatable("book.bmfstown.special." + u.unlockId() + ".name");
+            case BookDraft.Unlock u -> unlockTitle(u.unlockId());
             case BookDraft.Idle i -> BookLexicon.title(i.seed());
         };
+    }
+
+    // ==========================================================
+    //  隐藏解锁书：秘传配方（药水）与恐怖手记分卷共用一个种类
+    // ==========================================================
+
+    /**
+     * 恐怖手记分卷的 unlockId 编码（决策 #58 归类纠正：手记是<b>隐藏解锁类
+     * 的扩容</b>，不是新种类——书系恒为闲书/知识 perk/隐藏解锁三类）。
+     * 编码 {@code horror_<线id>#<格数>}；非该前缀 = 普通解锁书。
+     */
+    public static final String HORROR_PREFIX = "horror_";
+
+    /** 该解锁 id 是否是恐怖手记分卷。 */
+    public static boolean isHorrorVolume(String unlockId) {
+        return unlockId.startsWith(HORROR_PREFIX) && unlockId.indexOf('#') > 0;
+    }
+
+    /** 恐怖分卷 → 线 id。 */
+    public static String horrorLine(String unlockId) {
+        return unlockId.substring(HORROR_PREFIX.length(), unlockId.indexOf('#'));
+    }
+
+    /** 恐怖分卷 → 格数（1 起）。 */
+    public static int horrorChapter(String unlockId) {
+        try {
+            return Integer.parseInt(unlockId.substring(unlockId.indexOf('#') + 1));
+        } catch (NumberFormatException e) {
+            return 0; // 坏编码回落：正文/卷号走占位键
+        }
+    }
+
+    /** 解锁书书名：恐怖分卷 = 故事总名+卷号；其余查登记表 lang。 */
+    private static MutableComponent unlockTitle(String unlockId) {
+        if (isHorrorVolume(unlockId)) {
+            return Component.translatable("book.bmfstown.horror." + horrorLine(unlockId) + ".name")
+                    .append(" ")
+                    .append(Component.translatable("book.bmfstown.horror.volume",
+                            horrorChapter(unlockId)));
+        }
+        return Component.translatable("book.bmfstown.special." + unlockId + ".name");
     }
 
     /**
@@ -78,7 +119,15 @@ public class FinishedBookItem extends Item {
         pages.add(titlePage);
         switch (content.draft()) {
             case BookDraft.Idle idle -> pages.addAll(BookLexicon.pages(idle.seed()));
-            case BookDraft.Unlock unlock -> pages.addAll(secretRecipePages(unlock.unlockId()));
+            case BookDraft.Unlock unlock -> {
+                // 恐怖手记分卷：正文 = 该格叙事（lang 确定性重放）；其余 = 秘传配方页
+                if (isHorrorVolume(unlock.unlockId())) {
+                    pages.add(Component.translatable("book.bmfstown.horror."
+                            + horrorLine(unlock.unlockId()) + ".ch" + horrorChapter(unlock.unlockId())));
+                } else {
+                    pages.addAll(secretRecipePages(unlock.unlockId()));
+                }
+            }
             default -> pages.add(Component.translatable("book.bmfstown.special.intro"));
         }
         return pages;

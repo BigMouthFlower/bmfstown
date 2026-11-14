@@ -542,6 +542,9 @@ public class Resident extends PathfinderMob {
         //      见 FireworksmanGoal 与 designs/fireworksmaker.md） ----
         this.fireworksGoal = new FireworksmanGoal(this);
         this.goalSelector.addGoal(4, this.fireworksGoal);
+        // ---- 酒保采集入库（v0.16 酒馆第一步：TAVERN 区内奶/蜜→库存容器，
+        //      见 TavernkeepGoal 与决策 #63） ----
+        this.goalSelector.addGoal(4, new TavernkeepGoal(this));
         // ---- 闲暇活动（v0.10.3：动态活动池——闲逛/图书馆看闲书，优先级 5
         //      低于工作/战士 Goal；窗口判定见 LeisureGoal，读书逻辑在
         //      leisure.LibraryReadActivity，替代已废弃的 ReadingGoal） ----
@@ -2858,20 +2861,52 @@ public class Resident extends PathfinderMob {
     }
 
     /**
-     * 在城镇外框内随机取一个漫步目标点。
-     * x/z 缩进 1 格（贴边的格子容易卡在墙上），y 沿用当前高度并夹回范围。
+     * 在城镇内随机取一个漫步目标点。
+     * <p>v0.9.1 不连续选区后，城镇 = 0 号外框 + 追加区块的并集（{@link Town#contains}）；
+     * 漫步目标池必须与判定口径一致——按各块 XZ 面积加权选块（等价于在并集上
+     * 均匀撒点），否则镇民溜进追加区块后总被下一次漫步拽回主区（用户 2026-11-14 实测）。
+     * x/z 缩进 1 格（贴边的格子容易卡在墙上），y 沿用当前高度并夹回所选块的范围。
      */
     @Nullable
     Vec3 randomTownPos(Town town) {
         RandomSource random = this.getRandom();
-        int spanX = Math.max(1, town.max().getX() - town.min().getX() - 1);
-        int spanZ = Math.max(1, town.max().getZ() - town.min().getZ() - 1);
-        int x = Mth.clamp(town.min().getX() + 1 + random.nextInt(spanX),
-                town.min().getX(), town.max().getX());
-        int z = Mth.clamp(town.min().getZ() + 1 + random.nextInt(spanZ),
-                town.min().getZ(), town.max().getZ());
+
+        // 面积加权选块：0 号外框 + 追加区块同池抽签（roll 在总面积上均匀取）
+        BlockPos min = town.min();
+        BlockPos max = town.max();
+        long mainArea = (long) (max.getX() - min.getX())
+                * (max.getZ() - min.getZ());
+        long total = mainArea;
+        for (TownZone block : town.townBlocks()) {
+            total += (long) (block.max().getX() - block.min().getX())
+                    * (block.max().getZ() - block.min().getZ());
+        }
+        double roll = random.nextDouble() * Math.max(1, total);
+        TownZone picked = null;
+        if (roll >= mainArea) {
+            roll -= mainArea;
+            for (TownZone block : town.townBlocks()) {
+                roll -= (long) (block.max().getX() - block.min().getX())
+                        * (block.max().getZ() - block.min().getZ());
+                if (roll < 0) {
+                    picked = block;
+                    break;
+                }
+            }
+        }
+        if (picked != null) {
+            min = picked.min();
+            max = picked.max();
+        }
+
+        int spanX = Math.max(1, max.getX() - min.getX() - 1);
+        int spanZ = Math.max(1, max.getZ() - min.getZ() - 1);
+        int x = Mth.clamp(min.getX() + 1 + random.nextInt(spanX),
+                min.getX(), max.getX());
+        int z = Mth.clamp(min.getZ() + 1 + random.nextInt(spanZ),
+                min.getZ(), max.getZ());
         int y = Mth.clamp(this.blockPosition().getY(),
-                town.min().getY(), town.max().getY());
+                min.getY(), max.getY());
         return Vec3.atBottomCenterOf(new BlockPos(x, y, z));
     }
 

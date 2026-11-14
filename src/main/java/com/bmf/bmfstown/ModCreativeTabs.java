@@ -30,6 +30,7 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.TOWN_WAND.get());
                         output.accept(ModItems.TOWN_HANDBOOK.get());
                         output.accept(ModItems.WALL_CALENDAR.get());
+                        output.accept(ModItems.BULLETIN_BOARD.get());
                         output.accept(ModItems.WRITING_BOOK.get());
                         output.accept(ModItems.FINISHED_BOOK.get());
                         output.accept(ModItems.RESIDENT_SPAWN_EGG.get());

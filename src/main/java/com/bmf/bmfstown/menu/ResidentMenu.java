@@ -491,6 +491,10 @@ public class ResidentMenu extends AbstractContainerMenu {
             // 换城镇 → 原住宅失效（住宅区隶属于城镇），一并清掉
             this.resident.getIdentity().setTownId(town.id());
             this.resident.getIdentity().setHousing(null, 0L);
+            // 过客领养（决策 #61）：赋归属即删过客标记（单向）+ 自动寻路进镇
+            if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                com.bmf.bmfstown.town.Wanderers.onAdopted(this.resident, serverLevel);
+            }
             this.resident.syncClient();
             player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.resident.bound",

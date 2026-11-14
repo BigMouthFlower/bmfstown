@@ -56,6 +56,7 @@ public class LeisureGoal extends Goal {
         }
         return switch (this.resident.getProfession()) {
             case WORKER -> inHours(level, this.resident.workWindow());
+            case TAVERNKEEP -> inHours(level, this.resident.workWindow());
             case SCHOLAR -> (this.resident.getWorkMode() == WorkMode.WRITE
                     || this.resident.getWorkMode() == WorkMode.COPY)
                     && inHours(level, this.resident.scholarWorkWindow());
@@ -184,10 +185,14 @@ public class LeisureGoal extends Goal {
      * 决策：一半概率尝试"图书馆看闲书"，没随机到就什么都不启动——
      * 镇民回到原有的漫无目的游走（自然游走是既有 AI，不需要额外赋予）。
      * 以后加酒吧 = 这里多一个"随机到 X 就启动 X"的分支。
+     *
+     * <p>v0.16 沉浸层（#57）：自然游走段开始时掷闲暇随机事件
+     * （闲逛→（概率）随机事件→（子集）恐怖事件，见 {@code WanderEvents}）。
      */
     private boolean pick(ServerLevel level) {
         if (this.random.nextInt(100) >= LIBRARY_CHANCE) {
             this.breakCooldown = this.randomBreak(); // 没随机到：自然游走一阵再说
+            com.bmf.bmfstown.eerie.WanderEvents.onWanderSegmentStart(this.resident, level);
             return false;
         }
         LeisureActivity activity = new LibraryReadActivity();

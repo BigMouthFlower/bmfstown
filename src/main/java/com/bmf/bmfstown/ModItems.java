@@ -77,6 +77,13 @@ public final class ModItems {
             ITEMS.registerSimpleBlockItem(com.bmf.bmfstown.block.ModBlocks.WALL_CALENDAR);
 
     /**
+     * 镇公告栏（v0.16 沉浸层 #57）：闲逛随机发现的非常规事件公示板，
+     * 玩家侧唯一的恐怖线进度窗口（右键看最近公告）。
+     */
+    public static final DeferredItem<net.minecraft.world.item.BlockItem> BULLETIN_BOARD =
+            ITEMS.registerSimpleBlockItem(com.bmf.bmfstown.block.ModBlocks.BULLETIN_BOARD);
+
+    /**
      * 写作中的书（v0.11 学者）：开写即抽定内容，进度/实践计数/作者链全在
      * 组件 NBT 里——死亡掉落、换人续写、销毁退池都随书走。
      * 名字恒为"未完成的书"，玩家打不开（内容保密）。

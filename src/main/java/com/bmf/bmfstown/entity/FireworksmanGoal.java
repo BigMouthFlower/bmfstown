@@ -104,6 +104,11 @@ public class FireworksmanGoal extends Goal {
     private int retryCooldown;
     /** 认领失败后的扫描节流（resident.tickCount）。 */
     private long nextScanAt;
+    /**
+     * 缺料待工标记（决策 #62）：全池无料 → Goal 结束落回闲暇池（闲逛），
+     * 订单保留不清；canUse 里以 60t 节流预检补料，补上即自动复工。
+     */
+    private boolean shortageIdle;
     private boolean running;
 
     public FireworksmanGoal(Resident resident) {
@@ -162,6 +167,14 @@ public class FireworksmanGoal extends Goal {
         if (this.resident.tickCount < this.nextScanAt) {
             return false;
         }
+        // 缺料待工（决策 #62）：上次因全池无料收工 → 补料前不认领岗位，留在闲暇池
+        if (this.shortageIdle) {
+            if (setsSupportedBy(level, validContainers(level)) <= 0) {
+                this.nextScanAt = this.resident.tickCount + 60;
+                return false;
+            }
+            this.shortageIdle = false;
+        }
         if (!claimPost(level)) {
             this.nextScanAt = this.resident.tickCount + 60;
             return false;
@@ -179,6 +192,10 @@ public class FireworksmanGoal extends Goal {
         JobState job = this.resident.getJobState();
         if (!job.workerEnabled() || job.orderItem().isEmpty()
                 || this.resident.getProfession() != ProfessionType.FIREWORKSMAN) {
+            return false;
+        }
+        // 缺料待工（决策 #62）：等料不蹲岗——Goal 结束落回闲暇池，stop() 释放认领
+        if (this.shortageIdle) {
             return false;
         }
         return townAlive(level)
@@ -320,11 +337,11 @@ public class FireworksmanGoal extends Goal {
         List<BlockPos> containers = validContainers(level);
         int sets = setsSupportedBy(level, containers);
         if (sets <= 0) {
-            // 无活可干：让出工作台（共池先到先得——缺料蹲台会饿死另一职业）
+            // 无活可干：收工进闲暇池（决策 #62 用户拍板：缺料不蹲岗闲逛去，订单保留，
+            // 补料后自动复工；释放工作台——共池先到先得，蹲台会饿死另一职业）
             releaseClaim();
-            this.retryCooldown = IDLE_RETRY_TICKS;
-            this.phase = Phase.GO_POST;
-            this.afterPostFetch = true;
+            this.shortageIdle = true;
+            this.nextScanAt = this.resident.tickCount + 60;
             logShortage(level, containers);
             return;
         }

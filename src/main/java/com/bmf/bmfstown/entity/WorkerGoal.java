@@ -97,6 +97,11 @@ public class WorkerGoal extends Goal {
     private int retryCooldown;
     /** 认领失败后的扫描节流（resident.tickCount），防止空工坊每 tick 全图扫。 */
     private long nextScanAt;
+    /**
+     * 缺料待工标记（决策 #62）：全池+背包皆空 → Goal 结束落回闲暇池（闲逛），
+     * 订单保留不清；canUse 里以 60t 节流预检补料，补上即自动复工。
+     */
+    private boolean shortageIdle;
     private boolean running;
 
     public WorkerGoal(Resident resident) {
@@ -155,6 +160,17 @@ public class WorkerGoal extends Goal {
         if (this.resident.tickCount < this.nextScanAt) {
             return false;
         }
+        // 缺料待工（决策 #62）：上次因全池+背包皆空收工 → 补料前不认领岗位，
+        // 留在闲暇池闲逛；预检命中（补了料）才清标记走正常认领
+        if (this.shortageIdle) {
+            WorkshopCraft order = findOrder(level, this.resident.getJobState().orderItem());
+            if (order == null
+                    || (inventorySets(order) <= 0 && poolSets(level, order) <= 0)) {
+                this.nextScanAt = this.resident.tickCount + 60;
+                return false;
+            }
+            this.shortageIdle = false;
+        }
         if (!claimPost(level)) {
             this.nextScanAt = this.resident.tickCount + 60;
             return false;
@@ -172,6 +188,10 @@ public class WorkerGoal extends Goal {
         JobState job = this.resident.getJobState();
         if (!job.workerEnabled() || job.orderItem().isEmpty()
                 || this.resident.getProfession() != ProfessionType.WORKER) {
+            return false;
+        }
+        // 缺料待工（决策 #62）：等料不蹲岗——Goal 结束落回闲暇池，stop() 释放认领
+        if (this.shortageIdle) {
             return false;
         }
         // 岗位被拆 / 城镇没了 → 停止（stop 释放认领，下轮 canUse 重新认领）
@@ -309,11 +329,11 @@ public class WorkerGoal extends Goal {
         this.batchTarget = Math.min(BATCH_MAX, invSets + poolSets);
         if (this.batchTarget <= invSets) {
             if (invSets <= 0) {
-                // 全池空 + 背包空：等补料（补料即下单）
-                this.retryCooldown = IDLE_RETRY_TICKS;
-                this.phase = Phase.GO_POST;
-                this.afterPostFetch = true;
-                LOGGER.debug("[BmfTown][工人] {} 没料可做，待机等补料",
+                // 全池空 + 背包空：收工进闲暇池（决策 #62 用户拍板：缺料不蹲岗闲逛去，
+                // 闲逛段还带随机事件；订单保留，补料后 60t 内自动复工）
+                this.shortageIdle = true;
+                this.nextScanAt = this.resident.tickCount + 60;
+                LOGGER.debug("[BmfTown][工人] {} 没料可做，收工闲逛（补料自动复工）",
                         this.resident.getName().getString());
                 return;
             }
@@ -325,12 +345,13 @@ public class WorkerGoal extends Goal {
 
         BlockPos target = nearestContainerWithNeeded(level, order, invSets);
         if (target == null) {
-            // 盘点后有料、开跑前被抽干：有存货就地做，没有就待机
+            // 盘点后有料、开跑前被抽干：有存货就地做，没有就收工进闲暇池（决策 #62）
             if (invSets > 0) {
                 this.phase = Phase.GO_POST;
                 this.afterPostFetch = false;
             } else {
-                this.retryCooldown = IDLE_RETRY_TICKS;
+                this.shortageIdle = true;
+                this.nextScanAt = this.resident.tickCount + 60;
             }
             return;
         }

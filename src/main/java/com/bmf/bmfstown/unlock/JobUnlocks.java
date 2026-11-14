@@ -49,6 +49,7 @@ public final class JobUnlocks {
                 || type == ProfessionType.SCHOLAR
                 || type == ProfessionType.ALCHEMIST
                 || type == ProfessionType.FIREWORKSMAN
+                || type == ProfessionType.TAVERNKEEP
                 || (townId != null && UnlockState.get(level).isUnlocked(townId, idOf(type)));
     }
 
@@ -57,11 +58,13 @@ public final class JobUnlocks {
         List<ProfessionType> out = new ArrayList<>();
         for (ProfessionType type : ProfessionType.values()) {
             // 无业（NONE）/战士/学者（v0.11 用户定稿）/炼金术士（v0.12 先跑通机制，解锁链后接）
-            // 永远可选；烟火工匠（v0.13 同口径：解锁引子用户搁置，先跑通机制）
+            // 永远可选；烟火工匠（v0.13 同口径：解锁引子用户搁置，先跑通机制）；
+            // 酒保（v0.16 #63 同口径：先跑通机制，解锁链后接）
             if (type == current || type == ProfessionType.WARRIOR
                     || type == ProfessionType.NONE || type == ProfessionType.SCHOLAR
                     || type == ProfessionType.ALCHEMIST
                     || type == ProfessionType.FIREWORKSMAN
+                    || type == ProfessionType.TAVERNKEEP
                     || unlocked.test(type)) {
                 out.add(type);
             }

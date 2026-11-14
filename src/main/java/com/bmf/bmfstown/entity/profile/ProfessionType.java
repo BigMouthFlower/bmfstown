@@ -68,7 +68,15 @@ public enum ProfessionType implements StringRepresentable {
      * 共池先到先得）两段真合成烟花——先造星（真实特殊配方 assemble）再组装火箭。
      * 产物=完全原版烟花（火箭不带药，决策 #30），工匠是照单代工方。
      */
-    FIREWORKSMAN("fireworksman", "烟火工匠", 10);
+    FIREWORKSMAN("fireworksman", "烟火工匠", 10),
+
+    /**
+     * 酒保（v0.16 酒馆第一步，决策 #63）：白天在酒馆区（TAVERN 划区，魔杖绘制）
+     * 采集入库——区内奶牛挤奶（每牛每日一次）、蜂箱采蜜（蜜级满 5 收，不激怒蜂群），
+     * 产物（奶桶/蜂蜜瓶）存进区内库存容器；空桶/空瓶也从库存容器取（缺工具=
+     * #62 缺料待工语义：收工闲逛，补货自动复工）。饮品消费/秘传解锁是后续步骤。
+     */
+    TAVERNKEEP("tavernkeeper", "酒保", 10);
 
     private final String name;
     private final String zhName;
@@ -117,6 +125,7 @@ public enum ProfessionType implements StringRepresentable {
             case SCHOLAR -> SkillType.SCHOLARSHIP;
             case ALCHEMIST -> SkillType.CRAFTING;
             case FIREWORKSMAN -> SkillType.CRAFTING;
+            case TAVERNKEEP -> SkillType.GATHERING;
             default -> null;
         };
     }

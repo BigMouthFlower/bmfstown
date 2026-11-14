@@ -31,6 +31,20 @@ public final class Identity {
     /** 分配住宅的时间戳（毫秒）——床数变少时据此踢出"最新加入的"。 */
     private long housingAssignedAt;
 
+    /**
+     * 过客标记（决策 #61）：野外随机刷出的未入籍镇民 = true。
+     *
+     * <p><b>判据是本标记而非 {@code townId == null}</b>（用户明确纠正的坑）：
+     * 已领养镇民即使被手动清成无归属（退镇/指令），标记早已删除，绝不会
+     * 被当过客刷掉——除死外不自动消失。标记是<b>单向</b>的：只有
+     * {@link #clearWanderer()}（赋归属时）能删，{@link #clearOwnership()}
+     * 不碰它。
+     */
+    private boolean wanderer;
+
+    /** 成为过客时的世界时间（dayTime）——三天期限的计时基准。 */
+    private long wandererSince;
+
     // ---- 读 ----
 
     public ProfessionType profession() {
@@ -51,6 +65,16 @@ public final class Identity {
 
     public long housingAssignedAt() {
         return this.housingAssignedAt;
+    }
+
+    /** 是否还是未入籍的过客。 */
+    public boolean isWanderer() {
+        return this.wanderer;
+    }
+
+    /** 成为过客时的世界时间（dayTime）。 */
+    public long wandererSince() {
+        return this.wandererSince;
     }
 
     // ---- 写（调用方负责随后 syncClient） ----
@@ -85,6 +109,18 @@ public final class Identity {
         this.housingAssignedAt = zoneId == null ? 0L : assignedAt;
     }
 
+    /** 打过客标记（野外刷出时调用一次，since = 当时 dayTime）。 */
+    public void markWanderer(long since) {
+        this.wanderer = true;
+        this.wandererSince = since;
+    }
+
+    /** 删除过客标记（领养赋归属时调用；单向操作，没有任何方法能恢复）。 */
+    public void clearWanderer() {
+        this.wanderer = false;
+        this.wandererSince = 0L;
+    }
+
     /** 退镇：清空全部归属（镇被删/被踢时调用）。 */
     public void clearOwnership() {
         this.townId = null;
@@ -101,6 +137,8 @@ public final class Identity {
         this.homePos = loaded.homePos;
         this.housingZoneId = loaded.housingZoneId;
         this.housingAssignedAt = loaded.housingAssignedAt;
+        this.wanderer = loaded.wanderer;
+        this.wandererSince = loaded.wandererSince;
     }
 
     // ==========================================================
@@ -120,6 +158,8 @@ public final class Identity {
             tag.putUUID("HousingZoneId", this.housingZoneId);
         }
         tag.putLong("HousingAssignedAt", this.housingAssignedAt);
+        tag.putBoolean("Wanderer", this.wanderer);
+        tag.putLong("WandererSince", this.wandererSince);
         return tag;
     }
 
@@ -137,6 +177,8 @@ public final class Identity {
                 ? BlockPos.of(tag.getLong("HomePos")) : null;
         id.housingZoneId = tag.hasUUID("HousingZoneId") ? tag.getUUID("HousingZoneId") : null;
         id.housingAssignedAt = tag.getLong("HousingAssignedAt");
+        id.wanderer = tag.getBoolean("Wanderer");
+        id.wandererSince = tag.getLong("WandererSince");
         return id;
     }
 }

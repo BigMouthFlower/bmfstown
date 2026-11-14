@@ -1,0 +1,287 @@
+package com.bmf.bmfstown.eerie;
+
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.saveddata.SavedData;
+
+import javax.annotation.Nullable;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * 恐怖故事线推进状态（决策 #54 十部制 + #57 触发链，城镇粒度 SavedData）。
+ *
+ * <h2>状态机（每镇一份）</h2>
+ * <pre>
+ *   [无锁定] --发现首格--> [锁定线·第1格] --每次命中+1--> [第10格=写齐]
+ *      ^                                                            |
+ *      |            解锁（UnlockState 登记 + 随机 2~5 日应验倒计时）  |
+ *      +---------------- 应验后该线降极小概率 <----------------------+
+ * </pre>
+ * <ul>
+ *   <li><b>单线锁定</b>（#54）：一旦有锁定线，所有命中全部推进它，
+ *       不并发第二条；写齐才释放；</li>
+ *   <li><b>每日配额</b>（#57 稀缺池）：全镇每游戏日最多推进 1 格——
+ *       闲逛触发可以很频繁，产出被配额按住；</li>
+ *   <li><b>应验</b>（#54/#57）：写齐时掷 2~5 游戏日的应验日；应验动作
+ *       是"登记应验 + 公告"，正式异象效果按线挂接（内容定稿前为空）；
+ *       应验后该线从"正常权重"降为"极小概率"（可再次被零星写）。</li>
+ * </ul>
+ *
+ * <p>本类只管<b>状态与推进</b>；概率（要不要命中）与表现（写书/公告/
+ * 气泡）都在 {@link WanderEvents}——事件抽取与状态机解耦。
+ */
+public final class HorrorLineState extends SavedData {
+
+    private static final String DATA_NAME = "bmfstown_horror_lines";
+
+    /** 城镇 id → 状态。 */
+    private final Map<UUID, TownState> towns = new HashMap<>();
+
+    /** 单镇推进状态（可变载体；字段注释即不变量）。 */
+    private static final class TownState {
+        /** 当前锁定的故事线 id（无锁定 = null）。 */
+        String lockedLine;
+        /** 锁定线已写到的格数（1~10；lockedLine 为 null 时无意义）。 */
+        int progress;
+        /** 已写齐（解锁）的线 id。 */
+        final Set<String> unlocked = new HashSet<>();
+        /** 已应验的线 id。 */
+        final Set<String> verified = new HashSet<>();
+        /** 线 id → 应验日（游戏日；应验后移除）。 */
+        final Map<String, Long> verifyDueDay = new HashMap<>();
+        /** 每日配额记账：上次推进的游戏日。 */
+        long lastProgressDay = Long.MIN_VALUE;
+    }
+
+    // ==========================================================
+    //  存取入口
+    // ==========================================================
+
+    public static HorrorLineState get(ServerLevel level) {
+        return level.getDataStorage().computeIfAbsent(
+                new SavedData.Factory<>(HorrorLineState::new, HorrorLineState::load, null), DATA_NAME);
+    }
+
+    // ==========================================================
+    //  推进（WanderEvents 命中恐怖事件时调用）
+    // ==========================================================
+
+    /** 一次推进的结果（公告与写卷的素材）。 */
+    public record Advance(HorrorLines.HorrorLine line, int chapter,
+                          boolean unlockedNow, @Nullable Long verifyDueDay) {
+    }
+
+    /**
+     * 命中一次恐怖事件：按状态机推进一格。
+     *
+     * @return 推进结果；被每日配额拦住 / 没有可抽的线时返回 null（无事发生）
+     */
+    @Nullable
+    public Advance advance(ServerLevel level, UUID townId, RandomSource random) {
+        TownState st = this.towns.computeIfAbsent(townId, k -> new TownState());
+        long today = level.getDayTime() / 24000L;
+
+        // 每日配额（稀缺池）：全镇每游戏日最多 1 格
+        if (st.lastProgressDay == today) {
+            return null;
+        }
+
+        HorrorLines.HorrorLine line;
+        int chapter;
+        if (st.lockedLine != null) {
+            line = HorrorLines.byId(st.lockedLine);
+            if (line == null) { // 登记表里没了（线被裁撤）：锁作废，重抽
+                st.lockedLine = null;
+                st.progress = 0;
+                return null;
+            }
+            st.progress++;
+            chapter = st.progress;
+        } else {
+            line = pickLine(st, random);
+            if (line == null) {
+                return null; // 没有任何可抽的线
+            }
+            st.lockedLine = line.id();
+            st.progress = 1;
+            chapter = 1;
+        }
+
+        st.lastProgressDay = today;
+
+        // 第 10 格：解锁 + 掷应验日 + 释放锁定（#54：解锁后该线降极小概率）
+        boolean unlockedNow = chapter >= HorrorLines.CHAPTERS;
+        Long verifyDue = null;
+        if (unlockedNow) {
+            st.unlocked.add(line.id());
+            st.lockedLine = null;
+            st.progress = 0;
+            verifyDue = today + WanderEvents.VERIFY_MIN_DAYS
+                    + random.nextInt(WanderEvents.VERIFY_SPAN_DAYS);
+            st.verifyDueDay.put(line.id(), verifyDue);
+        }
+        this.setDirty();
+        return new Advance(line, chapter, unlockedNow, verifyDue);
+    }
+
+    /**
+     * 抽一条线：未解锁的优先（等概率）；全解锁后未应验的不再抽；
+     * 只剩已应验线时按"极小概率"抽（权重 1/10，#54 降级口径）。
+     */
+    @Nullable
+    private static HorrorLines.HorrorLine pickLine(TownState st, RandomSource random) {
+        var all = HorrorLines.all();
+        List<HorrorLines.HorrorLine> fresh = new java.util.ArrayList<>();
+        List<HorrorLines.HorrorLine> verified = new java.util.ArrayList<>();
+        for (HorrorLines.HorrorLine line : all) {
+            if (!st.unlocked.contains(line.id())) {
+                fresh.add(line);
+            } else if (st.verified.contains(line.id())) {
+                verified.add(line); // 应验后：极小概率池
+            }
+            // 已解锁未应验：等它先应验，不重复抽
+        }
+        if (!fresh.isEmpty()) {
+            return fresh.get(random.nextInt(fresh.size()));
+        }
+        // 极小概率：1/10 概率才抽已应验线（配额同样生效）
+        if (!verified.isEmpty() && random.nextInt(10) == 0) {
+            return verified.get(random.nextInt(verified.size()));
+        }
+        return null;
+    }
+
+    /**
+     * 懒检查应验（每次事件抽取时顺带跑，零 tick 成本）：
+     * 到期的线登记应验并返回，供上层发公告/挂效果。
+     */
+    public java.util.List<HorrorLines.HorrorLine> pollVerifications(ServerLevel level, UUID townId) {
+        TownState st = this.towns.get(townId);
+        if (st == null || st.verifyDueDay.isEmpty()) {
+            return java.util.List.of();
+        }
+        long today = level.getDayTime() / 24000L;
+        List<HorrorLines.HorrorLine> due = new java.util.ArrayList<>();
+        for (var it = st.verifyDueDay.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            if (today >= e.getValue()) {
+                it.remove();
+                st.verified.add(e.getKey());
+                HorrorLines.HorrorLine line = HorrorLines.byId(e.getKey());
+                if (line != null) {
+                    due.add(line);
+                }
+            }
+        }
+        if (!due.isEmpty()) {
+            this.setDirty();
+        }
+        return due;
+    }
+
+    // ==========================================================
+    //  查询（测试/调试）
+    // ==========================================================
+
+    /** 锁定线 id（无则 null）。 */
+    @Nullable
+    public String lockedLineOf(UUID townId) {
+        TownState st = this.towns.get(townId);
+        return st == null ? null : st.lockedLine;
+    }
+
+    /** 锁定线进度（1~10）。 */
+    public int progressOf(UUID townId) {
+        TownState st = this.towns.get(townId);
+        return st == null ? 0 : st.progress;
+    }
+
+    /** 已解锁线集合（只读）。 */
+    public Set<String> unlockedOf(UUID townId) {
+        TownState st = this.towns.get(townId);
+        return st == null ? Set.of() : Set.copyOf(st.unlocked);
+    }
+
+    /** 已应验线集合（只读）。 */
+    public Set<String> verifiedOf(UUID townId) {
+        TownState st = this.towns.get(townId);
+        return st == null ? Set.of() : Set.copyOf(st.verified);
+    }
+
+    // ==========================================================
+    //  存档往返
+    // ==========================================================
+
+    @Override
+    public CompoundTag save(CompoundTag tag, HolderLookup.Provider registries) {
+        for (var e : this.towns.entrySet()) {
+            CompoundTag t = new CompoundTag();
+            TownState st = e.getValue();
+            if (st.lockedLine != null) {
+                t.putString("Locked", st.lockedLine);
+                t.putInt("Progress", st.progress);
+            }
+            t.put("Unlocked", stringSet(st.unlocked));
+            t.put("Verified", stringSet(st.verified));
+            ListTag due = new ListTag();
+            for (var d : st.verifyDueDay.entrySet()) {
+                CompoundTag dt = new CompoundTag();
+                dt.putString("Line", d.getKey());
+                dt.putLong("Day", d.getValue());
+                due.add(dt);
+            }
+            t.put("VerifyDue", due);
+            t.putLong("LastDay", st.lastProgressDay);
+            tag.put(e.getKey().toString(), t);
+        }
+        return tag;
+    }
+
+    private static ListTag stringSet(Set<String> set) {
+        ListTag out = new ListTag();
+        for (String s : set) {
+            out.add(StringTag.valueOf(s));
+        }
+        return out;
+    }
+
+    public static HorrorLineState load(CompoundTag tag, HolderLookup.Provider registries) {
+        HorrorLineState state = new HorrorLineState();
+        for (String key : tag.getAllKeys()) {
+            CompoundTag t = tag.getCompound(key);
+            TownState st = new TownState();
+            st.lockedLine = t.contains("Locked") ? t.getString("Locked") : null;
+            st.progress = t.getInt("Progress");
+            readStringSet(t.getList("Unlocked", Tag.TAG_STRING), st.unlocked);
+            readStringSet(t.getList("Verified", Tag.TAG_STRING), st.verified);
+            ListTag due = t.getList("VerifyDue", Tag.TAG_COMPOUND);
+            for (int i = 0; i < due.size(); i++) {
+                CompoundTag dt = due.getCompound(i);
+                st.verifyDueDay.put(dt.getString("Line"), dt.getLong("Day"));
+            }
+            st.lastProgressDay = t.getLong("LastDay");
+            try {
+                state.towns.put(UUID.fromString(key), st);
+            } catch (IllegalArgumentException ignored) {
+                // 坏键宁可丢弃也不要崩档
+            }
+        }
+        return state;
+    }
+
+    private static void readStringSet(ListTag list, Set<String> out) {
+        for (int i = 0; i < list.size(); i++) {
+            out.add(list.getString(i));
+        }
+    }
+}

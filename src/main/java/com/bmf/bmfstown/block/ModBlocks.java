@@ -37,6 +37,17 @@ public final class ModBlocks {
                             .noOcclusion()
                             .pushReaction(PushReaction.DESTROY));
 
+    /**
+     * 镇公告栏（v0.16 沉浸层 #57）：闲逛随机发现的非常规事件公示板。
+     * 占位实现：整块简单方块，右键打印最近公告；美化后议。
+     */
+    public static final DeferredBlock<BulletinBoardBlock> BULLETIN_BOARD =
+            BLOCKS.registerBlock("bulletin_board", BulletinBoardBlock::new,
+                    BlockBehaviour.Properties.of()
+                            .mapColor(MapColor.WOOD)
+                            .strength(1.5F)
+                            .sound(SoundType.WOOD));
+
     private ModBlocks() {
     }
 
