@@ -1,0 +1,8 @@
+{
+  "__comment": "酒馆饮品白名单（决策 #64/#65）：奶/蜜 + 外部酒类 mod 软联动（required:false——对方不在时空 tag 自动回落）。药水不在此列——Java 侧只认反胃药水（tag 表达不了组件条件，见 TavernVisitActivity.isDrink）",
+  "values": [
+    "minecraft:milk_bucket",
+    "minecraft:honey_bottle",
+    { "id": "#brewinandchewin:fermented_drinks", "required": false }
+  ]
+}

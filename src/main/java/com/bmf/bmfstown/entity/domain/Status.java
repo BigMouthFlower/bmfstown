@@ -253,6 +253,9 @@ public final class Status {
     /** 上次成功进食是第几天——挨饿递增的基准。 */
     private int lastFedDay = -1;
 
+    /** 上次在酒馆喝到饮品是第几游戏日——每日一杯闸门（决策 #64）。 */
+    private long lastTavernDay = -1;
+
     /** 上次触发挨饿事件的 dayTime 绝对值——挨饿按间隔限流用。 */
     private long lastStarvingAt = Long.MIN_VALUE;
 
@@ -1116,6 +1119,29 @@ public final class Status {
                 Thought.MARK_NONE, "idle:" + bookSeed);
     }
 
+    /** 上次在酒馆喝到饮品是第几游戏日（每日一杯闸门读数）。 */
+    public long lastTavernDay() {
+        return this.lastTavernDay;
+    }
+
+    /** 标记"今天喝过了"（喝下那一口时落账）。 */
+    public void setLastTavernDay(long day) {
+        this.lastTavernDay = day;
+    }
+
+    /**
+     * 酒馆喝一杯（v0.16 决策 #64）：心情 +gain（默认 3，低于读书的 +5——
+     * 读书攒学识有价值，喝酒是纯消遣）+ 少量饥饿回复 + 想法留痕。
+     * 药水效果（反胃）由活动侧另加——这里只管状态与心情。
+     */
+    public void drankAtTavern(ServerLevel level, int moodGain, int foodGain) {
+        this.mood = Math.min(MAX_MOOD, this.mood + moodGain);
+        if (foodGain > 0) {
+            this.hunger = Math.min(MAX_HUNGER, this.hunger + foodGain);
+        }
+        addThought(level, TONE_POSITIVE, "mood.bmfstown.thought.tavern", Thought.MARK_NONE);
+    }
+
     /** 学成一门特殊书（图书馆读完 learnTicks）：想法留名（无心情——收益是效果本身）。 */
     public void skillBookLearned(ServerLevel level, String bookId) {
         // arg 协议："book:<id>"——客户端按登记表 lang 键现译书名
@@ -1176,6 +1202,7 @@ public final class Status {
             tag.put("Thoughts", list);
         }
         tag.putInt("LastKillDay", this.lastKillDay);
+        tag.putLong("LastTavernDay", this.lastTavernDay);
         tag.putInt("LastTimidScareDay", this.lastTimidScareDay);
         tag.putLong("LastWeatherAt", this.lastWeatherAt);
         if (this.lastWeather != null) {
@@ -1215,6 +1242,8 @@ public final class Status {
         s.settleOffset = tag.contains("SettleOffset")
                 ? tag.getInt("SettleOffset") : RandomSource.create().nextInt(24000);
         s.lastFedDay = tag.contains("LastFedDay") ? tag.getInt("LastFedDay") : -1;
+        // 每日一杯闸门也要落档：不落的话读档即重置，"存读档多喝一杯"就成立了
+        s.lastTavernDay = tag.contains("LastTavernDay") ? tag.getLong("LastTavernDay") : -1;
         s.lastStarvingAt = tag.contains("LastStarvingAt") ? tag.getLong("LastStarvingAt") : Long.MIN_VALUE;
         s.dailyDelta = tag.contains("DailyDelta") ? tag.getInt("DailyDelta") : 0;
         s.eventCountToday.clear();
@@ -1281,6 +1310,7 @@ public final class Status {
         this.lastSettledDay = other.lastSettledDay;
         this.settleOffset = other.settleOffset;
         this.lastFedDay = other.lastFedDay;
+        this.lastTavernDay = other.lastTavernDay;
         this.lastStarvingAt = other.lastStarvingAt;
         this.dailyDelta = other.dailyDelta;
         this.eventCountToday.clear();

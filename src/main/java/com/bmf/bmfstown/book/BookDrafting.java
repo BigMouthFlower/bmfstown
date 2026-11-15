@@ -59,6 +59,13 @@ public final class BookDrafting {
      */
     public static BookDraft roll(ServerLevel level, UUID townId, RandomSource random,
             Resident scholar) {
+        // ---- 反胃秘传·写书通道（决策 #64）：每镇每游戏日一掷 2%，命中且
+        //      全服余量>0 → 本次开写定死为反胃秘传书（写成即全局解锁，与
+        //      普通秘传同路径；每日闸门与全服上限记账在 NauseaSecretLedger）----
+        if (com.bmf.bmfstown.alchemy.NauseaSecretLedger.get(level)
+                .writeRoll(level, townId, random)) {
+            return new BookDraft.Unlock(com.bmf.bmfstown.alchemy.NauseaSecretLedger.NAUSEA_UNLOCK);
+        }
         int chance = Math.min(100, Math.max(0, Config.SCHOLAR_PERK_BOOK_CHANCE.get()));
         if (montySpecialRoll(random, chance, scholar)) {
             String picked = overfitDraw(level, townId, random, scholar);

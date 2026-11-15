@@ -3,87 +3,103 @@ package com.bmf.bmfstown.entity;
 import com.bmf.bmfstown.config.Config;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
 import com.bmf.bmfstown.town.Town;
-import com.bmf.bmfstown.town.TownSaveData;
 import com.bmf.bmfstown.town.TownWandMode;
 import com.bmf.bmfstown.town.TownZone;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.Container;
-import net.minecraft.world.entity.animal.Cow;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.BeehiveBlock;
-import net.minecraft.world.phys.AABB;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
- * 酒保工作（v0.16 酒馆第一步，决策 #63）：在酒馆区（{@link TownWandMode#TAVERN}
- * 划区，玩家用魔杖自画，无专属方块）采集入库。
+ * 酒保营业（v0.16 酒馆第二步，决策 #65 重做）——酒馆是<b>营业场所</b>，
+ * 酒保是服务生，不再采集（挤奶收蜜砍掉，将来归农业 NPC）。
  *
  * <h2>一图流</h2>
  * <pre>
- *   库存容器(区内容器方块) ──取空桶/空瓶──▶ 走到目标 ──挤奶/采蜜──▶ 走回容器 ──存奶桶/蜂蜜瓶
- *        ▲                                                                    │
- *        └──────────────────── 循环（每轮一个目标）────────────────────────────┘
+ *   SCAN ──有人点单──▶ 取窖瓶 / 桶现接 ──▶ 送到客人主手 ──▶ SCAN
+ *        ──有桶酿好了──▶ 接瓶入窖（存量到目标停手）──▶ SCAN
+ *        ──有空桶+窖里有料──▶ 取基液+配料 ──▶ 倒基液/投配料 ──▶ SCAN（发酵自动进行）
+ *        ──没活干──▶ 阈值盘点 → 缺什么播报什么 ──▶ 歇着
  * </pre>
  *
  * <h2>规则</h2>
  * <ul>
- *   <li><b>采集对象</b>：区内的奶牛（每牛每个游戏日一次，按 UUID 记账）与
- *       蜂箱（蜜级满 5 才收，收后归 0）——它们之于酒保，就是讲台之于学者：
- *       区块内现成的东西，登记动作零新增（划区即登记）；</li>
- *   <li><b>工具即消耗</b>：挤奶要空桶、采蜜要空瓶，都从库存容器里取——
- *       玩家往酒馆桶里放桶和瓶子，酒保才能开工，产物也存回同一个容器
- *       （财富闭环：容器就是酒吧的"酒窖"）；</li>
- *   <li><b>缺工具 = 缺料待工</b>（#62 同款语义）：容器里既没桶也没瓶 →
- *       Goal 收工落回闲暇池，节流重扫，补货自动复工；</li>
- *   <li><b>采蜜不激怒蜂群</b>（v1 简化）：酒保当"懂行的人"，采蜜照常出蜂蜜瓶
- *       但蜂群不炸——要不要"无营火会被蜇"的要素，等用户后续拍板；</li>
- *   <li>无订单/无岗位认领系统——酒馆就一个酒窖，先到先得都没必要；
- *       两个酒保挤一个酒馆是玩家自己安排的事。</li>
+ *   <li><b>上酒服务</b>：客人落座点单（{@link TavernOrders}）→ 酒窖有瓶装酒
+ *       优先取瓶，没有就从区内酒桶现接一杯 → 走到客人身边塞进主手
+ *       （客人侧 {@code TavernVisitActivity.ORDER_WAIT} 检测到手就开喝）；</li>
+ *   <li><b>酿造循环</b>：读 BAC 数据包配方（{@link KegRecipes}，v1 只做常温
+ *       一层酒）→ 基液（水桶/奶桶/蜂蜜瓶）+ 配料全部从酒窖容器真实取出 →
+ *       投进空酒桶（{@link KegAccess} NBT 直写）→ 发酵由 BAC 自己每刻推进 →
+ *       酿好接瓶入窖到目标量为止；二层的酒倒酒与温度档配方 v1 不自动化；</li>
+ *   <li><b>余料归还</b>：水桶/奶桶倒完剩空桶、蜂蜜瓶倒完剩空瓶——当场放回
+ *       酒窖（还杯铁律同源：绝不吞容器）；</li>
+ *   <li><b>缺货播报</b>（#37 口径：点名缺什么）：奶/蜜/反胃药水低于目标量
+ *       或可酿配方的原料有缺口 → 16 格内 actionbar，30 秒节流——现在全部
+ *       缺口都只能玩家（或农业）补，所以一律点名；</li>
+ *   <li><b>反胃秘传</b>（#64 通道保留）：每镇每游戏日 5% 掷中，成书进酒窖。</li>
  * </ul>
  */
 public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
 
+    private static final org.slf4j.Logger LOGGER = com.bmf.bmfstown.BmfTown.LOGGER;
+
     // ---- 常量 ----
     /** 距离目标/容器多近算"到了"（与 WorkerGoal 同款口径）。 */
     private static final double OPEN_RANGE = 3.0D;
-    /** 扫描节流：区域扫描（容器+牛+蜂箱）每 100t 一次，防每 tick 全图扫。 */
+    /** 扫描节流：区域扫描（容器+酒桶）每 100t 一次，防每 tick 全图扫。 */
     private static final int SCAN_PERIOD = 100;
-    /** 一轮采集之间的喘息（走回容器存完货后歇 5 秒再规划下一轮）。 */
-    private static final int REST_TICKS = 100;
-    /** 蜂箱蜜级（BeehiveBlock.HONEY_LEVEL 满值，收蜜门槛）。 */
-    private static final int HIVE_FULL = BeehiveBlock.MAX_HONEY_LEVELS;
+    /** 一轮活之间的喘息（#66 实测：100t=5 秒的喘息让点单接不上，压到 1 秒）。 */
+    private static final int REST_TICKS = 20;
+    /** 反胃药水的盘点样本（isSameItemSameComponents 口径）。 */
+    private static final ItemStack NAUSEA_SAMPLE = net.minecraft.world.item.alchemy.PotionContents
+            .createItemStack(Items.POTION, com.bmf.bmfstown.alchemy.ModPotions.NAUSEA);
 
     // ---- 运行状态 ----
     private final Resident resident;
     private Phase phase = Phase.SCAN;
-    /** 本轮采集目标：奶牛或蜂箱坐标（二选一）。 */
-    private BlockPos targetPos;
-    private Cow targetCow;
-    /** 本轮要用的空工具（取到手后持有）。 */
-    private ItemStack tool = ItemStack.EMPTY;
-    /** 采到的产物（存进容器前持有）。 */
-    private ItemStack product = ItemStack.EMPTY;
-    /** 当前用的库存容器。 */
-    private BlockPos stockPos;
+    private Kind kind = Kind.IDLE;
+    /** 当前用的酒窖容器。 */
+    private BlockPos cellarPos;
+    /** 当前操作的酒桶。 */
+    private BlockPos kegPos;
+    /** 当前服务的点单客人。 */
+    private Entity patron;
+    /** 当前酿造配方。 */
+    private KegRecipes.FermentRecipe recipe;
+    /** 手上的货（取回的瓶/料/接的酒；入窖前持有）。 */
+    private final List<ItemStack> cargo = new ArrayList<>();
+    /** 主手展示中的货（端酒/端料给玩家看；引用跟踪——被手装导演换装即失联）。
+     *  2026-11-15 用户拍板：送酒不许"虚空转移"，必须看得见他端着酒走。 */
+    private ItemStack carried = ItemStack.EMPTY;
+    /** 最近一轮酿造缺的料（播报用；null = 无酿造缺口）。 */
+    private List<ItemStack> lastBrewMissing;
+    /** 本轮接瓶的剩余额度（目标量 − 已有存量）。 */
+    private int drawRemaining;
     /** 扫描节流游标。 */
     private long nextScanAt;
     private int retryCooldown;
-    /** 奶牛产奶记账：UUID → 上次挤奶的游戏日。 */
-    private final Map<UUID, Long> milkedOnDay = new HashMap<>();
+    /** 缺货播报节流（30 秒一次，对齐炼金等料播报口径）。 */
+    private long lastShortageNotifyMs;
 
-    private enum Phase { SCAN, FETCH_TOOL, GO_TARGET, COLLECT, STORE }
+    private enum Phase { SCAN, FETCH, GO_KEG, GO_PATRON, STORE }
+    private enum Kind { IDLE, SERVE_BOTTLE, SERVE_KEG, BREW, DRAW_STOCK }
 
     public TavernkeepGoal(Resident resident) {
         this.resident = resident;
@@ -125,6 +141,23 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     }
 
     @Override
+    public void stop() {
+        // 被掐断（出工作窗/睡觉/开饭）不占着货：手上的货（含主手展示品）当场
+        // 回窖——与客人"还杯铁律"同源（#65），也杜绝"货卡在停用 Goal 里"的竞态
+        ServerLevel level = serverLevel();
+        if (level != null && (!this.cargo.isEmpty() || !this.carried.isEmpty())) {
+            returnCargoToCellar(level);
+        }
+        this.resident.getNavigation().stop();
+        this.patron = null;
+        this.recipe = null;
+        this.kegPos = null;
+        this.cellarPos = null;
+        this.kind = Kind.IDLE;
+        this.phase = Phase.SCAN;
+    }
+
+    @Override
     public boolean requiresUpdateEveryTick() {
         return true;
     }
@@ -141,178 +174,523 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         }
         switch (this.phase) {
             case SCAN -> tickScan(level);
-            case FETCH_TOOL -> tickFetchTool(level);
-            case GO_TARGET -> tickGoTarget(level);
-            case COLLECT -> tickCollect(level);
+            case FETCH -> tickFetch(level);
+            case GO_KEG -> tickGoKeg(level);
+            case GO_PATRON -> tickGoPatron(level);
             case STORE -> tickStore(level);
         }
     }
 
-    // ==========================================================
-    //  阶段
-    // ==========================================================
-
-    /** 规划一轮：手里有工具直接配目标；没有就去酒窖取。 */
-    private void tickScan(ServerLevel level) {
-        if (this.resident.tickCount < this.nextScanAt) {
-            this.retryCooldown = 20;
-            return;
+    /** FETCH 分发：上瓶装酒取瓶 / 酿造取料。 */
+    private void tickFetch(ServerLevel level) {
+        switch (this.kind) {
+            case SERVE_BOTTLE -> fetchServeBottle(level);
+            case BREW -> fetchBrewSupplies(level);
+            default -> backToScan();
         }
-        this.nextScanAt = this.resident.tickCount + SCAN_PERIOD;
-
-        // 手里有空工具 → 按工具找目标
-        if (!this.tool.isEmpty()) {
-            BlockPos t = findTarget(level, this.tool.getItem());
-            if (t != null) {
-                this.targetPos = t;
-                this.phase = Phase.GO_TARGET;
-                navigateTo(t);
-                return;
-            }
-            // 目标没了（牛都挤过/蜜没满）：留着工具，歇一会再扫
-            this.retryCooldown = REST_TICKS;
-            return;
-        }
-
-        // 没工具：先找酒窖
-        BlockPos stock = findStock(level);
-        if (stock == null) {
-            // 酒馆区连个容器都没有——登记了个空房，歇一会
-            this.retryCooldown = REST_TICKS;
-            return;
-        }
-        this.stockPos = stock;
-
-        // 区里有什么就取什么工具：能采蜜先看蜜，能挤奶再看牛（就近原则，谁近干谁）
-        BlockPos hive = findHoneyedHive(level);
-        Cow nearest = findNearestCow(level);
-        BlockPos cow = nearest == null ? null : nearest.blockPosition();
-        if (hive == null && cow == null) {
-            this.retryCooldown = REST_TICKS;
-            return;
-        }
-
-        // 定目标 + 对应工具
-        boolean wantHoney;
-        if (hive != null && cow != null) {
-            wantHoney = distSq(hive) <= distSq(cow);
-        } else {
-            wantHoney = hive != null;
-        }
-        this.targetPos = wantHoney ? hive : cow;
-        this.tool = new ItemStack(wantHoney ? Items.GLASS_BOTTLE : Items.BUCKET);
-        this.phase = Phase.FETCH_TOOL;
-        navigateTo(this.stockPos);
     }
 
-    /** 到酒窖 → 取空桶/空瓶；取不到 = 缺工具（#62 语义）：收工等补货。 */
-    private void tickFetchTool(ServerLevel level) {
-        if (this.stockPos == null) {
-            this.phase = Phase.SCAN;
+    // ==========================================================
+    //  SCAN：调度一轮
+    // ==========================================================
+
+    private void tickScan(ServerLevel level) {
+        boolean due = this.resident.tickCount >= this.nextScanAt;
+        // 点单不受全量扫描节流（#66 实测：原实现单被 SCAN_PERIOD+REST 双重
+        // 压着，客人进店要干等 5~10 秒+）——有单随时处理
+        if (!due && !TavernOrders.hasOrderNear(level, zoneAnchors())) {
             return;
         }
-        if (!this.resident.blockPosition().closerThan(this.stockPos, OPEN_RANGE)) {
+        if (due) {
+            this.nextScanAt = this.resident.tickCount + SCAN_PERIOD;
+            // ---- 酒保通道（决策 #64）：每镇每游戏日 5% 掷中 → 反胃秘传成书进酒窖
+            //      （与营业正事并行不悖；全服上限记账在 NauseaSecretLedger）----
+            Town secretTown = boundTown();
+            if (secretTown != null && com.bmf.bmfstown.alchemy.NauseaSecretLedger.get(level)
+                    .tavernRoll(level, secretTown.id(), this.resident.getRandom())) {
+                issueNauseaSecret(level);
+            }
+        }
+
+        // 1) 有人点单：上酒服务最高优先
+        if (tryServe(level)) {
+            return;
+        }
+        if (!due) {
+            return; // 非扫描轮只为点单服务
+        }
+        // 2) 有桶酿好了：接瓶入窖
+        if (tryDrawStock(level)) {
+            return;
+        }
+        // 3) 有空桶+有料：开酿一轮
+        if (tryBrew(level)) {
+            return;
+        }
+        // 4) 没活干：盘点播报（缺口全靠玩家/农业补，一律点名）。
+        //    注意保留 this.lastBrewMissing——tryBrew 失败时记录的"缺口最少的
+        //    配方缺料"就是在这里播出去的，清空会导致酿造缺口永远不播（实测前自查发现）。
+        Stock stock = cellarScan(level);
+        notifyShortage(level, stock);
+        // 5) 上班报到（#66 实测：原实现开工后就在醒来原地站桩到天黑——
+        //    主城里一动不动看着像没上班）：没事干就走回酒馆区站岗
+        if (!inTavernZone()) {
+            BlockPos post = nearestPost();
+            if (post != null && this.resident.getNavigation().isDone()) {
+                navigateTo(post);
+            }
+        }
+        this.retryCooldown = REST_TICKS;
+    }
+
+    /** 酒保是否已站在某个酒馆区内。 */
+    private boolean inTavernZone() {
+        BlockPos p = this.resident.blockPosition();
+        for (TownZone zone : tavernZones()) {
+            if (p.getX() >= zone.min().getX() && p.getX() <= zone.max().getX()
+                    && p.getZ() >= zone.min().getZ() && p.getZ() <= zone.max().getZ()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 最近酒馆区的中心点（上班报到的岗位）。 */
+    private BlockPos nearestPost() {
+        TownZone best = null;
+        double bestDist = Double.MAX_VALUE;
+        BlockPos p = this.resident.blockPosition();
+        for (TownZone zone : tavernZones()) {
+            BlockPos c = new BlockPos((zone.min().getX() + zone.max().getX()) / 2,
+                    zone.min().getY(), (zone.min().getZ() + zone.max().getZ()) / 2);
+            double d = p.distSqr(c);
+            if (d < bestDist) {
+                bestDist = d;
+                best = zone;
+            }
+        }
+        return best == null ? null : new BlockPos(
+                (best.min().getX() + best.max().getX()) / 2,
+                best.min().getY(),
+                (best.min().getZ() + best.max().getZ()) / 2);
+    }
+
+    // ------------------------------------------------------------
+    //  上酒服务
+    // ------------------------------------------------------------
+
+    private boolean tryServe(ServerLevel level) {
+        List<BlockPos> anchors = zoneAnchors();
+        if (anchors.isEmpty()) {
+            return false;
+        }
+        // 先看有没有酒可上（别白领单）：窖里有瓶优先，没瓶看桶能不能接
+        BlockPos stock = findDrinkStock(level);
+        BlockPos keg = stock == null ? findKeg(level, KegState.DRAWABLE) : null;
+        if (stock == null && keg == null) {
+            return false;
+        }
+        Entity p = TavernOrders.claim(level, anchors);
+        if (p == null) {
+            return false;
+        }
+        this.patron = p;
+        if (stock != null) {
+            this.cellarPos = stock;
+            this.kind = Kind.SERVE_BOTTLE;
+            this.phase = Phase.FETCH;
+            navigateTo(stock);
+        } else {
+            this.kegPos = keg;
+            this.kind = Kind.SERVE_KEG;
+            this.phase = Phase.GO_KEG;
+            navigateTo(keg);
+        }
+        return true;
+    }
+
+    /** FETCH：到酒窖取一瓶饮品（上瓶装酒）——先走到容器边上再取，绝不隔空掏。 */
+    private void fetchServeBottle(ServerLevel level) {
+        if (this.cellarPos == null) {
+            backToScan();
+            return;
+        }
+        if (!this.resident.blockPosition().closerThan(this.cellarPos, OPEN_RANGE)) {
+            // 取货必须人到位（#66 实测：原版下一 tick 就隔空把酒拿进手=虚空取物）
             if (this.resident.getNavigation().isDone()) {
-                navigateTo(this.stockPos);
-                this.retryCooldown = 20;
+                navigateTo(this.cellarPos);
             }
             return;
         }
         this.resident.getNavigation().stop();
-        Container stock = containerAt(level, this.stockPos);
+        Container stock = containerAt(level, this.cellarPos);
         if (stock == null) {
-            this.stockPos = null;
-            this.phase = Phase.SCAN;
+            backToScan();
             return;
         }
-        Item wanted = this.tool.getItem() == Items.GLASS_BOTTLE ? Items.GLASS_BOTTLE : Items.BUCKET;
-        int slot = findItemSlot(stock, wanted);
+        int slot = -1;
+        for (int i = 0; i < stock.getContainerSize(); i++) {
+            if (com.bmf.bmfstown.leisure.TavernVisitActivity.isDrink(stock.getItem(i))) {
+                slot = i;
+                break;
+            }
+        }
         if (slot < 0) {
-            // 缺工具：歇一会再扫（容器里补了桶/瓶自动复工）
-            this.tool = ItemStack.EMPTY;
-            this.retryCooldown = REST_TICKS;
-            this.phase = Phase.SCAN;
+            backToScan(); // 被抢喝了：客人侧有超时自取兜底
             return;
         }
         ItemStack taken = stock.getItem(slot).copy();
         taken.setCount(1);
         stock.getItem(slot).shrink(1);
         stock.setChanged();
-        this.tool = taken;
-        this.phase = Phase.GO_TARGET;
-        navigateTo(this.targetPos);
+        carryVisible(taken);
+        this.kind = Kind.SERVE_BOTTLE;
+        this.phase = Phase.GO_PATRON;
+        navigateTo(this.patron.blockPosition());
     }
 
-    /** 走向采集目标（牛是活的会挪窝：到了再校验，跑丢了重扫）。 */
-    private void tickGoTarget(ServerLevel level) {
-        if (this.targetPos == null) {
-            this.phase = Phase.SCAN;
+    /** GO_PATRON：把主手端的酒送到客人主手（看得见的"端酒"交付）。 */
+    private void tickGoPatron(ServerLevel level) {
+        if (this.patron == null || !this.patron.isAlive()) {
+            returnCargoToCellar(level);
+            backToScan();
             return;
         }
-        if (this.resident.blockPosition().closerThan(this.targetPos, OPEN_RANGE + 1.5D)) {
-            this.resident.getNavigation().stop();
-            this.phase = Phase.COLLECT;
+        if (!this.carried.isEmpty() && !handCarrying()) {
+            // 展示品被手装导演换下（送酒途中遭袭战斗，酒被收进背包）：
+            // 本次服务作废，货回窖，绝不端着武器送酒
+            returnCargoToCellar(level);
+            backToScan();
             return;
         }
-        if (this.resident.getNavigation().isDone()) {
-            // 目标是牛：跟着牛的新位置重新寻路
-            if (this.targetCow != null && this.targetCow.isAlive()) {
-                this.targetPos = this.targetCow.blockPosition();
-                navigateTo(this.targetPos);
+        BlockPos ppos = this.patron.blockPosition();
+        if (!this.resident.blockPosition().closerThan(ppos, OPEN_RANGE)) {
+            if (this.resident.getNavigation().isDone()) {
+                navigateTo(ppos);
+                this.retryCooldown = 20;
+            }
+            return;
+        }
+        this.resident.getNavigation().stop();
+        if (this.patron instanceof LivingEntity le) {
+            ItemStack pHand = le.getMainHandItem();
+            if (pHand == this.carried) {
+                // 展示品已经在"客人"手上（单人闭环：酒保自己就是客人，
+                // ORDER_WAIT 已把主手这杯认走）——交付完成，手不动
+                this.carried = ItemStack.EMPTY;
+                TavernOrders.close(le);
+            } else if (pHand.isEmpty() && handCarrying()
+                    && TavernOrders.isClaimed(le)) {
+                // 客人还在等单：正常交付，酒从酒保主手换到客人主手
+                le.setItemInHand(InteractionHand.MAIN_HAND, this.carried);
+                this.carried = ItemStack.EMPTY;
+                this.resident.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+                TavernOrders.close(le);
+                level.playSound(null, ppos, SoundEvents.ITEM_PICKUP,
+                        SoundSource.NEUTRAL, 0.6F, 1.0F);
             } else {
-                navigateTo(this.targetPos);
+                // 客人不等了（等超时改自取/窗口掐断/手被别的占了）：
+                // 酒回窖，绝不塞给已经放弃的人（#66 堵滞留杯）
+                returnCargoToCellar(level);
             }
-            this.retryCooldown = 20; // 走不到（被围死等）：防每 tick 重寻路
-        }
-    }
-
-    /** 到位 → 采。牛：记账+换货；蜂箱：蜜级归零+换货。均就地播放原版音效。 */
-    private void tickCollect(ServerLevel level) {
-        if (!this.tool.isEmpty() && this.tool.getItem() == Items.BUCKET) {
-            Cow cow = this.targetCow != null && this.targetCow.isAlive()
-                    && this.targetCow.blockPosition().closerThan(this.resident.blockPosition(), OPEN_RANGE + 1.5D)
-                    ? this.targetCow : nearestCowAt(level, this.targetPos);
-            if (cow == null || !milkable(level, cow)) {
-                // 牛跑了/刚被挤过：工具留着（桶是通用的），重新配目标
-                this.targetCow = null;
-                this.targetPos = null;
-                this.phase = Phase.SCAN;
-                return;
-            }
-            this.milkedOnDay.put(cow.getUUID(), gameDay(level));
-            this.product = new ItemStack(Items.MILK_BUCKET);
-            level.playSound(null, cow.blockPosition(), SoundEvents.COW_MILK,
-                    SoundSource.NEUTRAL, 1.0F, 1.0F);
         } else {
-            BlockState state = level.getBlockState(this.targetPos);
-            if (!state.is(Blocks.BEEHIVE) && !state.is(Blocks.BEE_NEST)) {
-                this.targetPos = null;
-                this.phase = Phase.SCAN;
-                return;
-            }
-            int honey = state.getValue(BeehiveBlock.HONEY_LEVEL);
-            if (honey < HIVE_FULL) {
-                this.targetPos = null;
-                this.phase = Phase.SCAN;
-                return;
-            }
-            level.setBlock(this.targetPos,
-                    state.setValue(BeehiveBlock.HONEY_LEVEL, 0), 3);
-            this.product = new ItemStack(Items.HONEY_BOTTLE);
-            level.playSound(null, this.targetPos, SoundEvents.BEEHIVE_SHEAR,
-                    SoundSource.NEUTRAL, 1.0F, 1.0F);
+            returnCargoToCellar(level);
         }
-        this.tool = ItemStack.EMPTY;
-        this.targetCow = null;
-        this.phase = Phase.STORE;
-        navigateTo(this.stockPos != null ? this.stockPos : this.targetPos);
+        this.patron = null;
+        backToScan();
     }
 
-    /** 走回酒窖 → 存产物；窖满了先自己拿着，歇一会再存。 */
+    // ------------------------------------------------------------
+    //  接瓶入窖
+    // ------------------------------------------------------------
+
+    private boolean tryDrawStock(ServerLevel level) {
+        BlockPos keg = findKeg(level, KegState.DRAWABLE);
+        if (keg == null) {
+            return false;
+        }
+        KegAccess.KegSnap snap = KegAccess.read(level, keg);
+        if (snap == null || snap.fluid() == null) {
+            return false;
+        }
+        ResourceLocation fluidId = ResourceLocation.tryParse(snap.fluid().fluidId());
+        if (fluidId == null) {
+            return false;
+        }
+        Item bottled = BuiltInRegistries.ITEM.get(fluidId);
+        int have = cellarScan(level).bottled().getOrDefault(bottled, 0);
+        int target = Math.max(1, Config.TAVERN_STOCK_TARGET.get());
+        if (have >= target) {
+            return false; // 瓶装够了：流体留给点单现场接
+        }
+        this.drawRemaining = target - have;
+        this.kegPos = keg;
+        this.kind = Kind.DRAW_STOCK;
+        this.phase = Phase.GO_KEG;
+        navigateTo(keg);
+        return true;
+    }
+
+    // ------------------------------------------------------------
+    //  酿造循环
+    // ------------------------------------------------------------
+
+    private boolean tryBrew(ServerLevel level) {
+        List<KegRecipes.FermentRecipe> recipes = KegRecipes.all(level);
+        if (recipes.isEmpty()) {
+            return false; // BAC 不在：酿造循环整体停用
+        }
+        BlockPos keg = findKeg(level, KegState.EMPTY);
+        if (keg == null) {
+            this.lastBrewMissing = null;
+            return false; // 没空桶（都在酿/都酿好了）：上面 DRAW_STOCK 会处理
+        }
+        this.lastBrewMissing = null;
+        int target = Math.max(1, Config.TAVERN_STOCK_TARGET.get());
+        Stock stock = cellarScan(level);
+        BlockPos cellar = findStock(level);
+        if (cellar == null) {
+            return false;
+        }
+        KegRecipes.FermentRecipe best = null;
+        int bestMissing = Integer.MAX_VALUE;
+        for (KegRecipes.FermentRecipe r : recipes) {
+            Item bottled = BuiltInRegistries.ITEM.get(
+                    ResourceLocation.tryParse(r.resultFluidId()));
+            int have = stock.bottled().getOrDefault(bottled, 0);
+            if (have >= target) {
+                continue; // 这个酒够了
+            }
+            List<ItemStack> missing = missingFor(level, cellar, r);
+            if (missing.size() < bestMissing) {
+                bestMissing = missing.size();
+                if (missing.isEmpty()) {
+                    best = r;
+                }
+                this.lastBrewMissing = missing; // 记缺口最少的（播报用）
+            }
+        }
+        if (best == null) {
+            return false; // 全都够/全都缺料：缺料走播报
+        }
+        this.recipe = best;
+        this.kegPos = keg;
+        this.cellarPos = cellar;
+        this.kind = Kind.BREW;
+        this.phase = Phase.FETCH;
+        navigateTo(cellar);
+        return true;
+    }
+
+    /** 这条配方从酒窖还拿不出什么（基液源 + 配料，各 1 个口径）。 */
+    private List<ItemStack> missingFor(ServerLevel level, BlockPos cellar,
+            KegRecipes.FermentRecipe r) {
+        List<ItemStack> missing = new ArrayList<>();
+        Container stock = containerAt(level, cellar);
+        if (stock == null) {
+            missing.add(new ItemStack(r.baseSource()));
+            missing.addAll(r.ingredients());
+            return missing;
+        }
+        int need = sourceCountFor(r);
+        int have = KegAccess.countItem(stock, new ItemStack(r.baseSource()));
+        if (have < need) {
+            missing.add(new ItemStack(r.baseSource()));
+        }
+        for (ItemStack ing : r.ingredients()) {
+            if (KegAccess.countItem(stock, ing) < 1) {
+                missing.add(ing);
+            }
+        }
+        return missing;
+    }
+
+    /** 基液源件数：水/奶 1 桶；蜂蜜 ceil(配方量 / 每瓶量)。 */
+    private static int sourceCountFor(KegRecipes.FermentRecipe r) {
+        long perSource = r.basePerSourceDroplets();
+        long need = (long) r.baseAmountMb() * KegAccess.DROPLETS_PER_MB;
+        return (int) Math.max(1L, (need + perSource - 1) / perSource);
+    }
+
+    /** FETCH：到酒窖取基液源 + 配料（真实取出）。 */
+    private void fetchBrewSupplies(ServerLevel level) {
+        if (this.cellarPos == null) {
+            backToScan();
+            return;
+        }
+        if (!this.resident.blockPosition().closerThan(this.cellarPos, OPEN_RANGE)) {
+            // 同上：取料必须人到位（#66 实测）
+            if (this.resident.getNavigation().isDone()) {
+                navigateTo(this.cellarPos);
+            }
+            return;
+        }
+        this.resident.getNavigation().stop();
+        Container stock = containerAt(level, this.cellarPos);
+        if (stock == null || this.recipe == null) {
+            backToScan();
+            return;
+        }
+        int need = sourceCountFor(this.recipe);
+        for (int i = 0; i < need; i++) {
+            ItemStack taken = KegAccess.takeOne(stock, new ItemStack(this.recipe.baseSource()));
+            if (taken.isEmpty()) {
+                returnCargoToCellar(level); // 有料被人拿走了：把手上的放回去
+                backToScan();
+                return;
+            }
+            this.cargo.add(taken);
+        }
+        for (ItemStack ing : this.recipe.ingredients()) {
+            ItemStack taken = KegAccess.takeOne(stock, ing);
+            if (taken.isEmpty()) {
+                returnCargoToCellar(level);
+                backToScan();
+                return;
+            }
+            this.cargo.add(taken);
+        }
+        this.phase = Phase.GO_KEG;
+        carryVisible(this.cargo.remove(0)); // 端着第一件料走（其余在货舱）
+        navigateTo(this.kegPos);
+    }
+
+    // ------------------------------------------------------------
+    //  GO_KEG：接酒（DRAW_STOCK / SERVE_KEG）或投料（BREW）
+    // ------------------------------------------------------------
+
+    private void tickGoKeg(ServerLevel level) {
+        if (this.kegPos == null) {
+            backToScan();
+            return;
+        }
+        if (!this.carried.isEmpty() && !handCarrying()) {
+            // 展示品被导演换下（投料途中遭袭）：本次作废，货回窖
+            returnCargoToCellar(level);
+            backToScan();
+            return;
+        }
+        if (!this.resident.blockPosition().closerThan(this.kegPos, OPEN_RANGE)) {
+            if (this.resident.getNavigation().isDone()) {
+                navigateTo(this.kegPos);
+                this.retryCooldown = 20;
+            }
+            return;
+        }
+        this.resident.getNavigation().stop();
+        reclaimCarried(); // 展示品收回事列头（恢复 [基液..., 配料...] 取用顺序）
+        switch (this.kind) {
+            case DRAW_STOCK -> {
+                // 接到目标量或桶见底为止
+                this.cellarPos = findStock(level);
+                int drawn = 0;
+                while (KegAccess.drawable(level, this.kegPos)
+                        && drawn < Math.max(1, this.drawRemaining)) {
+                    ItemStack bottle = KegAccess.drawOne(level, this.kegPos);
+                    if (bottle.isEmpty()) {
+                        break;
+                    }
+                    this.cargo.add(bottle);
+                    drawn++;
+                }
+                if (this.cargo.isEmpty() || this.cellarPos == null) {
+                    backToScan();
+                } else {
+                    carryVisible(this.cargo.remove(0)); // 端一瓶走给玩家看
+                    this.phase = Phase.STORE;
+                    navigateTo(this.cellarPos);
+                }
+            }
+            case SERVE_KEG -> {
+                ItemStack bottle = KegAccess.drawOne(level, this.kegPos);
+                if (bottle.isEmpty()) {
+                    backToScan(); // 桶被抢空了：客人超时自取兜底
+                } else {
+                    carryVisible(bottle);
+                    this.phase = Phase.GO_PATRON;
+                    navigateTo(this.patron != null
+                            ? this.patron.blockPosition() : this.kegPos);
+                }
+            }
+            case BREW -> {
+                if (pourAndLoad(level)) {
+                    this.phase = Phase.STORE;
+                    this.cellarPos = findStock(level); // 余料（空桶/空瓶）回窖
+                    if (!this.cargo.isEmpty()) {
+                        carryVisible(this.cargo.remove(0)); // 端着余料走
+                    }
+                    navigateTo(this.cellarPos != null ? this.cellarPos : this.kegPos);
+                } else {
+                    returnCargoToCellar(level);
+                    backToScan();
+                }
+            }
+            default -> backToScan();
+        }
+    }
+
+    /** 倒基液 + 投配料。失败（桶被占/掺了别的）返回 false，货回窖。 */
+    private boolean pourAndLoad(ServerLevel level) {
+        if (this.recipe == null || this.cargo.isEmpty()) {
+            return false;
+        }
+        KegAccess.KegSnap snap = KegAccess.read(level, this.kegPos);
+        if (snap == null || snap.fluid() != null
+                || KegAccess.nonEmpty(snap.slots()).size() > 0) {
+            return false; // 桶不是空的（被人先用了）
+        }
+        long per = this.recipe.basePerSourceDroplets();
+        int sources = sourceCountFor(this.recipe);
+        for (int i = 0; i < sources; i++) {
+            if (!KegAccess.pourBaseFluid(level, this.kegPos,
+                    this.recipe.baseFluidId(), per)) {
+                return false;
+            }
+        }
+        List<ItemStack> ings = new ArrayList<>();
+        for (int i = sources; i < this.cargo.size(); i++) {
+            ings.add(this.cargo.get(i));
+        }
+        if (!KegAccess.insertIngredients(level, this.kegPos, ings)) {
+            return false;
+        }
+        // 源物品换成余料容器：水/奶桶→空桶，蜂蜜瓶→空瓶（还杯铁律：绝不吞）
+        for (int i = 0; i < sources && i < this.cargo.size(); i++) {
+            ItemStack src = this.cargo.get(i);
+            if (src.is(Items.WATER_BUCKET) || src.is(Items.MILK_BUCKET)) {
+                this.cargo.set(i, new ItemStack(Items.BUCKET));
+            } else if (src.is(Items.HONEY_BOTTLE)) {
+                this.cargo.set(i, new ItemStack(Items.GLASS_BOTTLE));
+            }
+        }
+        this.cargo.subList(sources, this.cargo.size()).clear(); // 配料已入桶
+        LOGGER.debug("[BmfTown][酒保] {} 投料开酿 {}（{} 份基液+{} 配料）",
+                this.resident.getName().getString(), this.recipe.id(),
+                sources, this.recipe.ingredients().size());
+        return true;
+    }
+
+    // ------------------------------------------------------------
+    //  STORE：手上货物入窖（接的瓶 / 余料空桶空瓶）
+    // ------------------------------------------------------------
+
     private void tickStore(ServerLevel level) {
-        BlockPos store = this.stockPos != null ? this.stockPos : this.targetPos;
+        BlockPos store = this.cellarPos != null ? this.cellarPos : findStock(level);
+        if (this.cargo.isEmpty() && this.carried.isEmpty()) {
+            backToScan();
+            return;
+        }
         if (store == null) {
-            this.phase = Phase.SCAN;
+            // 窖没了：揣着（ addItem 兜底），绝不吞货
+            reclaimCarried();
+            for (ItemStack st : this.cargo) {
+                ItemStack over = this.resident.getInventory().addItem(st);
+                if (!over.isEmpty()) {
+                    this.resident.spawnAtLocation(over);
+                }
+            }
+            this.cargo.clear();
+            backToScan();
             return;
         }
         if (!this.resident.blockPosition().closerThan(store, OPEN_RANGE)) {
@@ -323,162 +701,274 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             return;
         }
         this.resident.getNavigation().stop();
-        Container stock = containerAt(level, store);
-        if (stock != null) {
-            for (int i = 0; i < stock.getContainerSize(); i++) {
-                ItemStack slot = stock.getItem(i);
-                if (slot.isEmpty()) {
-                    stock.setItem(i, this.product.copy());
-                    this.product = ItemStack.EMPTY;
-                    stock.setChanged();
+        reclaimCarried(); // 端来的展示品收回货列再入窖
+        Container c = containerAt(level, store);
+        if (c != null) {
+            for (int i = this.cargo.size() - 1; i >= 0; i--) {
+                if (KegAccess.insertInto(c, this.cargo.get(i))) {
+                    this.cargo.remove(i);
+                }
+            }
+        }
+        // 插不进的部分：揣背包，再满掉脚边（绝不吞）
+        for (ItemStack st : this.cargo) {
+            ItemStack over = this.resident.getInventory().addItem(st);
+            if (!over.isEmpty()) {
+                this.resident.spawnAtLocation(over);
+            }
+        }
+        this.cargo.clear();
+        backToScan();
+    }
+
+    /** 手上的货就地放回酒窖（被打断/客人变卦的兜底）。 */
+    private void returnCargoToCellar(ServerLevel level) {
+        reclaimCarried(); // 主手展示品（或被导演收进背包的那份）先归队
+        for (ItemStack st : this.cargo) {
+            boolean stored = false;
+            for (BlockPos pos : cellarContainers(level)) {
+                Container c = containerAt(level, pos);
+                if (c != null && KegAccess.insertInto(c, st)) {
+                    stored = true;
+                    break;
+                }
+            }
+            if (!stored) {
+                ItemStack over = this.resident.getInventory().addItem(st);
+                if (!over.isEmpty()) {
+                    this.resident.spawnAtLocation(over);
+                }
+            }
+        }
+        this.cargo.clear();
+    }
+
+    private void backToScan() {
+        this.patron = null;
+        this.recipe = null;
+        this.kegPos = null;
+        this.cellarPos = null;
+        this.kind = Kind.IDLE;
+        this.phase = Phase.SCAN;
+        this.retryCooldown = REST_TICKS;
+    }
+
+    // ==========================================================
+    //  主手展示（2026-11-15 用户拍板：送酒不许虚空转移）
+    // ==========================================================
+
+    /** 把货举到主手端着走（原有主手物品先归队，绝不吞）。 */
+    private void carryVisible(ItemStack st) {
+        ItemStack cur = this.resident.getMainHandItem();
+        if (!cur.isEmpty()) {
+            this.cargo.add(0, cur);
+        }
+        this.carried = st;
+        this.resident.setItemInHand(InteractionHand.MAIN_HAND, st);
+    }
+
+    /** 还端着展示品吗（引用比较：被手装导演换装战斗抢手即 false）。 */
+    private boolean handCarrying() {
+        return !this.carried.isEmpty()
+                && this.resident.getMainHandItem() == this.carried;
+    }
+
+    /**
+     * 展示品回收归队（货列头部——恢复 [基液..., 配料...] 取用顺序）：
+     * 还在手上就收回来；已被导演收进背包（store 是副本）就找回一份；
+     * 找不到就认了（理论不发生），绝不把导演的武器挪走。
+     */
+    private void reclaimCarried() {
+        if (this.carried.isEmpty()) {
+            return;
+        }
+        if (handCarrying()) {
+            this.cargo.add(0, this.carried);
+            this.resident.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        } else {
+            var inv = this.resident.getInventory();
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                if (ItemStack.isSameItemSameComponents(inv.getItem(i), this.carried)) {
+                    this.cargo.add(0, inv.removeItem(i, 1));
                     break;
                 }
             }
         }
-        if (!this.product.isEmpty()) {
-            // 窖满/容器没了：拿着货歇一会（不自扔，不蒸发）
-            this.retryCooldown = REST_TICKS;
-        } else {
-            // 一轮结束，喘口气
-            this.retryCooldown = REST_TICKS;
-        }
-        this.phase = Phase.SCAN;
+        this.carried = ItemStack.EMPTY;
     }
 
     // ==========================================================
-    //  发现（懒评估，100t 节流）
+    //  发现（懒评估，SCAN 节流）
     // ==========================================================
+
+    /** 酒窖饮品盘点：奶/蜜/反胃药水 + 瓶装酒按物品种类。 */
+    private record Stock(int milk, int honey, int nausea, Map<Item, Integer> bottled) {
+    }
+
+    private Stock cellarScan(ServerLevel level) {
+        int milk = 0;
+        int honey = 0;
+        int nausea = 0;
+        Map<Item, Integer> bottled = new HashMap<>();
+        for (BlockPos pos : cellarContainers(level)) {
+            Container c = containerAt(level, pos);
+            if (c == null) {
+                continue;
+            }
+            for (int i = 0; i < c.getContainerSize(); i++) {
+                ItemStack st = c.getItem(i);
+                if (st.isEmpty()) {
+                    continue;
+                }
+                if (st.is(Items.MILK_BUCKET)) {
+                    milk += st.getCount();
+                } else if (st.is(Items.HONEY_BOTTLE)) {
+                    honey += st.getCount();
+                } else if (com.bmf.bmfstown.leisure.TavernVisitActivity.isDrink(st)) {
+                    if (ItemStack.isSameItemSameComponents(st, NAUSEA_SAMPLE)) {
+                        nausea += st.getCount();
+                    } else {
+                        bottled.merge(st.getItem(), st.getCount(), Integer::sum);
+                    }
+                }
+            }
+        }
+        return new Stock(milk, honey, nausea, bottled);
+    }
 
     private Town boundTown() {
         return this.resident.boundTown();
     }
 
     /** 本城镇全部酒馆区。 */
-    private java.util.List<TownZone> tavernZones() {
+    private List<TownZone> tavernZones() {
         Town town = boundTown();
-        return town == null ? java.util.List.of() : town.zones(TownWandMode.TAVERN);
+        return town == null ? List.of() : town.zones(TownWandMode.TAVERN);
     }
 
-    /** 最近的有库存的容器（区内方块实体扫描，命中即用）。 */
+    /** 点单锚点：各区 min 角（客人点单时记的也是区 min 角）。 */
+    private List<BlockPos> zoneAnchors() {
+        List<BlockPos> out = new ArrayList<>();
+        for (TownZone zone : tavernZones()) {
+            out.add(zone.min());
+        }
+        return out;
+    }
+
+    /** 区内全部容器（酒窖候选）。 */
+    private List<BlockPos> cellarContainers(ServerLevel level) {
+        List<BlockPos> out = new ArrayList<>();
+        for (TownZone zone : tavernZones()) {
+            for (BlockPos pos : TownZone.iterate(zone)) {
+                try {
+                    if (level.getBlockEntity(pos) instanceof Container) {
+                        out.add(pos.immutable());
+                    }
+                } catch (RuntimeException e) {
+                    // 防御（#65）：外部 mod 的 BE 构造可能炸（BAC keg 在无配置
+                    // 环境构造即抛）——跳过该位，别让酒保扫描炸服
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 最近的、装着至少一瓶饮品的酒窖容器；无则 null。 */
+    private BlockPos findDrinkStock(ServerLevel level) {
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (BlockPos pos : cellarContainers(level)) {
+            Container c = containerAt(level, pos);
+            if (c == null) {
+                continue;
+            }
+            boolean has = false;
+            for (int i = 0; i < c.getContainerSize(); i++) {
+                if (com.bmf.bmfstown.leisure.TavernVisitActivity.isDrink(c.getItem(i))) {
+                    has = true;
+                    break;
+                }
+            }
+            if (!has) {
+                continue;
+            }
+            double d = this.resident.blockPosition().distSqr(pos);
+            if (d < bestDist) {
+                bestDist = d;
+                best = pos;
+            }
+        }
+        return best;
+    }
+
+    /** 最近的区内容器（取料/存酒/存余料用）。 */
     private BlockPos findStock(ServerLevel level) {
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
-        for (TownZone zone : tavernZones()) {
-            for (BlockPos pos : TownZone.iterate(zone)) {
-                BlockEntity be = level.getBlockEntity(pos);
-                if (be instanceof Container) {
-                    double d = distSq(pos);
-                    if (d < bestDist) {
-                        bestDist = d;
-                        best = pos.immutable();
-                    }
-                }
-            }
-        }
-        return best;
-    }
-
-    /** 按工具类型找目标：桶→可挤奶牛，瓶→满蜜蜂箱。返回目标坐标。 */
-    private BlockPos findTarget(ServerLevel level, net.minecraft.world.item.Item toolItem) {
-        if (toolItem == Items.BUCKET) {
-            Cow cow = findNearestCow(level);
-            if (cow != null) {
-                this.targetCow = cow;
-                return cow.blockPosition();
-            }
-            return null;
-        }
-        return findHoneyedHive(level);
-    }
-
-    /** 区内最近的可挤奶牛（成年 + 今日未挤）。 */
-    private Cow findNearestCow(ServerLevel level) {
-        Cow best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (TownZone zone : tavernZones()) {
-            AABB box = zoneAabb(zone).inflate(1.0D);
-            for (Cow cow : level.getEntitiesOfClass(Cow.class, box)) {
-                if (cow.isBaby() || !milkable(level, cow)) {
-                    continue;
-                }
-                double d = this.resident.blockPosition().distSqr(cow.blockPosition());
-                if (d < bestDist) {
-                    bestDist = d;
-                    best = cow;
-                }
-            }
-        }
-        return best;
-    }
-
-    /** 目标点附近找牛（goTarget 跟丢后的兜底校验）。 */
-    private Cow nearestCowAt(ServerLevel level, BlockPos pos) {
-        AABB box = zoneAabbAt(pos).inflate(OPEN_RANGE + 2.0D);
-        Cow best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (Cow cow : level.getEntitiesOfClass(Cow.class, box)) {
-            if (cow.isBaby() || !milkable(level, cow)) {
-                continue;
-            }
-            double d = this.resident.blockPosition().distSqr(cow.blockPosition());
+        for (BlockPos pos : cellarContainers(level)) {
+            double d = this.resident.blockPosition().distSqr(pos);
             if (d < bestDist) {
                 bestDist = d;
-                best = cow;
+                best = pos;
             }
         }
         return best;
     }
 
-    /** 区内最近的满蜜蜂箱/蜂巢。 */
-    private BlockPos findHoneyedHive(ServerLevel level) {
+    /** BAC 酒桶方块（注册表直查，BAC 不在 = null）。 */
+    private static volatile Block kegBlockCache;
+
+    private static Block kegBlock() {
+        Block b = kegBlockCache;
+        if (b == null) {
+            b = BuiltInRegistries.BLOCK.getOptional(
+                    ResourceLocation.fromNamespaceAndPath("brewinandchewin", "keg"))
+                    .orElse(null);
+            kegBlockCache = b;
+        }
+        return b;
+    }
+
+    private enum KegState { DRAWABLE, EMPTY }
+
+    /** 区内最近的处于目标状态的酒桶；无则 null。 */
+    private BlockPos findKeg(ServerLevel level, KegState wanted) {
+        Block keg = kegBlock();
+        if (keg == null) {
+            return null;
+        }
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
         for (TownZone zone : tavernZones()) {
             for (BlockPos pos : TownZone.iterate(zone)) {
-                BlockState state = level.getBlockState(pos);
-                if ((state.is(Blocks.BEEHIVE) || state.is(Blocks.BEE_NEST))
-                        && state.getValue(BeehiveBlock.HONEY_LEVEL) >= HIVE_FULL) {
-                    double d = distSq(pos);
-                    if (d < bestDist) {
-                        bestDist = d;
-                        best = pos.immutable();
-                    }
+                if (!level.getBlockState(pos).is(keg)) {
+                    continue;
+                }
+                KegAccess.KegSnap snap = KegAccess.read(level, pos);
+                if (snap == null) {
+                    continue;
+                }
+                boolean ok = switch (wanted) {
+                    case DRAWABLE -> KegAccess.drawable(level, pos);
+                    case EMPTY -> snap.fluid() == null
+                            && KegAccess.nonEmpty(snap.slots()).isEmpty();
+                };
+                if (!ok) {
+                    continue;
+                }
+                double d = this.resident.blockPosition().distSqr(pos);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = pos.immutable();
                 }
             }
         }
         return best;
-    }
-
-    /** 这头牛今天挤过没有。 */
-    private boolean milkable(ServerLevel level, Cow cow) {
-        Long last = this.milkedOnDay.get(cow.getUUID());
-        return last == null || last != gameDay(level);
-    }
-
-    /** 区域的实体搜索外框（BlockPos 对角 → 6-double AABB）。 */
-    private static AABB zoneAabb(TownZone zone) {
-        return new AABB(zone.min().getX(), zone.min().getY(), zone.min().getZ(),
-                zone.max().getX() + 1.0D, zone.max().getY() + 1.0D,
-                zone.max().getZ() + 1.0D);
-    }
-
-    /** 单点附近的实体搜索外框。 */
-    private static AABB zoneAabbAt(BlockPos pos) {
-        return new AABB(pos.getX(), pos.getY(), pos.getZ(),
-                pos.getX() + 1.0D, pos.getY() + 1.0D, pos.getZ() + 1.0D);
     }
 
     // ==========================================================
     //  工具方法
     // ==========================================================
-
-    private long gameDay(ServerLevel level) {
-        return level.getDayTime() / 24000L;
-    }
-
-    private double distSq(BlockPos pos) {
-        return this.resident.blockPosition().distSqr(pos);
-    }
 
     private boolean inWorkHours(ServerLevel level) {
         long t = level.getDayTime() % 24000L;
@@ -499,16 +989,108 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     }
 
     private Container containerAt(ServerLevel level, BlockPos pos) {
-        BlockEntity be = level.getBlockEntity(pos);
-        return be instanceof Container container ? container : null;
+        try {
+            BlockEntity be = level.getBlockEntity(pos);
+            return be instanceof Container container ? container : null;
+        } catch (RuntimeException e) {
+            return null; // 同上：BE 构造炸（BAC keg 无配置环境）按无容器处理
+        }
     }
 
-    private static int findItemSlot(Container stock, net.minecraft.world.item.Item item) {
-        for (int i = 0; i < stock.getContainerSize(); i++) {
-            if (stock.getItem(i).is(item)) {
-                return i;
+    // ==========================================================
+    //  缺货播报 + 秘传通道（决策 #64/#65）
+    // ==========================================================
+
+    /**
+     * 缺货播报点名（#37 口径）：现在奶/蜜采集砍给了农业（还没实装）、反胃
+     * 药水和酒类成品一直只能玩家补——所以所有缺口一律点名，16 格内
+     * actionbar，30 秒节流。
+     */
+    private void notifyShortage(ServerLevel level, Stock stock) {
+        int target = Math.max(1, Config.TAVERN_STOCK_TARGET.get());
+        List<String> missing = new ArrayList<>();
+        if (stock.milk() < target) {
+            missing.add(label(new ItemStack(Items.MILK_BUCKET), target - stock.milk()));
+        }
+        if (stock.honey() < target) {
+            missing.add(label(new ItemStack(Items.HONEY_BOTTLE), target - stock.honey()));
+        }
+        if (stock.nausea() < target) {
+            missing.add(label(NAUSEA_SAMPLE, target - stock.nausea()));
+        }
+        if (this.lastBrewMissing != null) {
+            for (ItemStack st : this.lastBrewMissing) {
+                missing.add(label(st, 1));
             }
         }
-        return -1;
+        if (missing.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - this.lastShortageNotifyMs < 30_000L) {
+            return;
+        }
+        this.lastShortageNotifyMs = now;
+        var msg = net.minecraft.network.chat.Component.translatable(
+                "msg.bmfstown.tavern.shortage",
+                this.resident.getName().getString(), String.join("、", missing));
+        for (var p : level.players()) {
+            if (p instanceof net.minecraft.server.level.ServerPlayer sp
+                    && sp.distanceToSqr(this.resident) < 256.0D) {
+                sp.displayClientMessage(msg, true);
+            }
+        }
+    }
+
+    /** "展示名×缺口" 一段。 */
+    private static String label(ItemStack sample, int gap) {
+        return sample.getHoverName().getString() + "×" + gap;
+    }
+
+    /**
+     * 酒保通道发货（决策 #64）：一本反胃秘传<b>成书</b>放进酒窖（有空位的
+     * 区内容器；全满进背包、再满掉脚边——绝不吞）。放下的瞬间全局解锁：
+     * 秘传书是酒保直接给的，不走"读完才解锁"。
+     */
+    private void issueNauseaSecret(ServerLevel level) {
+        Town town = boundTown();
+        if (town == null) {
+            return;
+        }
+        var unlockId = com.bmf.bmfstown.alchemy.NauseaSecretLedger.NAUSEA_UNLOCK;
+        // 即时成书（手记同款：startWriting(…, 1L) + withProgressAdded(1L)）
+        var content = com.bmf.bmfstown.book.BookContent
+                .startWriting(town.id(), this.resident.getName().getString(),
+                        new com.bmf.bmfstown.book.BookDraft.Unlock(unlockId), 1L)
+                .withProgressAdded(1L);
+        ItemStack book = new ItemStack(com.bmf.bmfstown.ModItems.FINISHED_BOOK.get());
+        book.set(com.bmf.bmfstown.ModDataComponents.BOOK_CONTENT.get(), content);
+        boolean stored = false;
+        outer:
+        for (BlockPos pos : cellarContainers(level)) {
+            Container c = containerAt(level, pos);
+            if (c == null) {
+                continue;
+            }
+            for (int i = 0; i < c.getContainerSize(); i++) {
+                if (c.getItem(i).isEmpty()) {
+                    c.setItem(i, book);
+                    stored = !c.getItem(i).isEmpty();
+                    break outer;
+                }
+            }
+        }
+        if (!stored) {
+            ItemStack over = this.resident.getInventory().addItem(book);
+            if (!over.isEmpty()) {
+                this.resident.spawnAtLocation(over);
+            }
+        }
+        // 放下即全局解锁（幂等）：镇级解锁广播 + 全服酿造门禁
+        com.bmf.bmfstown.unlock.UnlockState.get(level)
+                .unlockIfNew(level, town.id(), unlockId);
+        com.bmf.bmfstown.alchemy.AlchemyGate.open(level.getServer(), unlockId);
+        LOGGER.info("[BmfTown][酒保] {} 从酒窖深处翻出一本《反胃秘传》，放进了酒窖",
+                this.resident.getName().getString());
     }
 }

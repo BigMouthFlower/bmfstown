@@ -14,7 +14,7 @@ import java.util.List;
 
 /**
  * 休闲决策器（v0.10.3）：空闲的镇民从**动态活动池**里随机挑一件事做
- * （闲逛/图书馆看闲书，以后酒吧等直接往池里加）。一段结束 → 随机间歇 →
+ * （闲逛/图书馆看闲书/酒馆喝一杯（决策 #64））。一段结束 → 随机间歇 →
  * 再决策；优先级链（睡觉 &gt; 吃饭 &gt; 上班 &gt; 休闲）每 tick 复查，
  * 窗口一关立刻 {@link LeisureActivity#abort} 当场收尾。
  *
@@ -182,14 +182,25 @@ public class LeisureGoal extends Goal {
     private static final int LIBRARY_CHANCE = 50;
 
     /**
-     * 决策：一半概率尝试"图书馆看闲书"，没随机到就什么都不启动——
+     * 决策：先掷"去酒馆坐坐"（v0.16 决策 #64，默认 20%——成行三条件
+     * 今日未喝/镇里有酒馆/窖里有饮品任一不满足就落空），落空接着掷
+     * "图书馆看闲书"（50%，数值不变）；都没随机到就什么都不启动——
      * 镇民回到原有的漫无目的游走（自然游走是既有 AI，不需要额外赋予）。
-     * 以后加酒吧 = 这里多一个"随机到 X 就启动 X"的分支。
+     * 每日一杯的硬闸门在 {@link TavernVisitActivity#canStart} 内兜底。
      *
      * <p>v0.16 沉浸层（#57）：自然游走段开始时掷闲暇随机事件
      * （闲逛→（概率）随机事件→（子集）恐怖事件，见 {@code WanderEvents}）。
      */
     private boolean pick(ServerLevel level) {
+        // ---- 酒馆（决策 #64）：先掷，两段掷骰的第一段 ----
+        int tavernChance = Math.min(100, Math.max(0, Config.TAVERN_VISIT_CHANCE.get()));
+        if (tavernChance > 0 && this.random.nextInt(100) < tavernChance) {
+            LeisureActivity tavern = new TavernVisitActivity();
+            if (tavern.canStart(this.resident, level) && tavern.start(this.resident, level)) {
+                this.current = tavern;
+                return true;
+            }
+        }
         if (this.random.nextInt(100) >= LIBRARY_CHANCE) {
             this.breakCooldown = this.randomBreak(); // 没随机到：自然游走一阵再说
             com.bmf.bmfstown.eerie.WanderEvents.onWanderSegmentStart(this.resident, level);

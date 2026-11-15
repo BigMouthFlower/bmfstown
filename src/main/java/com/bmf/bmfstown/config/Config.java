@@ -774,6 +774,67 @@ public final class Config {
                     "Overfit perk: writing speed bonus per learned book (%). Cost: 50% draws come from the full pool (duplicates possible)")
             .defineInRange("scholar.overfitBonusPercent", 10, 0, 100);
 
+    // ---- 酒馆（决策 #63/#64/#65：划区+酒保+消费+反胃秘传）----
+    public static final ModConfigSpec.IntValue TAVERN_VISIT_CHANCE = BUILDER
+            .comment("居民闲暇时去酒馆点单的概率（%）",
+                    "Chance (%) a patron visits the tavern during leisure")
+            .defineInRange("tavern.visitChancePercent", 20, 0, 100);
+
+    public static final ModConfigSpec.IntValue TAVERN_ORDER_WAIT = BUILDER
+            .comment("客人在酒吧等上酒的最长时间（刻）；超时改自取酒窖",
+                    "Max ticks a patron waits for table service; afterwards they fetch from the cellar themselves")
+            .defineInRange("tavern.orderWaitTicks", 600, 100, 12000);
+
+    public static final ModConfigSpec.IntValue TAVERN_SIT_MIN = BUILDER
+            .comment("落座后到开喝的最短时长（刻）——坐下歇口气再喝（#66 实测 100~200t 体感太拖，压到 2~4 秒）",
+                    "Minimum ticks seated before taking the first sip")
+            .defineInRange("tavern.sitMinTicks", 40, 0, 24000);
+
+    public static final ModConfigSpec.IntValue TAVERN_SIT_MAX = BUILDER
+            .comment("落座后到开喝的最长时长（刻）",
+                    "Maximum ticks seated before taking the first sip")
+            .defineInRange("tavern.sitMaxTicks", 80, 0, 24000);
+
+    public static final ModConfigSpec.IntValue TAVERN_LINGER_MIN = BUILDER
+            .comment("喝完后在酒馆逗留的最短时长（刻）；逗留是一个有长度的活动段，到点结束回家/游走，之后仍可能再被掷去做别的事（不会站一整天）",
+                    "Min ticks a patron lingers in the tavern after drinking; the linger is one bounded activity segment, after which normal life resumes")
+            .defineInRange("tavern.lingerMinTicks", 600, 0, 24000);
+
+    public static final ModConfigSpec.IntValue TAVERN_LINGER_MAX = BUILDER
+            .comment("喝完后在酒馆逗留的最长时长（刻）；逗留期间每个落脚点会站着歇一阵（安静待客，不狂奔）",
+                    "Max ticks a patron lingers in the tavern after drinking; strolls between spots include a standing pause (calm pacing)")
+            .defineInRange("tavern.lingerMaxTicks", 1200, 0, 24000);
+
+    public static final ModConfigSpec.IntValue TAVERN_MOOD_BONUS = BUILDER
+            .comment("喝一杯的心情加成（点）",
+                    "Mood bonus per drink")
+            .defineInRange("tavern.moodBonus", 3, 0, 100);
+
+    public static final ModConfigSpec.IntValue TAVERN_DRINK_FOOD = BUILDER
+            .comment("喝一杯回复的饥饿值（点）",
+                    "Hunger points restored per drink")
+            .defineInRange("tavern.drinkFoodPoints", 2, 0, 20);
+
+    public static final ModConfigSpec.IntValue TAVERN_STOCK_TARGET = BUILDER
+            .comment("酒窖每种饮品的目标存量；酒保低于目标才补货/播报，反胃药水与酒类成品只能玩家（或农业）手动补",
+                    "Target stock per drink type in the cellar; the keeper brews only below target, nausea potions and bottled drinks are player-supplied")
+            .defineInRange("tavern.stockTargetPerDrink", 3, 1, 64);
+
+    public static final ModConfigSpec.IntValue NAUSEA_WRITE_CHANCE = BUILDER
+            .comment("反胃秘传·写书通道：每镇每游戏日一掷的概率（%），命中则学者本次开写定死为反胃秘传书",
+                    "Nausea secret via writing: roll per town per game day (%); on hit the scholar's next book is forced to the nausea secret")
+            .defineInRange("tavern.nauseaWriteChancePercent", 2, 0, 100);
+
+    public static final ModConfigSpec.IntValue NAUSEA_ASK_CHANCE = BUILDER
+            .comment("反胃秘传·酒保通道：每镇每游戏日一掷的概率（%），命中则酒保把反胃秘传成书放进酒窖",
+                    "Nausea secret via tavern: roll per town per game day (%); on hit the keeper places a finished nausea secret book in the cellar")
+            .defineInRange("tavern.nauseaAskChancePercent", 5, 0, 100);
+
+    public static final ModConfigSpec.IntValue NAUSEA_BOOK_CAP = BUILDER
+            .comment("反胃秘传全服合计上限（本），超限后两条通道都静默失效",
+                    "Server-wide cap for nausea secret books; both channels silently stop beyond it")
+            .defineInRange("tavern.nauseaBookCap", 2, 0, 64);
+
     // ---- 簿记员（在职成长；决策 #40：+1/5 秒提配置，数值不变）----
 
     public static final ModConfigSpec.IntValue BOOKKEEPER_XP_PER_GAIN = BUILDER
