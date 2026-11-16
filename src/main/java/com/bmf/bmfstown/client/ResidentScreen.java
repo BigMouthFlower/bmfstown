@@ -7,6 +7,7 @@ import com.bmf.bmfstown.entity.domain.Status;
 import com.bmf.bmfstown.menu.ResidentMenu;
 import com.bmf.bmfstown.entity.profile.PersonalityAxis;
 import com.bmf.bmfstown.network.ModNetworking;
+import javax.annotation.Nullable;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.resources.language.I18n;
@@ -1391,16 +1392,49 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         return workListBottom() + 4;
     }
 
-    /**
-     * 当前武器偏好档位名（数据槽实时值；越界兜底 NONE——面板刚开时
+    /** 当前武器偏好档位（数据槽实时值；越界兜底 NONE——面板刚开时
      * 数据包可能还没到，SimpleContainerData 初值是 0，恰好是 SWORD 的
      * ordinal，会造成"一瞬显示成剑"，故用范围校验兜住负值即可）。
-     */
-    private String weaponPrefLabel() {
+     * 2026-11-16 UX 修订（用户拍板）：按钮与工人产物下单同语言——画档位
+     * 代表武器图标（剑/斧=钻石档观感、重锤原样、无偏好不画），文字照旧。 */
+    private com.bmf.bmfstown.entity.WeaponPref currentWeaponPref() {
+        // 主通道=实体同步（2026-11-16 三踩定案：菜单数据槽实测收不到更新，见
+        // Resident.applyWeaponPref javadoc）；实体未同步到位时落数据槽兜底。
+        com.bmf.bmfstown.entity.Resident r = this.menu.getResident();
+        if (r != null) {
+            return r.weaponPrefSynced();
+        }
         int ord = this.menu.getStat(ResidentMenu.DATA_WEAPONPREF);
         com.bmf.bmfstown.entity.WeaponPref[] all = com.bmf.bmfstown.entity.WeaponPref.values();
-        var pref = ord >= 0 && ord < all.length ? all[ord] : com.bmf.bmfstown.entity.WeaponPref.NONE;
-        return I18n.get("gui.bmfstown.resident.work.weapon." + pref.name().toLowerCase(java.util.Locale.ROOT));
+        return ord >= 0 && ord < all.length ? all[ord] : com.bmf.bmfstown.entity.WeaponPref.NONE;
+    }
+
+    /** 档位的代表武器图标物品；NONE 返回 null（不画图标）。 */
+    @Nullable
+    private net.minecraft.world.item.Item weaponPrefIcon(com.bmf.bmfstown.entity.WeaponPref pref) {
+        return switch (pref) {
+            case SWORD -> net.minecraft.world.item.Items.DIAMOND_SWORD;
+            case AXE -> net.minecraft.world.item.Items.DIAMOND_AXE;
+            case MACE -> net.minecraft.world.item.Items.MACE;
+            default -> null;
+        };
+    }
+
+    private String weaponPrefLabel() {
+        return I18n.get("gui.bmfstown.resident.work.weapon."
+                + currentWeaponPref().name().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * 武器偏好的<b>短</b>档位名（半宽按钮内放得下）：NONE 用独立短键
+     * （完整版"无偏好（按伤害最高）"太长，进悬停提示），其余档位与完整版同名。
+     */
+    private String weaponPrefShortLabel() {
+        var pref = currentWeaponPref();
+        return I18n.get(pref == com.bmf.bmfstown.entity.WeaponPref.NONE
+                ? "gui.bmfstown.resident.work.weapon.none_short"
+                : "gui.bmfstown.resident.work.weapon."
+                        + pref.name().toLowerCase(java.util.Locale.ROOT));
     }
 
     // ---- perk 节点区（工作页效率行与玩家背包之间的固定高滚动菜单） ----
@@ -2121,14 +2155,14 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             int followY = y + workButtonsTop();
             int guardY = followY + WORK_BTN_H + WORK_BTN_GAP;
             drawWorkButton(gfx, bx, bw, followY, workMode == 1, mouseX, mouseY);
-            drawWorkButton(gfx, bx, bw, guardY, workMode == 2, mouseX, mouseY);
             if (current == com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR) {
-                // 武器偏好（决策 #49）：循环切换按钮，永远凸起（无按下态）
-                int weaponY = guardY + WORK_BTN_H + WORK_BTN_GAP;
-                boolean weaponHovered = mouseX >= bx && mouseX < bx + bw
-                        && mouseY >= weaponY && mouseY < weaponY + WORK_BTN_H;
-                drawWorkButton(gfx, bx, bw, weaponY, false,
-                        weaponHovered ? mouseX : -1, weaponHovered ? mouseY : -1);
+                // 战士第二行 = 站岗(左半) + 武器偏好(右半) 并排（2026-11-16 用户拍板：
+                // 原第三行武器偏好压在经验条上，两行各半后战士与其他职业同高，重叠消失）
+                int halfW = (bw - WORK_BTN_GAP) / 2;
+                drawWorkButton(gfx, bx, halfW, guardY, workMode == 2, mouseX, mouseY);
+                drawWorkButton(gfx, bx + halfW + WORK_BTN_GAP, halfW, guardY, false, mouseX, mouseY);
+            } else {
+                drawWorkButton(gfx, bx, bw, guardY, workMode == 2, mouseX, mouseY);
             }
         }
 
@@ -2289,15 +2323,36 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     : "gui.bmfstown.resident.work.follow_btn_off");
             String guardLabel = I18n.get(workMode == 2
                     ? "gui.bmfstown.resident.work.guard_btn_on"
-                    : "gui.bmfstown.resident.work.guard_btn");
+                    : "gui.bmfstown.resident.work.guard_btn_short");
             // 开启态文字用亮绿（配合凹陷底），关闭态普通亮灰——一眼分清开关
             drawCenteredInPanel(gfx, followLabel, 5, bw, followY + 3, workMode == 1 ? 0xA8FFA8 : 0xE0E0E0);
-            drawCenteredInPanel(gfx, guardLabel, 5, bw, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
-            // 武器偏好：档位名走数据槽（服务端实时推送），点击循环切档
-            int weaponY = guardY + WORK_BTN_H + WORK_BTN_GAP;
-            String prefLabel = I18n.get("gui.bmfstown.resident.work.weapon_pref",
-                    weaponPrefLabel());
-            drawCenteredInPanel(gfx, prefLabel, 5, bw, weaponY + 3, 0xE0E0E0);
+            // 站岗(左半) + 武器偏好(右半) 并排（2026-11-16 用户拍板，见背景层注释）
+            int halfW = (bw - WORK_BTN_GAP) / 2;
+            drawCenteredInPanel(gfx, guardLabel, 5, halfW, guardY + 3, workMode == 2 ? 0xA8FFA8 : 0xE0E0E0);
+            // 武器偏好：档位名走数据槽（服务端实时推送），点击循环切档；
+            // 按钮左端画当前档位代表武器图标（#49 UX 修订），悬停看完整档位说明
+            int weaponX = 5 + halfW + WORK_BTN_GAP;
+            drawCenteredInPanel(gfx, weaponPrefShortLabel(), weaponX,
+                    halfW, guardY + 3, 0xE0E0E0);
+            if (mouseX >= this.leftPos + 5 && mouseX < this.leftPos + 5 + halfW
+                    && mouseY >= this.topPos + guardY && mouseY < this.topPos + guardY + WORK_BTN_H) {
+                renderScreenTooltip(gfx, java.util.List.of(
+                        Component.translatable("gui.bmfstown.resident.work.guard_btn")),
+                        mouseX, mouseY);
+            }
+            net.minecraft.world.item.Item prefIcon = weaponPrefIcon(currentWeaponPref());
+            if (prefIcon != null) {
+                // renderLabels 的画笔已平移 (leftPos, topPos)——图标用相对坐标
+                // （同段 drawCenteredInPanel 同帧；绝对坐标会双重偏移画到面板外）
+                gfx.renderItem(new net.minecraft.world.item.ItemStack(prefIcon),
+                        weaponX + 2, guardY + (WORK_BTN_H - 16) / 2);
+            }
+            if (mouseX >= this.leftPos + weaponX && mouseX < this.leftPos + weaponX + halfW
+                    && mouseY >= this.topPos + guardY && mouseY < this.topPos + guardY + WORK_BTN_H) {
+                renderScreenTooltip(gfx, java.util.List.of(
+                        Component.translatable("gui.bmfstown.resident.work.weapon_pref",
+                                weaponPrefLabel())), mouseX, mouseY);
+            }
         } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER) {
             // 簿记员：查询物资按钮（统计+寻物都从这里进）
             drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.census_btn"),
@@ -3523,8 +3578,11 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     }
                     return true;
                 }
-                // 站岗按钮：关界面 → 客户端进入红色预览，右键确认/Shift 取消
-                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H) {
+                // 站岗按钮（左半）：关界面 → 客户端进入红色预览，右键确认/Shift 取消
+                int halfW = (listW - WORK_BTN_GAP) / 2;
+                int weaponX = listX + halfW + WORK_BTN_GAP;
+                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H
+                        && mouseX >= listX && mouseX < listX + halfW) {
                     Resident r = this.menu.getResident();
                     if (r != null && r.isWarrior()) {
                         clickMenu(ResidentMenu.BTN_GUARD_POST);
@@ -3536,10 +3594,14 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                     }
                     return true; // 非战士点也吞掉（服务端会给提示）
                 }
-                // 武器偏好循环按钮（决策 #49）：走菜单按钮协议，服务端切档
-                int weaponY = guardY + WORK_BTN_H + WORK_BTN_GAP;
-                if (mouseY >= weaponY && mouseY < weaponY + WORK_BTN_H) {
-                    clickMenu(ResidentMenu.BTN_WEAPON_PREF);
+                // 武器偏好循环按钮（右半，决策 #49）：走自定义包（跟随同款已验证链路）
+                // ——菜单按钮协议两轮实测"点了没反应"，2026-11-16 收编到自定义链路
+                if (mouseY >= guardY && mouseY < guardY + WORK_BTN_H
+                        && mouseX >= weaponX && mouseX < weaponX + halfW) {
+                    Resident r = this.menu.getResident();
+                    if (r != null) {
+                        ModNetworking.sendToServer(new ModNetworking.WeaponPrefPayload(r.getId()));
+                    }
                     return true;
                 }
             }

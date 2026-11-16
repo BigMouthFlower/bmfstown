@@ -365,11 +365,18 @@ public class ResidentMenu extends AbstractContainerMenu {
         }
 
         // ---- 工作页：武器偏好循环切换（决策 #49，仅战士；数据槽自动推送新值）----
+        // 2026-11-16 实测修订：用户报"点了没反应"——切档后加 actionbar 回显，
+        // 一眼确认服务端收到（回显没出现=包没到，出现而按钮不变=显示层问题，
+        // 诊断信号二合一）；图标化见 ResidentScreen 战士按钮区。
         if (id == BTN_WEAPON_PREF) {
             if (this.resident.isWarrior()) {
                 var pref = this.resident.getJobState().weaponPref().next();
-                this.resident.getJobState().setWeaponPref(pref);
-                this.resident.syncClient();
+                this.resident.applyWeaponPref(pref);
+                player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.weapon_pref_set",
+                        net.minecraft.network.chat.Component.translatable(
+                                "gui.bmfstown.resident.work.weapon."
+                                        + pref.name().toLowerCase(java.util.Locale.ROOT))), true);
             }
             return true;
         }

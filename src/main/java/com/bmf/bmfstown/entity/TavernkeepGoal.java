@@ -67,6 +67,8 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     private static final int SCAN_PERIOD = 100;
     /** 一轮活之间的喘息（#66 实测：100t=5 秒的喘息让点单接不上，压到 1 秒）。 */
     private static final int REST_TICKS = 20;
+    /** 开盖→取放的停顿（对齐工人/烟火 LID_TICKS 口径：盖子飞起来再伸手）。 */
+    private static final int LID_TICKS = 10;
     /** 反胃药水的盘点样本（isSameItemSameComponents 口径）。 */
     private static final ItemStack NAUSEA_SAMPLE = net.minecraft.world.item.alchemy.PotionContents
             .createItemStack(Items.POTION, com.bmf.bmfstown.alchemy.ModPotions.NAUSEA);
@@ -95,8 +97,8 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     /** 扫描节流游标。 */
     private long nextScanAt;
     private int retryCooldown;
-    /** 缺货播报节流（30 秒一次，对齐炼金等料播报口径）。 */
-    private long lastShortageNotifyMs;
+    /** 开盖停顿游标（#68：酒窖取放走 containerFx 表演，节奏对齐工人）。 */
+    private int lidTimer;
 
     private enum Phase { SCAN, FETCH, GO_KEG, GO_PATRON, STORE }
     private enum Kind { IDLE, SERVE_BOTTLE, SERVE_KEG, BREW, DRAW_STOCK }
@@ -148,6 +150,17 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         if (level != null && (!this.cargo.isEmpty() || !this.carried.isEmpty())) {
             returnCargoToCellar(level);
         }
+        // 停工理货（#68 用户拍板"下班不揣料"）：背包里剩的瓶瓶罐罐（cargo 溢出
+        // 件等）退回最近酒窖容器。打断路径不表演（先顾命）；食物/书不归公。
+        // 特例（2026-11-17 用户实测：蜂蜜瓶没回窖）：蜂蜜瓶带 FOOD 组件会被
+        // isPersonal 的"食物不归公"拦住，但它对酒馆是工作原料/库存——
+        // 酒馆饮品白名单（奶桶/蜂蜜瓶/BAC 酒）整体放行回窖（本类已有多处
+        // isDrink 同款引用，口径统一）。
+        if (level != null) {
+            JobKit.giveBack(level, this.resident, cellarContainers(level),
+                    st -> !JobKit.isPersonal(st)
+                            || com.bmf.bmfstown.leisure.TavernVisitActivity.isDrink(st));
+        }
         this.resident.getNavigation().stop();
         this.patron = null;
         this.recipe = null;
@@ -155,6 +168,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         this.cellarPos = null;
         this.kind = Kind.IDLE;
         this.phase = Phase.SCAN;
+        this.lidTimer = 0;
     }
 
     @Override
@@ -164,12 +178,21 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
 
     @Override
     public void tick() {
-        if (this.retryCooldown > 0) {
-            this.retryCooldown--;
-            return;
-        }
         ServerLevel level = serverLevel();
         if (level == null) {
+            return;
+        }
+        // 点单打铃（#67 顾客主动通知）：客人挂单瞬间清掉喘息/扫描节流，
+        // SCAN 相位当 tick 受理；手头有活（取料/投桶/送酒）时干完这轮再受理
+        // ——货在路上硬掐会吞货，returnCargoToCellar 兜底留给 stop()
+        if (TavernOrders.takeBell(this.resident)) {
+            this.retryCooldown = 0;
+            if (this.phase != Phase.SCAN) {
+                return;
+            }
+        }
+        if (this.retryCooldown > 0) {
+            this.retryCooldown--;
             return;
         }
         switch (this.phase) {
@@ -323,22 +346,34 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             return;
         }
         this.resident.getNavigation().stop();
+        // 开盖表演（#68 用户点名：不许靠过去直接隔空拿）——盖子飞起来停一拍再取
+        if (this.lidTimer == 0) {
+            this.resident.containerFx(level, this.cellarPos, true);
+            this.lidTimer = LID_TICKS;
+            return;
+        }
+        if (--this.lidTimer > 0) {
+            return;
+        }
+        this.resident.containerFx(level, this.cellarPos, false);
         Container stock = containerAt(level, this.cellarPos);
         if (stock == null) {
             backToScan();
             return;
         }
-        int slot = -1;
+        // 顾客喝什么（#67 用户拍板随机化）：窖里有几种就随机抽一种——
+        // 绝不固定第一格（旧实现永远取第一个饮品格，蜂蜜囤前排全员喝蜂蜜）
+        java.util.List<Integer> drinkSlots = new ArrayList<>();
         for (int i = 0; i < stock.getContainerSize(); i++) {
             if (com.bmf.bmfstown.leisure.TavernVisitActivity.isDrink(stock.getItem(i))) {
-                slot = i;
-                break;
+                drinkSlots.add(i);
             }
         }
-        if (slot < 0) {
+        if (drinkSlots.isEmpty()) {
             backToScan(); // 被抢喝了：客人侧有超时自取兜底
             return;
         }
+        int slot = drinkSlots.get(this.resident.getRandom().nextInt(drinkSlots.size()));
         ItemStack taken = stock.getItem(slot).copy();
         taken.setCount(1);
         stock.getItem(slot).shrink(1);
@@ -526,6 +561,16 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             return;
         }
         this.resident.getNavigation().stop();
+        // 开盖表演（同上，取酿造料也要看得见开箱）
+        if (this.lidTimer == 0) {
+            this.resident.containerFx(level, this.cellarPos, true);
+            this.lidTimer = LID_TICKS;
+            return;
+        }
+        if (--this.lidTimer > 0) {
+            return;
+        }
+        this.resident.containerFx(level, this.cellarPos, false);
         Container stock = containerAt(level, this.cellarPos);
         if (stock == null || this.recipe == null) {
             backToScan();
@@ -684,10 +729,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             // 窖没了：揣着（ addItem 兜底），绝不吞货
             reclaimCarried();
             for (ItemStack st : this.cargo) {
-                ItemStack over = this.resident.getInventory().addItem(st);
-                if (!over.isEmpty()) {
-                    this.resident.spawnAtLocation(over);
-                }
+                JobKit.stowOrDrop(this.resident, st);
             }
             this.cargo.clear();
             backToScan();
@@ -701,6 +743,16 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             return;
         }
         this.resident.getNavigation().stop();
+        // 开盖表演（入窖也看得见：盖子飞起来停一拍再放货）
+        if (this.lidTimer == 0) {
+            this.resident.containerFx(level, store, true);
+            this.lidTimer = LID_TICKS;
+            return;
+        }
+        if (--this.lidTimer > 0) {
+            return;
+        }
+        this.resident.containerFx(level, store, false);
         reclaimCarried(); // 端来的展示品收回货列再入窖
         Container c = containerAt(level, store);
         if (c != null) {
@@ -712,10 +764,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         }
         // 插不进的部分：揣背包，再满掉脚边（绝不吞）
         for (ItemStack st : this.cargo) {
-            ItemStack over = this.resident.getInventory().addItem(st);
-            if (!over.isEmpty()) {
-                this.resident.spawnAtLocation(over);
-            }
+            JobKit.stowOrDrop(this.resident, st);
         }
         this.cargo.clear();
         backToScan();
@@ -734,10 +783,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 }
             }
             if (!stored) {
-                ItemStack over = this.resident.getInventory().addItem(st);
-                if (!over.isEmpty()) {
-                    this.resident.spawnAtLocation(over);
-                }
+                JobKit.stowOrDrop(this.resident, st);
             }
         }
         this.cargo.clear();
@@ -751,6 +797,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         this.kind = Kind.IDLE;
         this.phase = Phase.SCAN;
         this.retryCooldown = REST_TICKS;
+        this.lidTimer = 0;
     }
 
     // ==========================================================
@@ -989,12 +1036,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     }
 
     private Container containerAt(ServerLevel level, BlockPos pos) {
-        try {
-            BlockEntity be = level.getBlockEntity(pos);
-            return be instanceof Container container ? container : null;
-        } catch (RuntimeException e) {
-            return null; // 同上：BE 构造炸（BAC keg 无配置环境）按无容器处理
-        }
+        return JobKit.containerAt(level, pos); // #68 收编（BAC 安全同口径）
     }
 
     // ==========================================================
@@ -1003,48 +1045,32 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
 
     /**
      * 缺货播报点名（#37 口径）：现在奶/蜜采集砍给了农业（还没实装）、反胃
-     * 药水和酒类成品一直只能玩家补——所以所有缺口一律点名，16 格内
-     * actionbar，30 秒节流。
+     * 药水和酒类成品一直只能玩家补——所以所有缺口一律点名。半径/节流走
+     * {@link JobKit#shortage}（#68 收编）。
      */
     private void notifyShortage(ServerLevel level, Stock stock) {
         int target = Math.max(1, Config.TAVERN_STOCK_TARGET.get());
         List<String> missing = new ArrayList<>();
         if (stock.milk() < target) {
-            missing.add(label(new ItemStack(Items.MILK_BUCKET), target - stock.milk()));
+            missing.add(JobKit.label(new ItemStack(Items.MILK_BUCKET), target - stock.milk()));
         }
         if (stock.honey() < target) {
-            missing.add(label(new ItemStack(Items.HONEY_BOTTLE), target - stock.honey()));
+            missing.add(JobKit.label(new ItemStack(Items.HONEY_BOTTLE), target - stock.honey()));
         }
         if (stock.nausea() < target) {
-            missing.add(label(NAUSEA_SAMPLE, target - stock.nausea()));
+            missing.add(JobKit.label(NAUSEA_SAMPLE, target - stock.nausea()));
         }
         if (this.lastBrewMissing != null) {
             for (ItemStack st : this.lastBrewMissing) {
-                missing.add(label(st, 1));
+                missing.add(JobKit.label(st, 1));
             }
         }
         if (missing.isEmpty()) {
             return;
         }
-        long now = System.currentTimeMillis();
-        if (now - this.lastShortageNotifyMs < 30_000L) {
-            return;
-        }
-        this.lastShortageNotifyMs = now;
-        var msg = net.minecraft.network.chat.Component.translatable(
-                "msg.bmfstown.tavern.shortage",
-                this.resident.getName().getString(), String.join("、", missing));
-        for (var p : level.players()) {
-            if (p instanceof net.minecraft.server.level.ServerPlayer sp
-                    && sp.distanceToSqr(this.resident) < 256.0D) {
-                sp.displayClientMessage(msg, true);
-            }
-        }
-    }
-
-    /** "展示名×缺口" 一段。 */
-    private static String label(ItemStack sample, int gap) {
-        return sample.getHoverName().getString() + "×" + gap;
+        JobKit.shortage(level, this.resident, net.minecraft.network.chat.Component
+                .translatable("msg.bmfstown.tavern.shortage",
+                        this.resident.getName().getString(), String.join("、", missing)));
     }
 
     /**
@@ -1081,10 +1107,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             }
         }
         if (!stored) {
-            ItemStack over = this.resident.getInventory().addItem(book);
-            if (!over.isEmpty()) {
-                this.resident.spawnAtLocation(over);
-            }
+            JobKit.stowOrDrop(this.resident, book);
         }
         // 放下即全局解锁（幂等）：镇级解锁广播 + 全服酿造门禁
         com.bmf.bmfstown.unlock.UnlockState.get(level)

@@ -143,6 +143,33 @@ public final class ResidentCommands {
                         .executes(ctx -> sayNearest(
                                 ctx, StringArgumentType.getString(ctx, "text")))));
 
+        // ---- /bmfstown seat <坐高偏移> ----
+        // 坐姿调试命令（#67 实测悬空后加）：改全局坐高并立即重放视野内
+        // 所有座位——乘客位置下 tick 自动跟随，不用换实体不断续坐。
+        // 调到满意后把值焊死进 SeatEntity.yOffset。
+        root.then(Commands.literal("seat")
+                .then(Commands.argument("offset", DoubleArgumentType.doubleArg(-1.0D, 2.0D))
+                        .executes(ctx -> {
+                            double v = DoubleArgumentType.getDouble(ctx, "offset");
+                            com.bmf.bmfstown.entity.SeatEntity.setYOffset(v);
+                            net.minecraft.server.level.ServerLevel level =
+                                    ctx.getSource().getLevel();
+                            int n = 0;
+                            for (var seat : level.getEntitiesOfClass(
+                                    com.bmf.bmfstown.entity.SeatEntity.class,
+                                    ctx.getSource().getEntity().getBoundingBox()
+                                            .inflate(32.0D))) {
+                                seat.applyOffset();
+                                n++;
+                            }
+                            final int count = n;
+                            ctx.getSource().sendSuccess(() -> Component.literal(
+                                    String.format(java.util.Locale.ROOT,
+                                            "Seat yOffset = %.2f（重放 %d 个座位）", v, count)),
+                                    false);
+                            return 1;
+                        })));
+
         // ---- /bmfstown date ----
         // 历法调试命令：报当前镇民历日期（年/月/日/月相）。
         root.then(Commands.literal("date")

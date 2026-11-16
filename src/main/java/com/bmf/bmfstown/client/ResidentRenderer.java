@@ -120,6 +120,22 @@ public class ResidentRenderer extends MobRenderer<Resident, ResidentModel> {
         super.render(entity, entityYaw, partialTicks, poseStack, buffer, packedLight);
     }
 
+    /**
+     * 坐姿视觉补偿（#67 实测悬空半格）：骑乘模型的髋部在模型空间里比实体
+     * 坐标高约 0.7 格（HumanoidModel 腿根 12px），而座位实体必须放在
+     * 座面下、保证物理/寻路不出格（负偏移会把实体压进地板方块，见
+     * SeatEntity.yOffset 注释）——多出的那截在这里整体下移补掉。
+     * 只对坐我们的座位生效，坐船等其他载具不走这条补偿。
+     */
+    @Override
+    protected void setupRotations(Resident entity, PoseStack poseStack,
+            float bob, float yRot, float partialTicks, float scale) {
+        super.setupRotations(entity, poseStack, bob, yRot, partialTicks, scale);
+        if (entity.getVehicle() instanceof com.bmf.bmfstown.entity.SeatEntity) {
+            poseStack.translate(0.0D, -0.7D, 0.0D);
+        }
+    }
+
     @Override
     public ResourceLocation getTextureLocation(Resident entity) {
         ResourceLocation tex = ClientSkinCatalog.locationOf(entity.getSkinId());
@@ -133,6 +149,8 @@ public class ResidentRenderer extends MobRenderer<Resident, ResidentModel> {
     @SubscribeEvent
     public static void onRegisterRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntities.RESIDENT.get(), ResidentRenderer::new);
+        // 隐形座位：占位注册（本体零绘制，防座位进视野时客户端缺渲染器崩溃）
+        event.registerEntityRenderer(ModEntities.SEAT.get(), SeatRenderer::new);
     }
 
     @SubscribeEvent

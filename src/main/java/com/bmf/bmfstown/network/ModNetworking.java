@@ -363,6 +363,31 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：武器偏好循环切换（工作页战士按钮，决策 #49）。
+     *
+     * <p>走自定义包而非菜单按钮协议的理由（2026-11-16 二次实测修订）：
+     * 跟随/站岗确认早已改走自定义链路且实测可用，而武器偏好的菜单按钮
+     * 协议两轮实测均"点了没反应"（静态链路查无断点，疑似协议层问题）——
+     * 统一收编到已验证的链路，服务端逻辑从 ResidentMenu.clickMenuButton
+     * 迁到 handleWeaponPref（原菜单分支保留作兜底）。
+     */
+    public record WeaponPrefPayload(int entityId) implements CustomPacketPayload {
+
+        public static final Type<WeaponPrefPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "weapon_pref"));
+
+        public static final StreamCodec<ByteBuf, WeaponPrefPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, WeaponPrefPayload::entityId,
+                        WeaponPrefPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：手册城镇页「登记方块」按钮——开启（或取消）工坊登记会话（城镇级）。
      * 服务端复核城镇存在、成员身份、同维度后开启会话。
      */
@@ -885,6 +910,32 @@ public final class ModNetworking {
                 serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                         "msg.bmfstown.work.follow_on", resident.getName().getString()), true);
             }
+        });
+    }
+
+    /** 武器偏好切换：校验镇民存在且是战士，循环切一档并回显。 */
+    private static void handleWeaponPref(WeaponPrefPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return; // 镇民不在了（走远/死亡）：静默丢弃
+            }
+            if (!resident.isWarrior()) {
+                serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.work.need_warrior"), true);
+                return;
+            }
+            var pref = resident.getJobState().weaponPref().next();
+            resident.applyWeaponPref(pref);
+            serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "msg.bmfstown.work.weapon_pref_set",
+                    net.minecraft.network.chat.Component.translatable(
+                            "gui.bmfstown.resident.work.weapon."
+                                    + pref.name().toLowerCase(java.util.Locale.ROOT))), true);
         });
     }
 
@@ -1782,6 +1833,8 @@ public final class ModNetworking {
                 ModNetworking::handleWorkGuardPost);
         registrar.playToServer(WorkFollowPayload.TYPE, WorkFollowPayload.STREAM_CODEC,
                 ModNetworking::handleWorkFollow);
+        registrar.playToServer(WeaponPrefPayload.TYPE, WeaponPrefPayload.STREAM_CODEC,
+                ModNetworking::handleWeaponPref);
         registrar.playToServer(HandbookRegisterSessionPayload.TYPE,
                 HandbookRegisterSessionPayload.STREAM_CODEC,
                 ModNetworking::handleHandbookRegisterSession);

@@ -27,10 +27,37 @@ public final class TavernOrders {
      *  等超时/被打断的客人不塞酒，酒回窖，杜绝"塞给已经放弃的人"）。 */
     private static final java.util.Set<UUID> CLAIMED = new java.util.HashSet<>();
 
-    /** 落座点单（重复点单幂等）。 */
+    /**
+     * 点单铃声（#67 用户拍板"顾客主动通知酒保"）：客人挂单瞬间把同世界的
+     * 酒保（48 格内，纯职业过滤——非本镇酒保 claim 时按锚点过滤天然领不到
+     * 别镇的单，误响无害）标记进来；酒保 Goal 每 tick 消费
+     * {@link #takeBell}，清掉扫描/喘息冷却立刻受理。
+     */
+    private static final java.util.Set<UUID> BELL = new java.util.HashSet<>();
+
+    /** 落座点单（重复点单幂等）+ 打铃唤醒酒保。 */
     public static void place(Entity patron, BlockPos tavernAnchor) {
         ORDERS.put(patron.getUUID(), tavernAnchor.immutable());
         CLAIMED.remove(patron.getUUID());
+        ringKeepers(patron);
+    }
+
+    /** 点单瞬间唤醒周围的酒保（低频事件，直接实体扫描可接受）。 */
+    private static void ringKeepers(Entity patron) {
+        if (!(patron.level() instanceof ServerLevel sl)) {
+            return;
+        }
+        for (Resident r : sl.getEntitiesOfClass(Resident.class,
+                new net.minecraft.world.phys.AABB(patron.blockPosition()).inflate(48.0D),
+                r -> r.getProfession() == com.bmf.bmfstown.entity.profile.ProfessionType.TAVERNKEEP
+                        && r.isAlive())) {
+            BELL.add(r.getUUID());
+        }
+    }
+
+    /** 酒保消费铃（每 tick 一次）：返回 true = 有人点单叫你，立刻回 SCAN 受理。 */
+    public static boolean takeBell(Entity keeper) {
+        return BELL.remove(keeper.getUUID());
     }
 
     /** 取消点单（喝到/超时/被打断）。 */

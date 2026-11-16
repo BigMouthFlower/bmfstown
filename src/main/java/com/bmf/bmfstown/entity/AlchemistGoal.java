@@ -282,6 +282,13 @@ public class AlchemistGoal extends Goal {
             // 原版会继续酿，明天回来对账接得上（酿完的成品照常盖章入库）
             releaseClaim();
             this.stepIndex = 0;
+            // 收尾理货（#68 用户拍板"下班不揣料"）：背包里的取料余量/成品药水
+            // 退到最近登记容器；食物/书不归公（isPersonal 过滤）。
+            // （2026-11-16 对照实验：摘除后水链用例仍挂——理货不是抖动元凶，恢复。）
+            if (level != null) {
+                JobKit.giveBack(level, this.resident, validContainers(level),
+                        st -> !JobKit.isPersonal(st));
+            }
         }
         this.fetchTarget = null;
         this.storeTarget = null;
@@ -579,20 +586,13 @@ public class AlchemistGoal extends Goal {
         }
     }
 
-    /** 等料节流字段（30 秒一次播报）。 */
-    private long lastShortageNotifyMs;
-
     /**
-     * 等料播报：16 格内玩家 actionbar 提示镇民缺什么（30 秒节流）。
+     * 等料播报：16 格内玩家 actionbar 提示镇民缺什么。半径/节流走
+     * {@link JobKit#shortage}（#68 收编）。
      * 龙息缺料且合成材料也不足时，把**配方**一并告诉玩家（"天赋造原料"，
      * 玩家无从得知配比——2026-11-07 用户实测卡在这里）。
      */
     private void notifyShortage(ServerLevel level, List<Need> needs) {
-        long now = System.currentTimeMillis();
-        if (now - this.lastShortageNotifyMs < 30_000L) {
-            return;
-        }
-        this.lastShortageNotifyMs = now;
         boolean dragonMissing = needs.stream()
                 .anyMatch(n -> n.test().test(new ItemStack(Items.DRAGON_BREATH)));
         // 点名缺什么（2026-11-07 用户抓出信息断层："等补货"不说缺什么，没法对症下药）
@@ -607,14 +607,8 @@ public class AlchemistGoal extends Goal {
         if (dragonMissing) {
             key = "msg.bmfstown.alchemy.waiting_dragon_materials";
         }
-        var msg = net.minecraft.network.chat.Component.translatable(key,
-                this.resident.getName().getString(), missing.toString());
-        for (var p : level.players()) {
-            if (p instanceof net.minecraft.server.level.ServerPlayer sp
-                    && sp.distanceToSqr(this.resident) < 256.0D) {
-                sp.displayClientMessage(msg, true);
-            }
-        }
+        JobKit.shortage(level, this.resident, net.minecraft.network.chat.Component
+                .translatable(key, this.resident.getName().getString(), missing.toString()));
     }
 
     /** 缺口 = 需求 − 库存；缺口 ≤ 0 不记。 */
@@ -1514,6 +1508,16 @@ public class AlchemistGoal extends Goal {
                 .equals(level.dimension().location().toString());
     }
 
+    /** 工坊登记容器池（#68：validContainers 惰性清理收编进 JobKit）。 */
+    @Nullable
+    private Town.WorkshopRegister register(ServerLevel level) {
+        if (this.townId == null) {
+            return null;
+        }
+        Town town = TownSaveData.get(level).findTown(this.townId.toString());
+        return town == null ? null : town.workshop();
+    }
+
     private boolean inWorkHours(ServerLevel level) {
         long t = level.getDayTime() % 24000L;
         int[] window = this.resident.workWindow(); // v0.14：边界带晨夜轴个人偏移
@@ -1534,128 +1538,49 @@ public class AlchemistGoal extends Goal {
 
     @Nullable
     private Container containerAt(ServerLevel level, BlockPos pos) {
-        return level.getBlockEntity(pos) instanceof Container c ? c : null;
+        return JobKit.containerAt(level, pos); // #68 收编（顺带获得 BAC 安全兜底）
     }
 
     /** 离自己最近的、能凑齐任一缺料的登记容器。 */
     @Nullable
     private BlockPos nearestContainerFulfilling(ServerLevel level, List<Need> needs) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : validContainers(level)) {
-            Container c = containerAt(level, pos);
-            if (c == null) {
-                continue;
-            }
-            boolean useful = false;
-            for (Need need : needs) {
-                for (int i = 0; i < c.getContainerSize(); i++) {
-                    if (need.test().test(c.getItem(i))) {
-                        useful = true;
-                        break;
+        // #68 收编：选址循环统一走 JobKit.nearest（谓词保留炼金自己的凑料判定）
+        return JobKit.nearest(level, validContainers(level), null, this.resident,
+                c -> {
+                    for (Need need : needs) {
+                        for (int i = 0; i < c.getContainerSize(); i++) {
+                            if (need.test().test(c.getItem(i))) {
+                                return true;
+                            }
+                        }
                     }
-                }
-                if (useful) {
-                    break;
-                }
-            }
-            if (!useful) {
-                continue;
-            }
-            double d = pos.distSqr(this.resident.blockPosition());
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        return best;
+                    return false;
+                });
     }
 
     /** 登记容器（顺手惰性清理被拆的——工人同款）。 */
     private List<BlockPos> validContainers(ServerLevel level) {
-        List<BlockPos> out = new ArrayList<>();
-        Town town = TownSaveData.get(level).findTown(this.townId.toString());
-        if (town == null) {
-            return out;
-        }
-        List<Long> broken = null;
-        for (Long p : town.workshop().containers) {
-            BlockPos pos = BlockPos.of(p);
-            if (containerAt(level, pos) != null) {
-                out.add(pos);
-            } else {
-                if (broken == null) {
-                    broken = new ArrayList<>();
-                }
-                broken.add(p);
-            }
-        }
-        if (broken != null) {
-            town.workshop().containers.removeAll(broken);
-            TownSaveData.get(level).setDirty();
-        }
-        return out;
+        // #68 收编：惰性清理逻辑统一走 JobKit（原炼金私有实现）
+        return JobKit.validContainers(level, register(level));
     }
 
     /** 离酿造台最近的、装得下成品药水的登记容器。 */
     @Nullable
     private BlockPos nearestContainerWithSpace(ServerLevel level, Item item) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : validContainers(level)) {
-            Container c = containerAt(level, pos);
-            if (c == null || !hasSpaceFor(c, item)) {
-                continue;
-            }
-            double d = this.standPos == null
-                    ? pos.distSqr(this.resident.blockPosition())
-                    : pos.distSqr(this.standPos);
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        return best;
-    }
-
-    private static boolean hasSpaceFor(Container c, Item item) {
-        for (int i = 0; i < c.getContainerSize(); i++) {
-            ItemStack slot = c.getItem(i);
-            if (slot.isEmpty() || (slot.is(item) && slot.getCount() < slot.getMaxStackSize())) {
-                return true;
-            }
-        }
-        return false;
+        // #68 收编：锚点=酿造台（无台时退自身）
+        return JobKit.nearest(level, validContainers(level), this.standPos, this.resident,
+                c -> JobKit.hasSpaceFor(c, item));
     }
 
     /** 把背包里的成品药水搬进容器（装不下的留身上换下一箱）。 */
     private void movePotionsTo(Container output) {
-        var inv = this.resident.getInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack stack = inv.getItem(i);
-            if (!(stack.getItem() instanceof net.minecraft.world.item.PotionItem)) {
-                continue; // 四种药水瓶（普通/喷溅/滞留）都入库
-            }
-            storeItem(output, stack);
-            if (stack.isEmpty()) {
-                inv.setItem(i, ItemStack.EMPTY);
-            }
-        }
+        // #68 收编：卸背包统一走 JobKit.unloadInto（四种药水瓶：普通/喷溅/滞留都入库）
+        JobKit.unloadInto(output, this.resident.getInventory(),
+                stack -> stack.getItem() instanceof net.minecraft.world.item.PotionItem);
     }
 
     private void storeItem(Container container, ItemStack stack) {
-        for (int i = 0; i < container.getContainerSize() && !stack.isEmpty(); i++) {
-            ItemStack slot = container.getItem(i);
-            if (slot.isEmpty()) {
-                container.setItem(i, stack.copy());
-                stack.setCount(0);
-            } else if (ItemStack.isSameItemSameComponents(slot, stack)) {
-                int space = slot.getMaxStackSize() - slot.getCount();
-                int move = Math.min(space, stack.getCount());
-                slot.grow(move);
-                stack.shrink(move);
-            }
-        }
+        JobKit.storeItem(container, stack); // #68 收编
     }
 
     private int findItem(net.minecraft.world.Container inv,

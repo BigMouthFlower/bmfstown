@@ -16,7 +16,6 @@ import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.item.crafting.Ingredient;
 import org.slf4j.Logger;
 
@@ -564,29 +563,8 @@ public class WorkerGoal extends Goal {
      * → 摘出登记表并标脏——"拆了自动重找"的容器版。
      */
     private List<BlockPos> validContainers(ServerLevel level) {
-        List<BlockPos> out = new ArrayList<>();
-        Town.WorkshopRegister reg = register(level);
-        if (reg == null) {
-            return out;
-        }
-        List<Long> broken = null;
-        for (Long p : reg.containers) {
-            BlockPos pos = BlockPos.of(p);
-            if (containerAt(level, pos) != null) {
-                out.add(pos);
-            } else {
-                if (broken == null) {
-                    broken = new ArrayList<>();
-                }
-                broken.add(p);
-            }
-        }
-        if (broken != null) {
-            reg.containers.removeAll(broken);
-            TownSaveData.get(level).setDirty();
-            LOGGER.debug("[BmfTown][工人] 清理失效登记容器 x{}", broken.size());
-        }
-        return out;
+        // #68 收编：惰性清理逻辑统一走 JobKit（原工人私有实现）
+        return JobKit.validContainers(level, register(level));
     }
 
     /** 全池虚拟盘点：配方各原料在所有登记容器里的总量能凑几套。 */
@@ -612,53 +590,26 @@ public class WorkerGoal extends Goal {
     /** 离工人最近的、"还缺这种原料"的登记容器（跨箱跑单的下一站）。 */
     @Nullable
     private BlockPos nearestContainerWithNeeded(ServerLevel level, WorkshopCraft order, int invSets) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : validContainers(level)) {
-            Container c = containerAt(level, pos);
-            if (c == null) {
-                continue;
-            }
-            boolean useful = false;
-            for (WorkshopCraft.Req req : order.requirements()) {
-                int need = req.count() * this.batchTarget
-                        - countMatching(this.resident.getInventory(), req.ingredient());
-                if (need > 0 && countMatching(c, req.ingredient()) > 0) {
-                    useful = true;
-                    break;
-                }
-            }
-            if (!useful) {
-                continue;
-            }
-            double d = pos.distSqr(this.resident.blockPosition());
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        return best;
+        // #68 收编：选址循环统一走 JobKit.nearest（谓词保留工人自己的缺口判定）
+        return JobKit.nearest(level, validContainers(level), null, this.resident,
+                c -> {
+                    for (WorkshopCraft.Req req : order.requirements()) {
+                        int need = req.count() * this.batchTarget
+                                - countMatching(this.resident.getInventory(), req.ingredient());
+                        if (need > 0 && countMatching(c, req.ingredient()) > 0) {
+                            return true;
+                        }
+                    }
+                    return false;
+                });
     }
 
     /** 离工作站最近的、装得下成品的登记容器（入库锚定工作站）。 */
     @Nullable
     private BlockPos nearestContainerWithSpace(ServerLevel level, Item result) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : validContainers(level)) {
-            Container c = containerAt(level, pos);
-            if (c == null || !hasSpaceFor(c, result)) {
-                continue;
-            }
-            double d = this.tablePos == null
-                    ? pos.distSqr(this.resident.blockPosition())
-                    : pos.distSqr(this.tablePos);
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        return best;
+        // #68 收编：锚点=工作站（无岗时退自身）
+        return JobKit.nearest(level, validContainers(level), this.tablePos, this.resident,
+                c -> JobKit.hasSpaceFor(c, result));
     }
 
     /** 背包里的原料够几套。 */
@@ -780,8 +731,7 @@ public class WorkerGoal extends Goal {
     }
 
     private Container containerAt(ServerLevel level, BlockPos pos) {
-        BlockEntity be = level.getBlockEntity(pos);
-        return be instanceof Container container ? container : null;
+        return JobKit.containerAt(level, pos); // #68 收编（BAC 安全同口径）
     }
 
     private int countMatching(Container container, Ingredient ingredient) {
@@ -793,19 +743,6 @@ public class WorkerGoal extends Goal {
             }
         }
         return total;
-    }
-
-    private boolean hasSpaceFor(Container container, Item item) {
-        for (int i = 0; i < container.getContainerSize(); i++) {
-            ItemStack slot = container.getItem(i);
-            if (slot.isEmpty()) {
-                return true;
-            }
-            if (slot.is(item) && slot.getCount() < slot.getMaxStackSize()) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -880,57 +817,20 @@ public class WorkerGoal extends Goal {
     }
 
     private void storeItem(Container container, ItemStack stack) {
-        for (int i = 0; i < container.getContainerSize() && !stack.isEmpty(); i++) {
-            ItemStack slot = container.getItem(i);
-            if (slot.isEmpty()) {
-                container.setItem(i, stack.copy());
-                stack.setCount(0);
-            } else if (ItemStack.isSameItemSameComponents(slot, stack)) {
-                int space = slot.getMaxStackSize() - slot.getCount();
-                if (space > 0) {
-                    int move = Math.min(space, stack.getCount());
-                    slot.grow(move);
-                    stack.shrink(move);
-                }
-            }
-        }
+        JobKit.storeItem(container, stack); // #68 收编
     }
 
     /**
      * 退料：退到**离自己最近**的登记容器（没有专属原料箱了）。
      * 一个登记容器都没有时揣着——下次开工背包优先直接用，不丢不刷。
+     * #68 收编：走 JobKit.giveBack；食物/书不归公（isPersonal 过滤）。
      */
     private void giveBackHeldMaterials(ServerLevel level) {
-        if (this.craft == null || this.batchTarget <= 0) {
-            return;
-        }
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : validContainers(level)) {
-            double d = pos.distSqr(this.resident.blockPosition());
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        if (best == null) {
-            return;
-        }
-        Container target = containerAt(level, best);
-        if (target == null) {
-            return;
-        }
-        for (WorkshopCraft.Req req : this.craft.requirements()) {
-            int remaining = req.count() * this.batchTarget;
-            for (int i = 0; i < this.resident.getInventory().getContainerSize() && remaining > 0; i++) {
-                ItemStack stack = this.resident.getInventory().getItem(i);
-                if (!req.matches(stack)) {
-                    continue;
-                }
-                int give = Math.min(remaining, stack.getCount());
-                storeItem(target, stack.split(give));
-                remaining -= give;
-            }
+        boolean found = JobKit.giveBack(level, this.resident, validContainers(level),
+                st -> !JobKit.isPersonal(st));
+        if (found) {
+            LOGGER.debug("[BmfTown][工人] {} 收尾理货：材料退回最近登记容器",
+                    this.resident.getName().getString());
         }
     }
 }

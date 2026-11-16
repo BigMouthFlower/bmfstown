@@ -37,11 +37,21 @@ public class TavernTests {
         s.town().addZone(TownWandMode.TAVERN, new TownZone(UUID.randomUUID(), "测试酒馆",
                 helper.absolutePos(new BlockPos(1, 1, 1)),
                 helper.absolutePos(new BlockPos(11, 1, 9))));
-        // 晨夜轴个人偏移最高 ±1000t（夜猫子开工推迟到 3000）——测试时间定在
-        // 3500，保证任何偏移下酒保都在工作窗口内（否则随机作息翻车，#65 实证）
+        // 时间（#67 实测教训）：先像炼金 forceWorkTime 一样把星期推到工作日
+        // （≤8 次整天推进），再在【保持天数不变】前提下把钟点拨到 3500
+        // ——晨夜轴个人偏移最高 ±1000t（夜猫子开工推迟到 3000），3500 保证
+        // 任何偏移下都在工作窗口。绝不能直接 "time set 3500"：那会把全局
+        // dayTime 打回纪元 day0=周日，正在跑的并行炼金/酒馆用例被掐成周末
+        // 停工——炼金术士反复重启烧光燃料（"缺 Blaze Powder"卡死）、酒保
+        // 秘传掷骰停摆，全是这一根因的下游症状。
         var level = helper.getLevel();
         var src = level.getServer().createCommandSourceStack().withPermission(4);
-        level.getServer().getCommands().performPrefixedCommand(src, "time set 3500");
+        var cal = com.bmf.bmfstown.calendar.TownCalendar.get(level);
+        for (int i = 0; i < 8 && !cal.isWorkday(level); i++) {
+            level.getServer().getCommands().performPrefixedCommand(src, "time add 24000");
+        }
+        long tod = level.getDayTime() % 24000L;
+        level.getServer().getCommands().performPrefixedCommand(src, "time add " + (3500 - tod));
         if (keeper != null) {
             keeper.getIdentity().setProfession(ProfessionType.TAVERNKEEP);
             keeper.getIdentity().setTownId(s.town().id());
@@ -154,6 +164,77 @@ public class TavernTests {
             }
         }
         return false;
+    }
+
+    /**
+     * 找椅子坐下（#67 坐姿最小版）：区内有楼梯 → 客人走到座位<b>真坐上</b>
+     * （隐形骑乘 {@link com.bmf.bmfstown.entity.SeatEntity}）→ 坐下立即点单
+     * → 到手即喝 → 起身还杯 → <b>回座位坐下</b>逗留 → abort 后座位拆除、
+     * 客人起身。客人身兼酒保（单人闭环，同上）。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 12000)
+    public static void patronSitsOnStairOrdersAndLingers(GameTestHelper helper) {
+        AlchemyScaffold.Setup s = AlchemyScaffold.prepareTown(
+                helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
+        Resident patron = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(6, 1, 5));
+        tavern(s, helper, patron);
+        BlockPos anchor = helper.absolutePos(new BlockPos(1, 1, 1));
+        // 座位：出生点旁的楼梯（不考验寻路，进场即坐）
+        helper.setBlock(new BlockPos(7, 1, 5),
+                net.minecraft.world.level.block.Blocks.OAK_STAIRS.defaultBlockState());
+        var chest = s.chest(helper);
+        chest.setItem(0, new ItemStack(Items.MILK_BUCKET));
+        chest.setChanged();
+
+        com.bmf.bmfstown.leisure.TavernVisitActivity activity =
+                new com.bmf.bmfstown.leisure.TavernVisitActivity();
+        helper.startSequence()
+                .thenExecute(() -> {
+                    if (!activity.start(patron, helper.getLevel())) {
+                        helper.fail("酒窖有奶，start 应成功");
+                    }
+                })
+                .thenWaitUntil(() -> {
+                    activity.tick(patron, helper.getLevel());
+                    if (!(patron.getVehicle() instanceof com.bmf.bmfstown.entity.SeatEntity)) {
+                        throw new GameTestAssertException("等待客人坐上楼梯座位");
+                    }
+                    if (!com.bmf.bmfstown.entity.TavernOrders.hasOrderNear(
+                            helper.getLevel(), java.util.List.of(anchor))) {
+                        throw new GameTestAssertException("坐下后应立即点单");
+                    }
+                })
+                .thenWaitUntil(() -> {
+                    activity.tick(patron, helper.getLevel());
+                    if (!hasTavernThought(patron)) {
+                        throw new GameTestAssertException("等待喝下这杯（到手即喝）");
+                    }
+                })
+                .thenWaitUntil(() -> {
+                    activity.tick(patron, helper.getLevel());
+                    if (countItem(s.chest(helper), Items.BUCKET) < 1) {
+                        throw new GameTestAssertException("等待空桶还回酒窖（还杯铁律）");
+                    }
+                })
+                .thenWaitUntil(() -> {
+                    activity.tick(patron, helper.getLevel());
+                    if (!patron.isPassenger()) {
+                        throw new GameTestAssertException("还完杯应回座位坐下逗留");
+                    }
+                })
+                .thenExecute(() -> {
+                    activity.abort(patron, helper.getLevel());
+                    if (patron.isPassenger()) {
+                        helper.fail("abort 后客人应起身");
+                    }
+                    if (!helper.getLevel().getEntitiesOfClass(
+                            com.bmf.bmfstown.entity.SeatEntity.class,
+                            new net.minecraft.world.phys.AABB(new BlockPos(0, 0, 0))
+                                    .inflate(64.0D)).isEmpty()) {
+                        helper.fail("abort 后座位实体应被拆除");
+                    }
+                })
+                .thenSucceed();
     }
 
     /** 反胃药水也是酒馆饮品（#64 拍板"喝大了也是生活"）：喝下真反胃 + 空瓶回窖。 */
@@ -303,14 +384,16 @@ public class TavernTests {
     public static void tavernkeeperIssuesNauseaSecret(GameTestHelper helper) {
         AlchemyScaffold.Setup s = AlchemyScaffold.prepareTown(
                 helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
+        // 概率/上限必须在酒保出生【之前】设好（2026-11-16 #68 回归实证）：
+        // 酒保出生下一 tick 就会 SCAN 掷骰——若还停在默认 5% 而落空，
+        // "落空也记账"的每日闸门会把本镇当天锁死，之后只能靠别的测试推日
+        // 翻天才翻身，赶不上 6000t 超时就是抖动失败
+        com.bmf.bmfstown.config.Config.NAUSEA_ASK_CHANCE.set(100);
+        com.bmf.bmfstown.config.Config.NAUSEA_BOOK_CAP.set(1000);
         Resident keeper = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(4, 1, 5));
         tavern(s, helper, keeper);
 
         helper.startSequence()
-                .thenExecute(() -> {
-                    com.bmf.bmfstown.config.Config.NAUSEA_ASK_CHANCE.set(100);
-                    com.bmf.bmfstown.config.Config.NAUSEA_BOOK_CAP.set(64);
-                })
                 .thenWaitUntil(() -> {
                     if (findUnlockBook(helper, s,
                             com.bmf.bmfstown.alchemy.NauseaSecretLedger.NAUSEA_UNLOCK) == null) {
@@ -331,6 +414,9 @@ public class TavernTests {
     /**
      * 写书通道（决策 #64）：概率临时拉满 → 学者本次开写被定死为反胃秘传；
      * 同镇同日第二次开写必须落空回落闲书（每日闸门）。测完还原配置。
+     * set+掷骰+还原收进同一个回调（原子窗口）：全服静态 Config 被并行用例
+     * 共享，分回调之间有空隙，别的用例中途还原概率/上限会打死本次命中
+     * （#67 实证抖动）。
      */
     @GameTest(template = "room11x4x11", timeoutTicks = 2000)
     public static void writeChannelForcesNauseaDraft(GameTestHelper helper) {
@@ -338,14 +424,14 @@ public class TavernTests {
                 helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
         helper.startSequence()
                 .thenExecute(() -> {
-                    // 上限一起放大：全服计数是跨测试共享的，酒保通道用例可能
-                    // 已经发过账，不放大默认上限 2 会被静默吃掉本次命中
-                    com.bmf.bmfstown.config.Config.NAUSEA_WRITE_CHANCE.set(100);
-                    com.bmf.bmfstown.config.Config.NAUSEA_BOOK_CAP.set(64);
-                })
-                .thenExecute(() -> {
                     var level = helper.getLevel();
                     var townId = s.town().id();
+                    com.bmf.bmfstown.config.Config.NAUSEA_WRITE_CHANCE.set(100);
+                    // 上限一起放大（1000，理由同酒保通道用例）：全服计数跨测试
+                    // 共享，并行推日风暴下默认上限会被静默吃掉本次命中
+                    com.bmf.bmfstown.config.Config.NAUSEA_BOOK_CAP.set(1000);
+                    var ledger = com.bmf.bmfstown.alchemy.NauseaSecretLedger.get(level);
+                    int issuedBefore = ledger.issuedCount();
                     var d1 = com.bmf.bmfstown.book.BookDrafting.roll(
                             level, townId, net.minecraft.util.RandomSource.create(), null);
                     if (!(d1 instanceof com.bmf.bmfstown.book.BookDraft.Unlock u)
@@ -355,15 +441,14 @@ public class TavernTests {
                     }
                     var d2 = com.bmf.bmfstown.book.BookDrafting.roll(
                             level, townId, net.minecraft.util.RandomSource.create(), null);
-                    // 落空后走正常奖池（奖池自动补登记，可能抽出别的秘传 Unlock
-                    // 书——那是正常抽取）；只有"再次出反胃秘传"才算每日闸门失效
-                    if (d2 instanceof com.bmf.bmfstown.book.BookDraft.Unlock u2
-                            && com.bmf.bmfstown.alchemy.NauseaSecretLedger.NAUSEA_UNLOCK
-                                    .equals(u2.unlockId())) {
-                        helper.fail("同镇同日二次命中反胃秘传（每日闸门失效）");
+                    // 每日闸门的机制精确断言（2026-11-16 修正：旧断言"d2 再出反胃
+                    // 就算闸门失效"是错的——d1 命中后奖池自动补登记反胃，d2 从
+                    // 奖池【正常抽中】反胃是合法抽取，与闸门无关。通道是唯一会动
+                    // 全服 issued 计数的路径：闸门拦住第二次 roll ⟺ issued 不变）
+                    if (com.bmf.bmfstown.alchemy.NauseaSecretLedger.get(level)
+                            .issuedCount() != issuedBefore + 1) {
+                        helper.fail("同镇同日二次写书仍走到了秘传通道（每日闸门失效）");
                     }
-                })
-                .thenExecute(() -> {
                     com.bmf.bmfstown.config.Config.NAUSEA_WRITE_CHANCE.set(2);
                     com.bmf.bmfstown.config.Config.NAUSEA_BOOK_CAP.set(2);
                 })

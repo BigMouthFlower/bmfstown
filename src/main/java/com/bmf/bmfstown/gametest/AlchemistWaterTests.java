@@ -193,13 +193,20 @@ public class AlchemistWaterTests {
         return s;
     }
 
-    /** 箱料：空瓶 ×3 + 地狱疣 + 糖 + 烈焰粉——**刻意不给水瓶**（考验取水）。 */
+    /**
+     * 箱料：空瓶 ×8 + 地狱疣 + 糖 + 烈焰粉 ×4——**刻意不给水瓶**（考验取水）。
+     * 余量放大（2026-11-16 #68 回归实证）：并行的其他测试镇推日 → 全局日翻动
+     * → 本镇炼金个人工作窗瞬间出窗 → stop() 释放认领 → mixin 把酿造台燃料
+     * 计数清零（防白嫖）→ 重开工"定点补燃料"要新烈焰粉——只给 1 根必被
+     * 重启风暴饿死（canContinueToUse 纯时序抖动，非用例目标）。测试意图
+     * （无水瓶靠水源站补水）不受影响。
+     */
     private static void stockEmpties(AlchemyScaffold.Setup s, GameTestHelper helper) {
         var chest = s.chest(helper);
-        chest.setItem(0, new ItemStack(Items.GLASS_BOTTLE, 3));
+        chest.setItem(0, new ItemStack(Items.GLASS_BOTTLE, 8));
         chest.setItem(1, new ItemStack(Items.NETHER_WART));
         chest.setItem(2, new ItemStack(Items.SUGAR));
-        chest.setItem(3, new ItemStack(Items.BLAZE_POWDER));
+        chest.setItem(3, new ItemStack(Items.BLAZE_POWDER, 4));
         chest.setChanged();
     }
 

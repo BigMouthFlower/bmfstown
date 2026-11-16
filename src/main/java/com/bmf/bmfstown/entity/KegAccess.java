@@ -270,19 +270,31 @@ public final class KegAccess {
     /** 喝下结算的通用药效应用（1.21.1 FoodProperties/POTION_CONTENTS：药水+BAC 酒全覆盖）。 */
     public static void applyConsumable(ServerLevel level, net.minecraft.world.entity.LivingEntity who,
             ItemStack drink) {
+        applyFoodEffects(who, drink);
+        applyPotionContentsOnly(level, who, drink);
+    }
+
+    /** 只上 POTION_CONTENTS 药效（原版可饮物走 finishUsingItem 时 FOOD 已被
+     *  原版上过，调用方用它补 BAC 酒的原版不管的药效，防双份）。 */
+    public static void applyPotionContentsOnly(ServerLevel level,
+            net.minecraft.world.entity.LivingEntity who, ItemStack drink) {
+        net.minecraft.world.item.alchemy.PotionContents pc =
+                drink.get(DataComponents.POTION_CONTENTS);
+        if (pc != null) {
+            for (net.minecraft.world.effect.MobEffectInstance e : pc.getAllEffects()) {
+                who.addEffect(e);
+            }
+        }
+    }
+
+    private static void applyFoodEffects(net.minecraft.world.entity.LivingEntity who,
+            ItemStack drink) {
         net.minecraft.world.food.FoodProperties food = drink.get(DataComponents.FOOD);
         if (food != null) {
             for (net.minecraft.world.food.FoodProperties.PossibleEffect pe : food.effects()) {
                 if (who.getRandom().nextFloat() < pe.probability()) {
                     who.addEffect(pe.effectSupplier().get());
                 }
-            }
-        }
-        net.minecraft.world.item.alchemy.PotionContents pc =
-                drink.get(DataComponents.POTION_CONTENTS);
-        if (pc != null) {
-            for (net.minecraft.world.effect.MobEffectInstance e : pc.getAllEffects()) {
-                who.addEffect(e);
             }
         }
     }

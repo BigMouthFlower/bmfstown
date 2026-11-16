@@ -162,6 +162,21 @@ public class WandererTests {
         if (Wanderers.spawningAllowed(oneTown, id -> false)) {
             helper.fail("全部镇开关关着不应放行刷新");
         }
+
+        // 3. 防倒拨判定（pitfalls 坑11，2026-11-17 用户存档实测触发）：
+        //    预约领先 > 班距上限（8）= 时间被 /time set 倒拨，排程作废须重排
+        if (!Wanderers.scheduleOrphaned(0L, 104L)) {
+            helper.fail("预约领先当前日 104 天应判倒拨（真实存档案例）");
+        }
+        if (Wanderers.scheduleOrphaned(0L, (long) Wanderers.INTERVAL_MAX)) {
+            helper.fail("预约领先=班距上限（正常排程边缘）不应判倒拨");
+        }
+        if (Wanderers.scheduleOrphaned(50L, 55L)) {
+            helper.fail("预约领先 5 天（正常班距内）不应判倒拨");
+        }
+        if (Wanderers.scheduleOrphaned(10L, -1L)) {
+            helper.fail("未排期（next<0）不是倒拨，走首来日分支");
+        }
         helper.succeed();
     }
 }

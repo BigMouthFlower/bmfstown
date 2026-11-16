@@ -949,17 +949,7 @@ public class FireworksmanGoal extends Goal {
 
     /** 理货：把身上所有非空槽尽可能塞进该容器（合并同类；装不下留身上）。 */
     private void tidyInventoryInto(Container output) {
-        var inv = this.resident.getInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack stack = inv.getItem(i);
-            if (stack.isEmpty()) {
-                continue;
-            }
-            storeItem(output, stack);
-            if (stack.isEmpty()) {
-                inv.setItem(i, ItemStack.EMPTY);
-            }
-        }
+        JobKit.unloadInto(output, this.resident.getInventory(), st -> true); // #68 收编
     }
 
     /** 下班/停工：全背包退到最近的登记容器（没有容器揣着，不丢不刷）。 */
@@ -967,22 +957,9 @@ public class FireworksmanGoal extends Goal {
         if (level == null || this.townId == null) {
             return;
         }
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : validContainers(level)) {
-            double d = pos.distSqr(this.resident.blockPosition());
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        if (best == null) {
-            return;
-        }
-        Container target = containerAt(level, best);
-        if (target != null) {
-            tidyInventoryInto(target);
-        }
+        // #68 收编（食物/书不归公，isPersonal 过滤）
+        JobKit.giveBack(level, this.resident, validContainers(level),
+                st -> !JobKit.isPersonal(st));
     }
 
     // ==========================================================
@@ -1045,87 +1022,38 @@ public class FireworksmanGoal extends Goal {
     }
 
     private List<BlockPos> validContainers(ServerLevel level) {
-        List<BlockPos> out = new ArrayList<>();
-        Town.WorkshopRegister reg = register(level);
-        if (reg == null) {
-            return out;
-        }
-        List<Long> broken = null;
-        for (Long p : reg.containers) {
-            BlockPos pos = BlockPos.of(p);
-            if (containerAt(level, pos) != null) {
-                out.add(pos);
-            } else {
-                if (broken == null) {
-                    broken = new ArrayList<>();
-                }
-                broken.add(p);
-            }
-        }
-        if (broken != null) {
-            reg.containers.removeAll(broken);
-            TownSaveData.get(level).setDirty();
-            LOGGER.debug("[BmfTown][烟火] 清理失效登记容器 x{}", broken.size());
-        }
-        return out;
+        // #68 收编：惰性清理逻辑统一走 JobKit（原烟火私有实现）
+        return JobKit.validContainers(level, register(level));
     }
 
     /** 离自己最近的、"还缺这种需求"的登记容器（跨箱跑单的下一站）。 */
     @Nullable
     private BlockPos nearestContainerWithNeeded(ServerLevel level,
             List<BlockPos> containers, List<Need> needs) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
+        // #68 收编：选址循环统一走 JobKit.nearest（谓词保留烟火自己的缺口判定）
         var inv = this.resident.getInventory();
-        for (BlockPos pos : containers) {
-            Container c = containerAt(level, pos);
-            if (c == null) {
-                continue;
-            }
-            boolean useful = false;
-            for (Need need : needs) {
-                if (need.star()) {
-                    if (poolStarsIn(c, need) > 0) {
-                        useful = true;
-                        break;
+        return JobKit.nearest(level, containers, null, this.resident,
+                c -> {
+                    for (Need need : needs) {
+                        if (need.star()) {
+                            if (poolStarsIn(c, need) > 0) {
+                                return true;
+                            }
+                        } else if (need.want() - countItem(inv, need.sample()) > 0
+                                && countItem(c, need.sample()) > 0) {
+                            return true;
+                        }
                     }
-                } else if (need.want() - countItem(inv, need.sample()) > 0
-                        && countItem(c, need.sample()) > 0) {
-                    useful = true;
-                    break;
-                }
-            }
-            if (!useful) {
-                continue;
-            }
-            double d = pos.distSqr(this.resident.blockPosition());
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        return best;
+                    return false;
+                });
     }
 
     /** 离工作站最近的、还有空位的登记容器（入库/理货锚定岗位）。 */
     @Nullable
     private BlockPos nearestContainerWithSpaceForAny(ServerLevel level) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : validContainers(level)) {
-            Container c = containerAt(level, pos);
-            if (c == null || !hasSpaceForAny(c)) {
-                continue;
-            }
-            double d = this.tablePos == null
-                    ? pos.distSqr(this.resident.blockPosition())
-                    : pos.distSqr(this.tablePos);
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos;
-            }
-        }
-        return best;
+        // #68 收编：锚点=工作站（无岗时退自身）
+        return JobKit.nearest(level, validContainers(level), this.tablePos, this.resident,
+                c -> hasSpaceForAny(c));
     }
 
     // ==========================================================
@@ -1228,8 +1156,7 @@ public class FireworksmanGoal extends Goal {
     }
 
     private Container containerAt(ServerLevel level, BlockPos pos) {
-        BlockEntity be = level.getBlockEntity(pos);
-        return be instanceof Container container ? container : null;
+        return JobKit.containerAt(level, pos); // #68 收编（BAC 安全同口径）
     }
 
     /** 逐槽计数：与样品同物品同组件的总量。 */
@@ -1358,23 +1285,14 @@ public class FireworksmanGoal extends Goal {
     }
 
     private void storeItem(Container container, ItemStack stack) {
-        for (int i = 0; i < container.getContainerSize() && !stack.isEmpty(); i++) {
-            ItemStack slot = container.getItem(i);
-            if (slot.isEmpty()) {
-                container.setItem(i, stack.copy());
-                stack.setCount(0);
-            } else if (ItemStack.isSameItemSameComponents(slot, stack)) {
-                int space = slot.getMaxStackSize() - slot.getCount();
-                if (space > 0) {
-                    int move = Math.min(space, stack.getCount());
-                    slot.grow(move);
-                    stack.shrink(move);
-                }
-            }
-        }
+        JobKit.storeItem(container, stack); // #68 收编
     }
 
-    /** 缺料播报点名（对齐工人/炼金：只说等补料不说缺什么=玩家无法对症补料）。 */
+    /**
+     * 缺料播报点名（#37 口径：只说等补料不说缺什么=玩家无法对症补料）。
+     * #68 收编：升级为 {@link JobKit#shortage} 的 16 格 actionbar（原先只在
+     * DEBUG 日志里，玩家根本看不到——2026-11-16 用户点名后对齐炼金/酒保口径）。
+     */
     private void logShortage(ServerLevel level, List<BlockPos> containers) {
         List<Need> needs = buildNeeds(containers);
         var inv = this.resident.getInventory();
@@ -1387,11 +1305,14 @@ public class FireworksmanGoal extends Goal {
             if (sb.length() > 0) {
                 sb.append("、");
             }
-            sb.append(need.sample().getHoverName().getString()).append("×").append(gap);
+            sb.append(JobKit.label(need.sample(), gap));
         }
         if (sb.length() > 0) {
             LOGGER.debug("[BmfTown][烟火] {} 没料可做，等补料（缺：{}）",
                     this.resident.getName().getString(), sb);
+            JobKit.shortage(level, this.resident, net.minecraft.network.chat.Component
+                    .translatable("msg.bmfstown.fireworks.waiting_materials",
+                            this.resident.getName().getString(), sb.toString()));
         }
     }
 }

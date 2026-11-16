@@ -785,15 +785,7 @@ public final class Config {
                     "Max ticks a patron waits for table service; afterwards they fetch from the cellar themselves")
             .defineInRange("tavern.orderWaitTicks", 600, 100, 12000);
 
-    public static final ModConfigSpec.IntValue TAVERN_SIT_MIN = BUILDER
-            .comment("落座后到开喝的最短时长（刻）——坐下歇口气再喝（#66 实测 100~200t 体感太拖，压到 2~4 秒）",
-                    "Minimum ticks seated before taking the first sip")
-            .defineInRange("tavern.sitMinTicks", 40, 0, 24000);
-
-    public static final ModConfigSpec.IntValue TAVERN_SIT_MAX = BUILDER
-            .comment("落座后到开喝的最长时长（刻）",
-                    "Maximum ticks seated before taking the first sip")
-            .defineInRange("tavern.sitMaxTicks", 80, 0, 24000);
+    // #67：落座延迟（sitMin/sitMaxTicks）已删——用户拍板"坐下立即点单，到手即喝"。
 
     public static final ModConfigSpec.IntValue TAVERN_LINGER_MIN = BUILDER
             .comment("喝完后在酒馆逗留的最短时长（刻）；逗留是一个有长度的活动段，到点结束回家/游走，之后仍可能再被掷去做别的事（不会站一整天）",

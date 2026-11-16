@@ -137,6 +137,18 @@ public class Resident extends PathfinderMob {
             SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.INT);
 
     /**
+     * 武器偏好同步值（#49，{@link WeaponPref} 的 ordinal）。
+     *
+     * <p>为什么单独一条 accessor：菜单数据槽（{@code ResidentMenu.DATA_WEAPONPREF}）
+     * 实测客户端收不到更新——2026-11-16 用户两轮实测"点了没反应"，探针证明
+     * 服务端切档/回显全部成功，唯独 UI 不刷新，与工人状态行当年同一病根
+     * （见 {@link #DATA_WORKER_STATUS} javadoc："菜单数据槽实测不可靠"）。
+     * 改走实体同步通道：SynchedEntityData.set 自动 diff 推送，客户端直接读。
+     */
+    private static final EntityDataAccessor<Integer> DATA_WEAPONPREF_SYNC =
+            SynchedEntityData.defineId(Resident.class, net.minecraft.network.syncher.EntityDataSerializers.INT);
+
+    /**
      * 皮肤 id（v0.15 皮肤系统，如 "townsfolk/townsfolk_01"）。
      *
      * <p>为什么单独一条 accessor 而不塞 {@link #DATA_ARCHIVE}：皮肤生而不变，
@@ -545,6 +557,11 @@ public class Resident extends PathfinderMob {
         // ---- 酒保采集入库（v0.16 酒馆第一步：TAVERN 区内奶/蜜→库存容器，
         //      见 TavernkeepGoal 与决策 #63） ----
         this.goalSelector.addGoal(4, new TavernkeepGoal(this));
+        // ---- 收尾归还待办（#72：stop() 理货够不着容器时挂待还任务，
+        //      这里走去最近能收的登记容器再还+开箱表演。优先级 3：
+        //      压过工作(4)与闲暇(5)、让位开门/逃跑(2)——还完货再干别的） ----
+        this.goalSelector.addGoal(3, new ReturnCargoGoal(this));
+
         // ---- 闲暇活动（v0.10.3：动态活动池——闲逛/图书馆看闲书，优先级 5
         //      低于工作/战士 Goal；窗口判定见 LeisureGoal，读书逻辑在
         //      leisure.LibraryReadActivity，替代已废弃的 ReadingGoal） ----
@@ -580,6 +597,7 @@ public class Resident extends PathfinderMob {
         builder.define(DATA_WORKER_VISUAL, false);
         builder.define(DATA_SCHOLAR_VISUAL, false);
         builder.define(DATA_WORKER_STATUS, 0);
+        builder.define(DATA_WEAPONPREF_SYNC, 0);
         builder.define(DATA_SKIN, "");
     }
 
@@ -598,6 +616,9 @@ public class Resident extends PathfinderMob {
         this.entityData.set(DATA_ARCHIVE, ResidentSnapshot.of(
                 this.identity, this.growth, this.prefs, this.status, this.knowledge,
                 writingPercent, copyingPercent));
+        // 武器偏好（读档后域对象可能带档位而实体通道还是初值——顺路校正；
+        // SynchedEntityData diff 推送，无变化零流量）
+        this.entityData.set(DATA_WEAPONPREF_SYNC, this.jobState.weaponPref().ordinal());
     }
 
     /** 工人"工作中"可视化标记（气泡渲染读客户端同步值）。 */
@@ -747,6 +768,26 @@ public class Resident extends PathfinderMob {
     /** 客户端读：工作阶段（-1 = 闲置，0~5 = Goal 阶段）。 */
     public int workerPhaseSynced() {
         return (this.entityData.get(DATA_WORKER_STATUS) & 15) - 2;
+    }
+
+    /**
+     * 服务端武器偏好统一写入口（#49）：域对象落账 + 实体同步通道推送。
+     * 所有切档处（网络包 / 菜单兜底分支）都走这里，别直接 setWeaponPref——
+     * 那样只有域对象变了，UI 读的实体通道收不到（2026-11-16 三踩的坑）。
+     */
+    public void applyWeaponPref(WeaponPref pref) {
+        this.jobState.setWeaponPref(pref);
+        this.entityData.set(DATA_WEAPONPREF_SYNC, pref.ordinal());
+    }
+
+    /** 客户端读：武器偏好（实体同步通道；服务端读域对象本身）。 */
+    public WeaponPref weaponPrefSynced() {
+        if (this.level() instanceof net.minecraft.server.level.ServerLevel) {
+            return this.jobState.weaponPref();
+        }
+        int ord = this.entityData.get(DATA_WEAPONPREF_SYNC);
+        WeaponPref[] all = WeaponPref.values();
+        return ord >= 0 && ord < all.length ? all[ord] : WeaponPref.SWORD;
     }
 
     // ==========================================================
@@ -1031,6 +1072,14 @@ public class Resident extends PathfinderMob {
     /** 是否正在觅食（工人 Goal 据此让位：饿了先吃饭，吃完回来接着干活）。 */
     public boolean isForaging() {
         return this.forageState != ForageState.NONE;
+    }
+
+    /**
+     * 是否正处于被打/战斗状态（遇险通用判定）：活动/坐姿/工作 Goal 中断收尾
+     * 共用——之前散落在 TavernVisitActivity 等处各自手写（#68 收编）。
+     */
+    public boolean isUnderThreat() {
+        return this.getLastHurtByMob() != null || this.getTarget() != null;
     }
 
     /** 簿记员在职经验计时器（每 100 tick +1）。 */
@@ -1522,6 +1571,13 @@ public class Resident extends PathfinderMob {
      */
     @Override
     protected void customServerAiStep() {
+        // ---- 0. 延迟关盖心跳（stop() 理货开盖表演的收尾，见 containerFxOpenThenClose） ----
+        if (this.pendingLidCloseTicks > 0 && --this.pendingLidCloseTicks == 0
+                && this.pendingLidClose != null
+                && this.level() instanceof net.minecraft.server.level.ServerLevel sl) {
+            containerFx(sl, this.pendingLidClose, false);
+            this.pendingLidClose = null;
+        }
         // ---- 孤儿书清扫网（v0.12.1）：每 5 秒一次，任何路径漏还的书数秒内归架 ----
         if (this.tickCount % 100 == 0 && this.level() instanceof net.minecraft.server.level.ServerLevel sl
                 && this.leisureGoal != null) {
@@ -2336,6 +2392,59 @@ public class Resident extends PathfinderMob {
         level.playSound(null, pos, sound,
                 net.minecraft.sounds.SoundSource.BLOCKS, 0.5F,
                 level.random.nextFloat() * 0.1F + 0.9F);
+    }
+
+    /** 延迟关盖目标（stop() 理货路径的开盖表演收尾用）。 */
+    @Nullable
+    private BlockPos pendingLidClose;
+    /** 延迟关盖倒计时（tick）。 */
+    private int pendingLidCloseTicks;
+
+    /**
+     * 开盖表演 + 延迟自动关盖。stop() 理货路径没有 Goal tick 来发关盖事件
+     * （发开不发关，箱盖会一直悬着），由 {@link #customServerAiStep} 心跳
+     * 倒计时到 0 代发关盖。若期间居民离场/死亡，心跳停走，箱盖悬空可接受
+     * （无货交互，纯观感）。
+     */
+    public void containerFxOpenThenClose(net.minecraft.server.level.ServerLevel level,
+            BlockPos pos, int closeDelayTicks) {
+        containerFx(level, pos, true);
+        this.pendingLidClose = pos.immutable();
+        this.pendingLidCloseTicks = Math.max(1, closeDelayTicks);
+    }
+
+    // ---- 收尾归还待办（#72） ----
+
+    /**
+     * 待还任务（决策 #72，2026-11-17）：stop() 理货时最近的登记容器超出
+     * {@link JobKit#RETURN_REACH}，为守住"下班不揣料"又不隔空放货，
+     * 把容器池+过滤器挂成待还任务，由 {@link ReturnCargoGoal}（优先级 3）
+     * 驱动走过去再还+开箱表演。
+     *
+     * <p>仅内存态（不落盘）：存档重载后待还丢失，材料留在身上，
+     * 下次 stop() 理货时自然重试——与"全满留身上"同一兜底口径。
+     */
+    public record PendingReturn(List<BlockPos> pool,
+            java.util.function.Predicate<ItemStack> filter) {
+    }
+
+    /** 当前待还任务；null = 无待还。 */
+    @Nullable
+    private PendingReturn pendingReturn;
+
+    @Nullable
+    public PendingReturn getPendingReturn() {
+        return this.pendingReturn;
+    }
+
+    /** 挂/更新待还任务（giveBack 范围内没卸完时调用）。 */
+    public void setPendingReturn(@Nullable PendingReturn pending) {
+        this.pendingReturn = pending;
+    }
+
+    /** 归还完成/池子全满后清掉。 */
+    public void clearPendingReturn() {
+        this.pendingReturn = null;
     }
 
     /** 本轮觅食失败收场：冷却一段时间再试（避免空转）。 */

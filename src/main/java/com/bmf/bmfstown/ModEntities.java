@@ -56,6 +56,19 @@ public final class ModEntities {
                     .clientTrackingRange(10)
                     .build(ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "resident").toString()));
 
+    /**
+     * 隐形座位（0.16 坐姿，#67）：居民真坐的载体，骑乘即坐姿。
+     * 零尺寸、零同步数据、MISC 分类不进生物容量；生命周期与续坐机制见
+     * {@link com.bmf.bmfstown.entity.SeatEntity}。
+     */
+    public static final DeferredHolder<EntityType<?>, EntityType<com.bmf.bmfstown.entity.SeatEntity>> SEAT =
+            ENTITY_TYPES.register("seat", () -> EntityType.Builder
+                    .of(com.bmf.bmfstown.entity.SeatEntity::new, MobCategory.MISC)
+                    .sized(0.0F, 0.0F)
+                    .clientTrackingRange(5)
+                    .updateInterval(20)
+                    .build(ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "seat").toString()));
+
     private ModEntities() {
     }
 
