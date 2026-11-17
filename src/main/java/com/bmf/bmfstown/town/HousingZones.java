@@ -26,7 +26,9 @@ import java.util.List;
  * <ul>
  *   <li><b>容量</b>：区域内的床方块数。只数 {@link BedPart#HEAD}，
  *       否则一张双人床会被算成两个床位。没有床 = 容量 0（住不了人）。</li>
- *   <li><b>入住人数</b>：{@code ResidentProfile.housingZoneId} 指向该区的村民数。</li>
+ *   <li><b>入住人数</b>：{@code ResidentProfile.housingZoneId} 指向该区的村民数
+ *       ——按<b>分配记录</b>统计而不是"人此刻在哪"：镇民出门干活/逛酒馆/跟玩家
+ *       走远了也照算（2026-11-17 用户实测"显示的入住数对不上分配"修正）。</li>
  *   <li><b>床位被占</b>：床的上方一格 AABB 内有没有 {@link Pose#SLEEPING} 的实体。
  *       这是原版 {@code BedBlock} 判占用的同款口径，所以玩家躺上去也算占用。</li>
  * </ul>
@@ -41,9 +43,6 @@ public final class HousingZones {
 
     /** 扫描上限：40×40×40，容得下很大的住宅，又不会让单次 tick 卡住。 */
     private static final int MAX_SCAN = 40 * 40 * 40;
-
-    /** 入住统计的外扩范围（格）——村民可能站在住宅区边上而不是区内。 */
-    private static final double SCAN_MARGIN = 16.0D;
 
     private HousingZones() {
     }
@@ -103,23 +102,21 @@ public final class HousingZones {
     }
 
     /**
-     * 该住宅区已入住的人数（按 {@code housingZoneId} 统计）。
+     * 该住宅区已入住的人数（按 {@code housingZoneId} 分配记录统计）。
      *
-     * <p>只在住宅区外扩一圈的范围内查实体，不扫全服：分配操作总发生在玩家
-     * 附近，相关村民必然在加载范围内。代价是未加载区块里的村民不算数，
-     * 但这只会让"看起来还有空位"，不会让人住不进去。
+     * <p><b>口径（2026-11-17 修正）</b>：遍历本维度所有已加载镇民，数
+     * {@code identity.housingZoneId} 指向该区的——与"谁住这儿"的账本一致，
+     * 跟人此刻的物理位置无关。旧实现只扫住宅区外扩 16 格的在场实体，
+     * 出门干活的镇民被漏掉，UI 显示的 n/床数 随位置漂移、还放过了超员分配。
+     *
+     * <p>唯一残余盲区：镇民所在区块未加载时实体不在列表里（少算不超员——
+     * 分配校验宁可松不可错杀，重进游戏加载后数字即回归真实）。
      */
     public static int occupantCount(ServerLevel level, TownZone zone) {
-        AABB box = new AABB(
-                zone.min().getX() - SCAN_MARGIN,
-                zone.min().getY() - SCAN_MARGIN,
-                zone.min().getZ() - SCAN_MARGIN,
-                zone.max().getX() + 1.0D + SCAN_MARGIN,
-                zone.max().getY() + 1.0D + SCAN_MARGIN,
-                zone.max().getZ() + 1.0D + SCAN_MARGIN);
         int count = 0;
-        for (Resident resident : level.getEntitiesOfClass(Resident.class, box)) {
-            if (zone.id().equals(resident.getIdentity().housingZoneId())) {
+        for (net.minecraft.world.entity.Entity e : level.getAllEntities()) {
+            if (e instanceof Resident resident
+                    && zone.id().equals(resident.getIdentity().housingZoneId())) {
                 count++;
             }
         }

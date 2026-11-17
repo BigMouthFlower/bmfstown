@@ -181,6 +181,23 @@ public class Resident extends PathfinderMob {
     @Nullable
     private UUID followResidentId;
 
+    /**
+     * 工作货列（酒保在途料等 Goal 手上的批货；平时恒空）。
+     *
+     * <p>2026-11-18 用户拍板"货列补持久化"：酒保取料→投桶隔着一段走路，
+     * 这批料既不能进背包（蜂蜜瓶是食物，会被自己的进食行为吃掉；中断回滚
+     * 的归属也必须精确到"这一轮的料"），又不能只活在 Goal 内存里——存档/
+     * 区块卸载正好落在搬运窗口就凭空消失。挪到镇民身上随实体存档：
+     * 读档后 Goal 从头跑，首轮 SCAN 见货列非空即孤儿回收（交还酒窖）。
+     */
+    private final java.util.List<ItemStack> workCargo = new java.util.ArrayList<>();
+
+    /** 工作货列（Goal 直接以引用操作，见字段注释）。 */
+    public java.util.List<ItemStack> getWorkCargo() {
+        return this.workCargo;
+    }
+
+
     /** 距离上次饥饿结算累积的 tick 数。 */
     private int hungerTickAccumulator = 0;
 
@@ -1449,6 +1466,16 @@ public class Resident extends PathfinderMob {
         if (this.followResidentId != null) {
             tag.putUUID("FollowResident", this.followResidentId);
         }
+        // 工作货列（酒保在途料——搬运窗口撞上存档不再丢料）
+        if (!this.workCargo.isEmpty()) {
+            net.minecraft.nbt.ListTag cargoList = new net.minecraft.nbt.ListTag();
+            for (ItemStack st : this.workCargo) {
+                if (!st.isEmpty()) {
+                    cargoList.add(st.save(this.registryAccess()));
+                }
+            }
+            tag.put("WorkCargo", cargoList);
+        }
         // 皮肤 id（v0.15；空串不写，保持 NBT 干净，读档后懒生成兜底）
         if (!this.getSkinId().isEmpty()) {
             tag.putString("SkinId", this.getSkinId());
@@ -1509,6 +1536,20 @@ public class Resident extends PathfinderMob {
 
         this.followResidentId = tag.hasUUID("FollowResident")
                 ? tag.getUUID("FollowResident") : null;
+
+        // 工作货列：读档恢复（Goal 侧首轮 SCAN 孤儿回收，交还酒窖）
+        this.workCargo.clear();
+        if (tag.contains("WorkCargo", Tag.TAG_LIST)) {
+            net.minecraft.nbt.ListTag cargoList = tag.getList("WorkCargo", Tag.TAG_COMPOUND);
+            for (int i = 0; i < cargoList.size(); i++) {
+                ItemStack.parse(this.registryAccess(), cargoList.getCompound(i))
+                        .ifPresent(st -> {
+                            if (!st.isEmpty()) {
+                                this.workCargo.add(st);
+                            }
+                        });
+            }
+        }
 
         // 皮肤 id（v0.15）：旧档无此键 → 保持空串，首 tick ensureSkinAssigned 懒补抽
         this.setSkinId(tag.contains("SkinId", Tag.TAG_STRING)

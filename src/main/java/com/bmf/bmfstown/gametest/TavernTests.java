@@ -19,6 +19,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -66,6 +67,14 @@ public class TavernTests {
      * （greenhouseconfig 'brewinandchewin-common'）不加载，keg BE 构造即抛
      * NPE（#65 实证）——此时跳过用例（succeed），酒桶路径靠真实环境覆盖。
      * 返回 null = 环境不支持，调用方直接 return。
+     *
+     * <p>2026-11-18 追记（反编译 greenhouseconfig 实锤，详见 .ai/pitfalls.md
+     * 坑15）：配置加载挂 {@code isDedicatedServer()} 门 + ServerAboutToStart
+     * 事件，GameTestServer 不是 dedicated → 配置永不加载；测试脚手架反射
+     * 强调 {@code onServerStarting} 也走不通（holder.get() 内部仍查不到
+     * 已加载实例）。所以酒桶用例在本环境<b>结构性自跳过</b>——续桶等
+     * 酒桶判定逻辑的回归靠 {@code resumePlan*} 纯函数用例（empty3x3x3，
+     * 不需要 BAC BE，永远真跑），BE 交互路径靠真实环境覆盖。
      */
     private static BlockPos placeKegOrSkip(GameTestHelper helper, BlockPos local) {
         Block keg = BuiltInRegistries.BLOCK.getOptional(
@@ -327,6 +336,65 @@ public class TavernTests {
     }
 
     /**
+     * 续桶（2026-11-18 用户拍板 #82，炼金 reconcileStand 同思想）：桶里已灌了
+     * 半桶基液（模拟投料中途被打断的现场——旧实现把这桶当死桶永远绕开）→
+     * 酒保必须认出这是可续的半成品，<b>续倒差额基液 + 投配料补完</b>，空桶照常回窖。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 12000)
+    public static void keeperResumesInterruptedKeg(GameTestHelper helper) {
+        AlchemyScaffold.Setup s = AlchemyScaffold.prepareTown(
+                helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
+        Resident keeper = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(4, 1, 5));
+        tavern(s, helper, keeper);
+        BlockPos kegAbs = placeKegOrSkip(helper, new BlockPos(9, 1, 4));
+        if (kegAbs == null) {
+            return;
+        }
+        var level = helper.getLevel();
+        // 预投半桶水（500mB = 配方 1000mB 的一半——"灌了一半被打断"的定格）
+        if (!com.bmf.bmfstown.entity.KegAccess.pourBaseFluid(level, kegAbs,
+                "minecraft:water", 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB)) {
+            helper.fail("预投半桶水失败（BAC 应已加载）");
+        }
+        var chest = s.chest(helper);
+        // 啤酒配方（beer_from_water）全部差额料：1 水桶（补半桶差额）+ 3 配料
+        chest.setItem(0, new ItemStack(Items.WATER_BUCKET));
+        chest.setItem(1, new ItemStack(Items.WHEAT));
+        chest.setItem(2, new ItemStack(Items.WHEAT_SEEDS));
+        chest.setItem(3, new ItemStack(Items.BROWN_MUSHROOM));
+        chest.setChanged();
+
+        helper.startSequence()
+                // 1) 配料被续投进这只【非空】桶——旧实现对非空桶绝不投料，
+                //    配料进得来就证明走的是续桶路径
+                .thenWaitUntil(() -> {
+                    var snap = com.bmf.bmfstown.entity.KegAccess.read(level, kegAbs);
+                    if (snap == null || com.bmf.bmfstown.entity.KegAccess
+                            .nonEmpty(snap.slots()).size() < 3) {
+                        throw new GameTestAssertException("等待酒保续投配料（半成品桶应被接上）");
+                    }
+                })
+                // 2) 基液补足整桶 1000mB（半桶 500mB + 续倒 1 桶），空桶回窖
+                .thenExecute(() -> {
+                    var snap = com.bmf.bmfstown.entity.KegAccess.read(level, kegAbs);
+                    if (snap == null || snap.fluid() == null
+                            || snap.fluid().droplets() != 1000L
+                                    * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB) {
+                        helper.fail("续桶后基液应补足整桶 1000mB（实际 "
+                                + (snap == null || snap.fluid() == null
+                                        ? "无流体" : snap.fluid().droplets() + " droplets）"));
+                    }
+                    if (!"minecraft:water".equals(snap.fluid().fluidId())) {
+                        helper.fail("流体 id 异常：" + snap.fluid().fluidId());
+                    }
+                    if (countItem(s.chest(helper), Items.BUCKET) < 1) {
+                        helper.fail("续倒完的空桶没回窖（余料归还失效）");
+                    }
+                })
+                .thenSucceed();
+    }
+
+    /**
      * 接瓶入窖 + 阈值（决策 #65）：酒桶里有酿好的酒（直接写啤酒流体）→
      * 酒保接瓶入窖，到目标量（默认 3）停手——桶里剩的流体留给点单现场接。
      */
@@ -471,5 +539,165 @@ public class TavernTests {
             }
         }
         return null;
+    }
+
+    // ==========================================================
+    //  续桶对账纯函数用例（2026-11-18 #82——不依赖 BAC BE，永远真跑；
+    //  酒桶 BE 用例在本环境结构性自跳过，见 placeKegOrSkip 追记）
+    // ==========================================================
+
+    /** 测试配方：啤酒口径（水 1000mB=整桶×1 + 小麦/小麦种子/棕蘑菇 各 1）。 */
+    private static com.bmf.bmfstown.entity.KegRecipes.FermentRecipe beerRecipe() {
+        return new com.bmf.bmfstown.entity.KegRecipes.FermentRecipe(
+                ResourceLocation.fromNamespaceAndPath("bmfstown", "test_beer"),
+                "brewinandchewin:beer", "minecraft:water", 1000,
+                Items.WATER_BUCKET,
+                1000L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB,
+                List.of(new ItemStack(Items.WHEAT), new ItemStack(Items.WHEAT_SEEDS),
+                        new ItemStack(Items.BROWN_MUSHROOM)));
+    }
+
+    /** 造酒桶快照（投料槽 0~3 依次填入，其余槽空）。 */
+    private static com.bmf.bmfstown.entity.KegAccess.KegSnap kegSnap(
+            com.bmf.bmfstown.entity.KegAccess.FluidSnap fluid, ItemStack... inputSlots) {
+        ItemStack[] slots = new ItemStack[6];
+        for (int i = 0; i < 6; i++) {
+            slots[i] = ItemStack.EMPTY;
+        }
+        for (int i = 0; i < inputSlots.length && i < 4; i++) {
+            slots[i] = inputSlots[i];
+        }
+        return new com.bmf.bmfstown.entity.KegAccess.KegSnap(fluid, slots);
+    }
+
+    private static com.bmf.bmfstown.entity.TavernkeepGoal.ResumeResult resume(
+            com.bmf.bmfstown.entity.KegAccess.KegSnap snap,
+            net.minecraft.world.SimpleContainer cellar) {
+        return com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                snap, List.of(beerRecipe()), cellar);
+    }
+
+    /** 半桶基液被打断 → 续桶计划应补 1 桶差额 + 全部 3 件配料，对账基线正确。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void resumePlanTopsUpHalfBase(GameTestHelper helper) {
+        var cellar = new net.minecraft.world.SimpleContainer(
+                new ItemStack(Items.WATER_BUCKET), new ItemStack(Items.WHEAT),
+                new ItemStack(Items.WHEAT_SEEDS), new ItemStack(Items.BROWN_MUSHROOM));
+        var snap = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "minecraft:water", 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB));
+        var rr = resume(snap, cellar);
+        if (rr.plan() == null) {
+            helper.fail("半桶基液应可续桶（missing=" + rr.missing() + "）");
+            return;
+        }
+        var p = rr.plan();
+        if (p.extraSources() != 1) {
+            helper.fail("应补 1 桶基液差额，实际 " + p.extraSources());
+        }
+        if (p.extraIngredients().size() != 3
+                || p.extraIngredients().get(0).getItem() != Items.WHEAT) {
+            helper.fail("应补全部 3 件配料（已投为空）");
+        }
+        if (p.assumedDroplets() != 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB
+                || !"minecraft:water".equals(p.assumedFluidId())) {
+            helper.fail("对账基线（流体量/id）不正确：" + p.assumedDroplets() + " " + p.assumedFluidId());
+        }
+        helper.succeed();
+    }
+
+    /** 超量基液（玩家手倒）/ 投了配方外配料 / 已配齐在酿——一律不碰、不报缺口。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void resumePlanRefusesForeignOverfullAndComplete(GameTestHelper helper) {
+        var cellar = new net.minecraft.world.SimpleContainer(
+                new ItemStack(Items.WATER_BUCKET), new ItemStack(Items.WHEAT),
+                new ItemStack(Items.WHEAT_SEEDS), new ItemStack(Items.BROWN_MUSHROOM));
+        var droplets = com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB;
+        // ① 基液超配方量（1500mB > 1000mB）
+        var over = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "minecraft:water", 1500L * droplets));
+        if (resume(over, cellar).plan() != null) {
+            helper.fail("基液超量（多半是玩家手倒）不应被接手");
+        }
+        // ② 配方外配料（金胡萝卜）混进投料槽
+        var foreign = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                        "minecraft:water", 500L * droplets),
+                new ItemStack(Items.WHEAT), new ItemStack(Items.GOLDEN_CARROT));
+        var rrForeign = resume(foreign, cellar);
+        if (rrForeign.plan() != null || rrForeign.missing() != null) {
+            helper.fail("投了配方外配料不应被接手，也不该报缺口（尊重玩家操作）");
+        }
+        // ③ 别种流体（蜂蜜 ≠ 水基）
+        var wrongFluid = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "brewinandchewin:honey", 250L * droplets));
+        if (resume(wrongFluid, cellar).plan() != null) {
+            helper.fail("别种流体不该被水基配方接手");
+        }
+        // ④ 已配齐在酿（足量基液+全部配料）——归在途，非续桶
+        var complete = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                        "minecraft:water", 1000L * droplets),
+                new ItemStack(Items.WHEAT), new ItemStack(Items.WHEAT_SEEDS),
+                new ItemStack(Items.BROWN_MUSHROOM));
+        var rrComplete = resume(complete, cellar);
+        if (rrComplete.plan() != null || rrComplete.missing() != null) {
+            helper.fail("已配齐在酿的桶既非续桶也不该报缺口");
+        }
+        helper.succeed();
+    }
+
+    /** 差额补不起（空酒窖）→ 不接手，缺口点名水桶（播报更精准的依据）。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void resumePlanMissingMaterialsReportsGap(GameTestHelper helper) {
+        var cellar = new net.minecraft.world.SimpleContainer(); // 空酒窖
+        var snap = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "minecraft:water", 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB));
+        var rr = resume(snap, cellar);
+        if (rr.plan() != null) {
+            helper.fail("差额补不起不应接手（否则取一半卡半路又是死局）");
+        }
+        if (rr.missing() == null
+                || rr.missing().stream().noneMatch(st -> st.is(Items.WATER_BUCKET))) {
+            helper.fail("缺口应点名水桶（半成品差额播报）");
+        }
+        helper.succeed();
+    }
+
+    /** 新批次计划 = 进度为零的续桶：假定桶全空、取足量基液+全部配料。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void freshPlanAssumesEmptyKeg(GameTestHelper helper) {
+        var p = com.bmf.bmfstown.entity.TavernkeepGoal.BrewPlan.fresh(beerRecipe());
+        if (p.extraSources() != 1) {
+            helper.fail("新批次应取足量基液（1 桶），实际 " + p.extraSources());
+        }
+        if (p.extraIngredients().size() != 3) {
+            helper.fail("新批次应取全部配料");
+        }
+        if (p.assumedDroplets() != -1L || p.assumedFluidId() != null
+                || !p.assumedLoaded().isEmpty()) {
+            helper.fail("新批次应假定桶全空（流体无+投料槽空）");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * #83 接酒容器口径：BAC 酒的容器 = 饮品自己的合成余料（tankard），
+     * 未知流体回落玻璃瓶。BAC 不在（物品未注册）时跳过。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void kegDrawContainerFollowsDrink(GameTestHelper helper) {
+        var tankard = BuiltInRegistries.ITEM.getOptional(
+                ResourceLocation.fromNamespaceAndPath("brewinandchewin", "tankard"));
+        if (tankard.isEmpty()) {
+            helper.succeed(); // BAC 未加载：口径用例无从验证，跳过
+            return;
+        }
+        if (com.bmf.bmfstown.entity.KegAccess.containerForFluid("brewinandchewin:beer")
+                != tankard.get()) {
+            helper.fail("接啤酒应耗空酒杯 tankard（合成余料口径，#83）");
+        }
+        if (com.bmf.bmfstown.entity.KegAccess.containerForFluid("minecraft:does_not_exist")
+                != Items.GLASS_BOTTLE) {
+            helper.fail("未知流体应回落玻璃瓶");
+        }
+        helper.succeed();
     }
 }

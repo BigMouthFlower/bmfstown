@@ -23,17 +23,24 @@ import java.util.Optional;
 /**
  * 酒桶（Brewin' And Chewin Keg）通用读写（决策 #65）——**零 BAC 类、零反射**。
  *
- * <p>BAC 的酒桶不暴露 NeoForge 能力，但其存档结构是公开约定：
+ * <p>BAC 的酒桶不暴露 NeoForge 能力，但其存档结构是公开约定（4.3.0+1.21.1，
+ * 决策 #76 已对照上游源码核实）：
  * <ul>
  *   <li>{@code Inventory} = NeoForge 标准 {@code ItemStackHandler} 格式
- *       （内层 {@code Items} 列表，5 槽：0~3 投料、4 出料）；</li>
- *   <li>{@code FluidTank} = NeoForge 标准 {@code FluidTank} 格式
- *       （{@code FluidName} 字符串 + {@code Amount} 整数，单位 droplets，
- *       1000mB = 81000）；</li>
+ *       （{@code Size} 键 + {@code Items} 列表——<b>只含非空槽</b>、每条带
+ *       {@code Slot} 索引；6 槽：0~3 投料、4 容器槽、5 出料）；</li>
+ *   <li>{@code FluidTank} = NeoForge 新版 {@code FluidTank} 格式
+ *       （{@code Fluid} 子复合 = {@code FluidStack.CODEC} NBT：
+ *       {@code id} 字符串 + <b>小写 {@code amount}</b> 正整数，<b>单位 mB</b>
+ *       （{@code FluidType.BUCKET_VOLUME=1000}，1.21 无 81 droplets 换算）；
+ *       空桶 = 空复合。大写 {@code Amount} 会被 codec 拒读、流体静默丢弃——
+ *       2026-11-17 用户两轮实测实锤（"只投料没基液"→"倒了不显示不开酿"），
+ *       #76 二修）；</li>
  *   <li>{@code FermentTime}/{@code FermentTimeTotal} 整数。</li>
  * </ul>
- * 读写走 {@code saveWithFullMetadata → 改 → loadWithComponents → setChanged}
- * 通用往返；BAC 的 {@code fermentingTick} 每刻重新匹配配方，写入即自动开酿。
+ * 读写走 {@code saveWithFullMetadata → 改 → loadWithComponents → setChanged
+ * → sendBlockUpdated}（同步客户端方块实体，GUI 液面全靠它）通用往返；
+ * BAC 的 {@code fermentingTick} 每刻重新匹配配方，写入即自动开酿。
  *
  * <h2>降级安全</h2>
  * 任一键不存在（mod 不在/版本改了）→ 读到 null → 调用方跳过酒桶，
@@ -51,21 +58,68 @@ public final class KegAccess {
 
     private static final String KEY_INVENTORY = "Inventory";
     private static final String KEY_ITEMS = "Items";
+    private static final String KEY_SLOT = "Slot";
+    private static final String KEY_SIZE = "Size";
     private static final String KEY_FLUID_TANK = "FluidTank";
-    private static final String KEY_FLUID_NAME = "FluidName";
-    private static final String KEY_AMOUNT = "Amount";
-    private static final int SLOTS = 5;
-    private static final int INPUT_SLOT_LAST = 3; // 0..3 投料，4 出料
+    private static final String KEY_FLUID = "Fluid"; // FluidTank 内流体子复合（新版）
+    private static final String KEY_ID = "id"; // FluidStack.CODEC 流体注册名键
+    private static final String KEY_FLUID_NAME = "FluidName"; // 旧版平铺键（仅读兼容）
+    private static final String KEY_FERMENT_TIME = "FermentTime"; // BAC 当前发酵进度（刻）
+    private static final String KEY_FERMENT_TOTAL = "FermentTimeTotal"; // BAC 配方总时长（刻）
+    /**
+     * FluidStack.CODEC 的数量键——1.21.1 是<b>小写</b> {@code amount}
+     * （{@code ExtraCodecs.POSITIVE_INT.fieldOf("amount")}，#76 二修实锤：
+     * 大写 {@code Amount} 会被 codec 拒读、流体静默丢弃）。
+     */
+    private static final String KEY_AMOUNT = "amount";
+    /** 旧版自写平铺格式的数量键（仅读兼容 + 写入时清理）。 */
+    private static final String KEY_LEGACY_AMOUNT = "Amount";
+    /** BAC 4.3.0 槽位：0~3 投料、4 容器槽（GUI 灌装用）、5 出料（#76 核实）。 */
+    private static final int SLOTS = 6;
+    private static final int INPUT_SLOT_LAST = 3;
 
     /** 酒桶流体快照。 */
     public record FluidSnap(String fluidId, long droplets) {
     }
 
-    /** 酒桶整体快照（slots 为 5 槽副本，空槽为 EMPTY）。 */
+    /** 酒桶整体快照（slots 为 6 槽副本，空槽为 EMPTY）。 */
     public record KegSnap(FluidSnap fluid, ItemStack[] slots) {
         public boolean isKegData() {
             return this.slots != null && this.slots.length == SLOTS;
         }
+    }
+
+    /**
+     * 解 FluidTank 复合 → 流体快照（内部单位 droplets）。新版格式（NeoForge
+     * 1.21.1 {@code FluidStack.CODEC} 真实口径）：{@code {Fluid:{id, amount(mB)}}}——
+     * <b>1 amount = 1 mB</b>（{@code FluidType.BUCKET_VOLUME = 1000}，1.21 已无
+     * 旧 Forge 的 81 droplets 换算）；兼容旧版自写数据
+     * {@code {FluidName, Amount(droplets)}}；空/不认识 → null。
+     */
+    private static FluidSnap fluidFromTank(CompoundTag tank) {
+        if (tank.contains(KEY_FLUID, Tag.TAG_COMPOUND)) {
+            CompoundTag f = tank.getCompound(KEY_FLUID);
+            String id = f.getString(KEY_ID);
+            if (!id.isEmpty() && f.contains(KEY_AMOUNT)) {
+                return new FluidSnap(id, f.getInt(KEY_AMOUNT) * (long) DROPLETS_PER_MB);
+            }
+            return null;
+        }
+        String legacy = tank.getString(KEY_FLUID_NAME); // 旧版自写格式（GameTest 自造数据）
+        if (!legacy.isEmpty() && tank.contains(KEY_LEGACY_AMOUNT)) {
+            return new FluidSnap(legacy, tank.getInt(KEY_LEGACY_AMOUNT));
+        }
+        return null;
+    }
+
+    /** 把流体写进 tank 复合（BAC 新版口径：Fluid 子复合 + 小写 amount，值=mB），并清旧版残留键。 */
+    private static void writeTank(CompoundTag tank, String fluidId, long droplets) {
+        CompoundTag f = new CompoundTag();
+        f.putString(KEY_ID, fluidId);
+        f.putInt(KEY_AMOUNT, (int) Math.round(droplets / (double) DROPLETS_PER_MB));
+        tank.put(KEY_FLUID, f);
+        tank.remove(KEY_FLUID_NAME);
+        tank.remove(KEY_LEGACY_AMOUNT);
     }
 
     /**
@@ -94,11 +148,7 @@ public final class KegAccess {
             return null; // 不是酒桶（BAC 不在/结构变了）
         }
         CompoundTag tank = root.getCompound(KEY_FLUID_TANK);
-        FluidSnap fluid = null;
-        String fluidName = tank.getString(KEY_FLUID_NAME);
-        if (!fluidName.isEmpty() && tank.contains(KEY_AMOUNT)) {
-            fluid = new FluidSnap(fluidName, tank.getInt(KEY_AMOUNT));
-        }
+        FluidSnap fluid = fluidFromTank(tank);
         ItemStack[] slots = new ItemStack[SLOTS];
         for (int i = 0; i < SLOTS; i++) {
             slots[i] = ItemStack.EMPTY;
@@ -107,16 +157,55 @@ public final class KegAccess {
         if (inv.contains(KEY_ITEMS, Tag.TAG_LIST)) {
             ListTag list = inv.getList(KEY_ITEMS, Tag.TAG_COMPOUND);
             HolderLookup.Provider provider = level.registryAccess();
-            for (int i = 0; i < list.size() && i < SLOTS; i++) {
-                int idx = i;
-                ItemStack.parse(provider, list.getCompound(idx))
-                        .ifPresent(st -> slots[idx] = st);
+            for (int i = 0; i < list.size(); i++) {
+                CompoundTag entry = list.getCompound(i);
+                // NeoForge ItemStackHandler：条目带 Slot 索引（无 Slot 的旧格式按位置退化）
+                int idx = entry.contains(KEY_SLOT, Tag.TAG_INT) ? entry.getInt(KEY_SLOT) : i;
+                if (idx >= 0 && idx < SLOTS) {
+                    ItemStack.parse(provider, entry)
+                            .ifPresent(st -> slots[idx] = st);
+                }
             }
         }
         return new KegSnap(fluid, slots);
     }
 
     /** 写回：改完字段后调这个（root 来自 read 的同一对象修改）。 */
+    /**
+     * 调试催熟：把目标酒桶的发酵进度拉到底（{@code FermentTime = Total - 1}），
+     * 下一 tick 的 {@code processFermenting} 自增后越过完成线，自动出料。
+     *
+     * <p>字节码口径（KegBlockEntity.processFermenting）：<b>先自增后比较</b>
+     * {@code fermentTime >= total} → 灌成果流体+播音效——所以拉到 {@code total-1}
+     * 或 {@code total} 都会在下一次可酿 tick 完成；温度不满足 {@code canFerment}
+     * 时会原地待命（与正常酿造同条件，不是故障）。
+     *
+     * @return null = 成功；否则为给命令执行者的失败原因。
+     */
+    @javax.annotation.Nullable
+    public static String skipFerment(ServerLevel level, BlockPos pos) {
+        BlockEntity be = level.getBlockEntity(pos);
+        if (be == null) {
+            return "那里没有方块实体";
+        }
+        CompoundTag root = be.saveWithFullMetadata(level.registryAccess());
+        if (!root.contains(KEY_FERMENT_TOTAL, Tag.TAG_INT)) {
+            return "瞄准的方块没有在酿（无 FermentTimeTotal——先让酒保投料开酿）";
+        }
+        int total = root.getInt(KEY_FERMENT_TOTAL);
+        int cur = root.contains(KEY_FERMENT_TIME, Tag.TAG_INT)
+                ? root.getInt(KEY_FERMENT_TIME) : 0;
+        if (total <= 0) {
+            return "发酵总时长异常（" + total + "）";
+        }
+        if (cur >= total) {
+            return "发酵已经完成（" + cur + "/" + total + "），出料在即";
+        }
+        root.putInt(KEY_FERMENT_TIME, total - 1);
+        return write(level, pos, root)
+                ? null : "写回酒桶失败（看日志）";
+    }
+
     private static boolean write(ServerLevel level, BlockPos pos, CompoundTag root) {
         BlockEntity be = level.getBlockEntity(pos);
         if (be == null) {
@@ -124,6 +213,12 @@ public final class KegAccess {
         }
         be.loadWithComponents(root, level.registryAccess());
         be.setChanged();
+        // 客户端同步（#76 追记4，2026-11-17）：GUI 的液面走<b>客户端</b>方块实体，
+        // 而 setChanged 只标记存档、不触发网络同步——物品靠菜单槽位同步能看见，
+        // 流体没有这条同步就永远"看不着"（BAC 自己每次变更都 sendBlockUpdated，
+        // 见 SyncedBlockEntity.inventoryChanged 字节码）。照做同款：原版 API。
+        net.minecraft.world.level.block.state.BlockState st = level.getBlockState(pos);
+        level.sendBlockUpdated(pos, st, st, 3);
         return true;
     }
 
@@ -145,21 +240,19 @@ public final class KegAccess {
         CompoundTag tank = root.contains(KEY_FLUID_TANK, Tag.TAG_COMPOUND)
                 ? root.getCompound(KEY_FLUID_TANK).copy() : new CompoundTag();
         long cap = 1000L * DROPLETS_PER_MB;
-        String cur = tank.getString(KEY_FLUID_NAME);
+        FluidSnap cur = fluidFromTank(tank);
         long newAmt;
-        if (cur.isEmpty()) {
+        if (cur == null) {
             newAmt = Math.min(cap, droplets);
-            tank.putString(KEY_FLUID_NAME, fluidId);
-        } else if (cur.equals(fluidId)) {
-            long curAmt = tank.contains(KEY_AMOUNT) ? tank.getInt(KEY_AMOUNT) : 0;
-            newAmt = Math.min(cap, curAmt + droplets);
-            if (newAmt == curAmt) {
+        } else if (cur.fluidId().equals(fluidId)) {
+            newAmt = Math.min(cap, cur.droplets() + droplets);
+            if (newAmt == cur.droplets()) {
                 return false; // 已经满桶
             }
         } else {
             return false; // 里面有别的流体
         }
-        tank.putInt(KEY_AMOUNT, (int) newAmt);
+        writeTank(tank, fluidId, newAmt);
         root.put(KEY_FLUID_TANK, tank);
         boolean ok = write(level, pos, root);
         if (ok) {
@@ -169,50 +262,116 @@ public final class KegAccess {
     }
 
     /**
-     * 投配料：把物品放进 0~3 号投料槽的空槽（出料槽 4 不动）。全部放得下才动手。
+     * 投配料：把物品放进 0~3 号投料槽的空槽（容器槽 4 / 出料槽 5 不动）。
+     * 全部放得下才动手。
+     *
+     * <p><b>格式铁律（决策 #76，2026-11-17 崩溃修正）</b>：写回对齐 NeoForge
+     * {@code ItemStackHandler} 真实序列化——Items 列表<b>只含非空槽</b>、每条带
+     * {@code Slot} 索引、保留 {@code Size} 键。旧实现对空槽调
+     * {@code ItemStack.save} 抛 "Cannot encode empty ItemStack"（酒保投料必崩）；
+     * 且整表按位置写无 Slot 索引，BAC 按索引读回会错位。同一快照改改写回，
+     * 不再双读（旧实现两次 save 之间玩家可动桶，旧快照覆盖新料）。
      */
     public static boolean insertIngredients(ServerLevel level, BlockPos pos,
             List<ItemStack> items) {
         if (items.isEmpty()) {
             return true;
         }
-        KegSnap snap = read(level, pos);
-        if (snap == null || !snap.isKegData()) {
+        BlockEntity be = level.getBlockEntity(pos);
+        if (be == null) {
             return false;
+        }
+        CompoundTag root;
+        try {
+            root = be.saveWithFullMetadata(level.registryAccess());
+        } catch (RuntimeException e) {
+            return false; // GameTest 环境 keg BE 构造 NPE 坑，同 read 的兜底
+        }
+        CompoundTag inv = root.getCompound(KEY_INVENTORY);
+        if (!inv.contains(KEY_ITEMS, Tag.TAG_LIST)) {
+            return false; // 不是酒桶格式（BAC 不在/结构变了）
+        }
+        HolderLookup.Provider provider = level.registryAccess();
+        ItemStack[] slots = new ItemStack[SLOTS];
+        for (int i = 0; i < SLOTS; i++) {
+            slots[i] = ItemStack.EMPTY;
+        }
+        ListTag list = inv.getList(KEY_ITEMS, Tag.TAG_COMPOUND);
+        for (int i = 0; i < list.size(); i++) {
+            CompoundTag entry = list.getCompound(i);
+            int idx = entry.contains(KEY_SLOT, Tag.TAG_INT) ? entry.getInt(KEY_SLOT) : i;
+            if (idx >= 0 && idx < SLOTS) {
+                ItemStack.parse(provider, entry).ifPresent(st -> slots[idx] = st);
+            }
         }
         int empty = 0;
         for (int i = 0; i <= INPUT_SLOT_LAST; i++) {
-            if (snap.slots[i].isEmpty()) {
+            if (slots[i].isEmpty()) {
                 empty++;
             }
         }
         if (empty < items.size()) {
             return false;
         }
-        CompoundTag root = level.getBlockEntity(pos).saveWithFullMetadata(level.registryAccess());
-        CompoundTag inv = root.getCompound(KEY_INVENTORY);
-        ItemStack[] slots = snap.slots;
         int take = 0;
         for (int i = 0; i <= INPUT_SLOT_LAST && take < items.size(); i++) {
             if (slots[i].isEmpty()) {
                 slots[i] = items.get(take++).copy();
             }
         }
-        ListTag list = new ListTag();
-        HolderLookup.Provider provider = level.registryAccess();
+        ListTag out = new ListTag();
         for (int i = 0; i < SLOTS; i++) {
-            list.add(slots[i].save(provider));
+            if (!slots[i].isEmpty()) {
+                CompoundTag entry = new CompoundTag();
+                entry.putInt(KEY_SLOT, i);
+                out.add(slots[i].save(provider, entry));
+            }
         }
-        inv.put(KEY_ITEMS, list);
+        inv.put(KEY_ITEMS, out);
+        if (!inv.contains(KEY_SIZE, Tag.TAG_INT)) {
+            inv.putInt(KEY_SIZE, SLOTS); // ItemStackHandler 反序列化按它定槽数
+        }
         root.put(KEY_INVENTORY, inv);
-        return write(level, pos, root);
+        try {
+            be.loadWithComponents(root, level.registryAccess());
+            be.setChanged();
+            net.minecraft.world.level.block.state.BlockState st = level.getBlockState(pos);
+            level.sendBlockUpdated(pos, st, st, 3); // 客户端同步（同 write()，#76 追记4）
+        } catch (RuntimeException e) {
+            return false; // 写回任何异常都不让酒保炸 tick（宁可这次投料失败）
+        }
+        return true;
     }
 
     /**
-     * 接一杯：桶内流体是注册表中的物品（16 种酒流体 id == 物品 id）且
-     * ≥一杯量 → 扣一杯量、生成物品；不满足 → EMPTY 不动手。
+     * 接出某流体对应饮品要用的空容器（#83 用户实测拍板"接酒耗酒杯"）：
+     * 口径 = 饮品自己的合成余料（BAC 全系 16 种酒 craftRemainder 都注册成
+     * tankard，客人喝完 {@code cupOf} 走合成余料还回来的正是这个空杯——
+     * 还杯→接酒的杯循环守恒）；无余料的饮品回落玻璃瓶（原版蜂蜜瓶/药水
+     * 的余料本来就是玻璃瓶，自洽）。
      */
-    public static ItemStack drawOne(ServerLevel level, BlockPos pos) {
+    public static net.minecraft.world.item.Item containerForFluid(String fluidId) {
+        ResourceLocation id = ResourceLocation.tryParse(fluidId);
+        ItemStack drink = id == null ? ItemStack.EMPTY
+                : BuiltInRegistries.ITEM.getOptional(id)
+                        .map(ItemStack::new).orElse(ItemStack.EMPTY);
+        ItemStack rem = drink.isEmpty() ? ItemStack.EMPTY
+                : drink.getCraftingRemainingItem();
+        return rem == null || rem.isEmpty()
+                ? Items.GLASS_BOTTLE : rem.getItem();
+    }
+
+    /**
+     * 接一杯：递上一个<b>匹配口径的空容器</b>（#81 用户实测"没拿空杯就凭空
+     * 接酒"；#83 用户实测拍板容器跟饮品走——BAC 酒耗 tankard，不再写死
+     * 玻璃瓶）；桶内流体是注册表中的物品（酒流体 id == 物品 id）且 ≥一杯量
+     * → 耗掉空容器、扣一杯量、生成物品；不满足 → EMPTY 不动手（空容器
+     * 完好退还调用方）。
+     */
+    public static ItemStack drawOne(ServerLevel level, BlockPos pos, ItemStack emptyBottle) {
+        if (emptyBottle.isEmpty()) {
+            return ItemStack.EMPTY; // 没拿空杯：绝不凭空接
+        }
         KegSnap snap = read(level, pos);
         if (snap == null || snap.fluid == null
                 || snap.fluid.droplets() < TANKARD_DROPLETS) {
@@ -227,18 +386,22 @@ public final class KegAccess {
         if (bottle.isEmpty() || bottle.get().isEmpty()) {
             return ItemStack.EMPTY; // 流体没有同名物品：不硬接
         }
+        if (!emptyBottle.is(containerForFluid(snap.fluid.fluidId()))) {
+            return ItemStack.EMPTY; // 容器口径不对（接 BAC 酒却递玻璃瓶）：不耗不接
+        }
         CompoundTag root = level.getBlockEntity(pos).saveWithFullMetadata(level.registryAccess());
         CompoundTag tank = root.getCompound(KEY_FLUID_TANK);
         long left = snap.fluid.droplets() - TANKARD_DROPLETS;
         if (left <= 0) {
             root.put(KEY_FLUID_TANK, new CompoundTag()); // 桶空 = 空复合（BAC 口径）
         } else {
-            tank.putInt(KEY_AMOUNT, (int) left);
+            writeTank(tank, snap.fluid.fluidId(), left);
         }
         if (!write(level, pos, root)) {
-            return ItemStack.EMPTY;
+            return ItemStack.EMPTY; // 写回失败：空瓶没耗
         }
         level.playSound(null, pos, SoundEvents.BOTTLE_FILL, SoundSource.NEUTRAL, 1.0F, 1.0F);
+        emptyBottle.shrink(1); // 耗掉空瓶（成功路径最后一步）
         return bottle.get();
     }
 
@@ -299,8 +462,29 @@ public final class KegAccess {
         }
     }
 
-    /** 容器空位插入（酒窖归还杯/存酒通用）。 */
+    /**
+     * 容器插入（酒窖归还杯/存酒通用，2026-11-17 用户点名堆叠）：先并入
+     * <b>同类未满堆</b>（同物品同组件），再找空格——空瓶空桶还窖不再一格一个，
+     * 大箱塞得下；全塞不下返回 false（调用方兜底揣兜/掉落，绝不吞）。
+     */
     public static boolean insertInto(Container c, ItemStack stack) {
+        if (stack.isEmpty()) {
+            return true;
+        }
+        int max = Math.min(stack.getMaxStackSize(), c.getMaxStackSize());
+        for (int i = 0; i < c.getContainerSize(); i++) {
+            ItemStack have = c.getItem(i);
+            if (!have.isEmpty() && have.getCount() < max
+                    && ItemStack.isSameItemSameComponents(have, stack)) {
+                int move = Math.min(max - have.getCount(), stack.getCount());
+                have.grow(move);
+                stack.shrink(move);
+                c.setChanged();
+                if (stack.isEmpty()) {
+                    return true;
+                }
+            }
+        }
         for (int i = 0; i < c.getContainerSize(); i++) {
             if (c.getItem(i).isEmpty()) {
                 c.setItem(i, stack);

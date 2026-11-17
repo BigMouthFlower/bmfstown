@@ -72,8 +72,10 @@ import java.util.UUID;
  *
  * <p>饮品白名单（用户定稿）：原版三样（牛奶桶/蜂蜜瓶/反胃药水）+
  * {@code #bmfstown:tavern_drinks} tag（内引 {@code #brewinandchewin:fermented_drinks}，
- * required:false——BAC 不在时空 tag 自动回落）。药效走原版 CONSUMABLE
- * 组件通用应用（药水/BAC 酒全覆盖，零 BAC 类）。
+ * required:false——BAC 不在时空 tag 自动回落；lang 键给 JEI 标签视图提供
+ * 友好显示名"酒馆饮品"——2026-11-17 用户权衡后拍板保留：BAC 自己都往
+ * origins 命名空间塞标记，自有 tag 不算不体面，datapack 可改价值更实）。
+ * 药效走原版 CONSUMABLE 组件通用应用（药水/BAC 酒全覆盖，零 BAC 类）。
  */
 public class TavernVisitActivity implements LeisureActivity {
 

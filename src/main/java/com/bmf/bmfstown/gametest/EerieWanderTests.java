@@ -109,6 +109,12 @@ public class EerieWanderTests {
     private static Scene scene(GameTestHelper helper, boolean withShelf) {
         var s = com.bmf.bmfstown.gametest.AlchemyScaffold.prepareTown(
                 helper, new BlockPos(1, 0, 1), new BlockPos(7, 0, 7), 0);
+        // 登记图书馆区（决策 #74：手记上架走登记制，整间房都是图书馆）——
+        // 两种情形都登记：withShelf 只决定区内有没有有空位的雕纹书架
+        s.town().zonesForWrite(com.bmf.bmfstown.town.TownWandMode.WORK).add(
+                new com.bmf.bmfstown.town.TownZone(UUID.randomUUID(), "图书馆",
+                        helper.absolutePos(new BlockPos(1, 0, 1)),
+                        helper.absolutePos(new BlockPos(7, 3, 7))));
         if (withShelf) {
             helper.setBlock(new BlockPos(5, 1, 5), Blocks.CHISELED_BOOKSHELF);
         }
@@ -166,11 +172,11 @@ public class EerieWanderTests {
         helper.succeed();
     }
 
-    /** 书架全满：手记回落居民背包（绝不吞）。 */
+    /** 登记图书馆内没有空位雕纹书架：手记回落居民背包（绝不吞）。 */
     @GameTest(template = "librarypracticetests.room9x4x9", timeoutTicks = 200)
     public static void horrorEventFallsBackToInventory(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
-        Scene scene = scene(helper, false); // 没有书架
+        Scene scene = scene(helper, false); // 图书馆区已登记，但区内无书架
         UUID townId = scene.town().id();
         gotoDay(level, 1);
 

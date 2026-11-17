@@ -13,7 +13,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity;
-import net.minecraft.world.level.block.state.BlockState;
 
 import javax.annotation.Nullable;
 import java.util.List;
@@ -35,8 +34,9 @@ import java.util.UUID;
  *       +{@link #VERIFY_SPAN_DAYS} 日应验、应验后降极小概率（#54）。</li>
  * </ol>
  *
- * <p><b>表现三出口</b>（与写书同源，#57）：分卷手记进最近书架（全满留
- * 身上/掉脚边）+ 公告栏 {@link TownBulletinData} + 头顶气泡
+ * <p><b>表现三出口</b>（与写书同源，#57）：分卷手记进<b>登记图书馆</b>里离发现者
+ * 最近的雕纹书架空位（没登记图书馆 / 区内无空位 → 留身上，再满掉脚边——绝不吞；
+ * #74 登记制寻架）+ 公告栏 {@link TownBulletinData} + 头顶气泡
  * （{@link DialogEngine#sayDirect}，嘴忙就跳过）。
  */
 public final class WanderEvents {
@@ -59,9 +59,6 @@ public final class WanderEvents {
 
     /** 应验时窗跨度：应验日 = 解锁日 + MIN + random(SPAN)。 */
     public static final int VERIFY_SPAN_DAYS = 4;
-
-    /** 手记寻架半径（格）：离发现者最近的有空位雕纹书架。 */
-    private static final int SHELF_RADIUS = 16;
 
     // ==========================================================
     //  事件类型注册表（通用层：以后加类型只动这里 + dispatch）
@@ -159,7 +156,7 @@ public final class WanderEvents {
             UnlockState.get(level).unlockIfNew(level, townId, advance.line().unlockId());
         }
 
-        // 写分卷手记 → 最近书架空位（全满留身上，再满掉脚边——绝不吞）
+        // 写分卷手记 → 登记图书馆寻架（#74：只认登记的图书馆，不扫野）
         placeVolumeNote(resident, level, townId, advance);
 
         // 气泡（嘴忙锁拦下就算了——公告栏已经记了）
@@ -167,7 +164,7 @@ public final class WanderEvents {
                 "dialog.bmfstown.horror_spot.1"));
     }
 
-    /** 把第 N 卷手记（成书）放进离发现者最近的雕纹书架空位。 */
+    /** 把第 N 卷手记（成书）放进登记图书馆里离发现者最近的雕纹书架空位。 */
     private static void placeVolumeNote(com.bmf.bmfstown.entity.Resident resident, ServerLevel level,
                                         UUID townId, HorrorLineState.Advance advance) {
         // 归类（决策 #58）：手记是隐藏解锁类的扩容——走 BookDraft.Unlock，
@@ -181,7 +178,7 @@ public final class WanderEvents {
         ItemStack book = new ItemStack(ModItems.FINISHED_BOOK.get());
         book.set(ModDataComponents.BOOK_CONTENT.get(), content);
 
-        BlockPos shelf = nearestShelfWithSpace(level, resident.blockPosition());
+        BlockPos shelf = nearestLibraryShelfSlot(level, resident);
         if (shelf != null && level.getBlockEntity(shelf)
                 instanceof ChiseledBookShelfBlockEntity be) {
             for (int slot = 0; slot < be.getContainerSize(); slot++) {
@@ -197,35 +194,49 @@ public final class WanderEvents {
         }
     }
 
-    /** 离 from 最近的有空位雕纹书架（半径 {@value #SHELF_RADIUS}）；没有则 null。 */
+    /**
+     * 登记制寻架（决策 #74，2026-11-17 用户拍板）：手记归档<b>不扫野</b>——
+     * 只认镇上登记的图书馆（WORK 选区），区内找离发现者最近的、有空位的
+     * 雕纹书架（与 {@code LibraryReadActivity} 同款口径）。16 格半径扫描
+     * 废弃：野外碰巧有架就入、"镇里图书馆就在眼前却因为超 16 格不入"都
+     * 不对味；登记制才是功能区的正解。
+     *
+     * @return 目标书架坐标；没登记图书馆 / 区内没有空位雕纹书架 → null
+     *         （手记留身上，绝不吞）
+     */
     @Nullable
-    private static BlockPos nearestShelfWithSpace(ServerLevel level, BlockPos from) {
+    private static BlockPos nearestLibraryShelfSlot(ServerLevel level,
+                                                    com.bmf.bmfstown.entity.Resident resident) {
+        UUID townId = resident.getIdentity().townId();
+        if (townId == null) {
+            return null;
+        }
+        var town = com.bmf.bmfstown.town.TownSaveData.get(level).findTown(townId.toString());
+        if (town == null) {
+            return null;
+        }
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : BlockPos.betweenClosed(
-                from.offset(-SHELF_RADIUS, -SHELF_RADIUS / 2, -SHELF_RADIUS),
-                from.offset(SHELF_RADIUS, SHELF_RADIUS / 2, SHELF_RADIUS))) {
-            BlockState st = level.getBlockState(pos);
-            if (!(st.getBlock() instanceof net.minecraft.world.level.block.ChiseledBookShelfBlock)) {
-                continue;
-            }
-            if (!(level.getBlockEntity(pos) instanceof ChiseledBookShelfBlockEntity be)) {
-                continue;
-            }
-            boolean hasSpace = false;
-            for (int slot = 0; slot < be.getContainerSize(); slot++) {
-                if (be.getItem(slot).isEmpty()) {
-                    hasSpace = true;
-                    break;
+        for (var zone : town.zones(com.bmf.bmfstown.town.TownWandMode.WORK)) {
+            for (BlockPos pos : com.bmf.bmfstown.town.TownZone.iterate(zone)) {
+                if (!(level.getBlockEntity(pos) instanceof ChiseledBookShelfBlockEntity be)) {
+                    continue;
                 }
-            }
-            if (!hasSpace) {
-                continue;
-            }
-            double d = from.distSqr(pos);
-            if (d < bestDist) {
-                bestDist = d;
-                best = pos.immutable();
+                boolean hasSpace = false;
+                for (int slot = 0; slot < be.getContainerSize(); slot++) {
+                    if (be.getItem(slot).isEmpty()) {
+                        hasSpace = true;
+                        break;
+                    }
+                }
+                if (!hasSpace) {
+                    continue;
+                }
+                double d = resident.blockPosition().distSqr(pos);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = pos.immutable();
+                }
             }
         }
         return best;

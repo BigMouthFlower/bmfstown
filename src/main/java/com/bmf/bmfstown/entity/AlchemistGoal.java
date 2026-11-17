@@ -253,6 +253,12 @@ public class AlchemistGoal extends Goal {
         this.brewStallTicks = 0;
         this.stallRetries = 0;
         this.phase = Phase.GO_POST;
+        // 孤儿货回收（#84 货列随实体存档后）：读档/重载 Goal 从头跑，而存档
+        // 瞬间手上正端着料——原地退回登记容器，再由 planNeeds 按缺口重取
+        ServerLevel orphanLevel = serverLevel();
+        if (orphanLevel != null && !cargo().isEmpty()) {
+            returnCargoToContainers(orphanLevel);
+        }
         // 步进状态（stepIndex/steps/recipe）不清零：回台后 reconcileStand
         // 按台上实物裁决进度，被打断/隔夜/换单统一走这条恢复路
         navigateToStand();
@@ -267,6 +273,12 @@ public class AlchemistGoal extends Goal {
         this.running = false;
         this.resident.setWorkerVisual(false);
         ServerLevel level = serverLevel();
+        // 工作料回容器（#84 货列对齐）：打断/下班绝不揣料——货列清空后重新
+        // 开工按缺口重取（reconcileStand 只认台上实物，货列不参与对账），
+        // 顺带杜绝"料躺背包过夜被当口粮吃掉"（酿造主料里有食物）
+        if (level != null && !cargo().isEmpty()) {
+            returnCargoToContainers(level);
+        }
         JobState job = this.resident.getJobState();
         boolean resumable = level != null && inWorkHours(level)
                 && job.workerEnabled() && job.orderItem().startsWith("alch|")
@@ -437,10 +449,20 @@ public class AlchemistGoal extends Goal {
         this.phase = Phase.FETCH_GO;
     }
 
-    /** 料槽被塞了不相干的东西：收一台民的背包（满了掉脚边），继续装自己的。 */
+    /** 料槽被塞了不相干的东西：收走继续装自己的。当前链的工作料回货列（#84，
+     *  重装要用且进食吃不到）；玩家塞的私人物品走背包（下班理货 isPersonal
+     *  保留在身，不归公塞进公箱）。 */
     private void reclaimSlot3(BrewingStandBlockEntity stand, ItemStack ing) {
         ItemStack back = stand.removeItem(3, ing.getCount());
-        if (!back.isEmpty()) {
+        if (back.isEmpty()) {
+            return;
+        }
+        boolean isWork = (this.stepIndex < this.steps.size()
+                && back.is(this.steps.get(this.stepIndex)))
+                || back.is(Items.BLAZE_POWDER);
+        if (isWork) {
+            addCargo(back);
+        } else {
             ItemStack leftover = this.resident.getInventory().addItem(back);
             if (!leftover.isEmpty()) {
                 this.resident.spawnAtLocation(leftover);
@@ -491,29 +513,32 @@ public class AlchemistGoal extends Goal {
         return net.minecraft.network.chat.Component.translatable(item.getDescriptionId());
     }
 
-    /** 本周期缺料清单（对库存求差额）：水瓶×3+地狱疣+[底药中间步]+主料+（修饰）+（烈焰粉缺则 1）。 */
+    /** 本周期缺料清单（对货列求差额，#84）：水瓶×3+地狱疣+[底药中间步]+主料+（修饰）+（烈焰粉缺则 1）。 */
     private List<Need> planNeeds() {
-        var inv = this.resident.getInventory();
+        // 货列的 Container 视图（引用共享：addNeed 只读计数，后续堆变化不进此视图——
+        // planNeeds 每次调用现建，语义即"此刻货列里有什么"）
+        Container held = new net.minecraft.world.SimpleContainer(
+                cargo().toArray(new ItemStack[0]));
         List<Need> needs = new ArrayList<>();
-        addNeed(needs, inv, waterBottleTest(), 3,
+        addNeed(needs, held, waterBottleTest(), 3,
                 net.minecraft.network.chat.Component.translatable("item.minecraft.potion.effect.water"));
         if (this.recipe.startPotion() == null) {
             // 水瓶直酿族（虚弱）不进地狱疣步，其余配方恒需 1 根
-            addNeed(needs, inv, stack -> stack.is(Items.NETHER_WART), 1, itemName(Items.NETHER_WART));
+            addNeed(needs, held, stack -> stack.is(Items.NETHER_WART), 1, itemName(Items.NETHER_WART));
         }
         if (this.baseStepItem != null) {
-            addNeed(needs, inv, stack -> stack.is(this.baseStepItem), 1,
+            addNeed(needs, held, stack -> stack.is(this.baseStepItem), 1,
                     itemName(this.baseStepItem)); // 底药链（决策 #33）
         }
-        addNeed(needs, inv, stack -> stack.is(ingredientItem()), 1,
+        addNeed(needs, held, stack -> stack.is(ingredientItem()), 1,
                 itemName(ingredientItem()));
         for (Item mod : modifierItems(this.orderMod)) {
-            addNeed(needs, inv, stack -> stack.is(mod), 1, itemName(mod));
+            addNeed(needs, held, stack -> stack.is(mod), 1, itemName(mod));
         }
         // 冷萃：燃料永不消耗 → 不再索要烈焰粉（2026-11-07 用户实测抓出：
         // 冷萃镇民会因为箱里没烈焰粉而永远"凑不齐料"卡死）
         if (!this.resident.hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_AL_ADEPT, "cold_brew")) {
-            addNeed(needs, inv, stack -> stack.is(Items.BLAZE_POWDER), 1,
+            addNeed(needs, held, stack -> stack.is(Items.BLAZE_POWDER), 1,
                     itemName(Items.BLAZE_POWDER));
         }
         return needs;
@@ -532,7 +557,7 @@ public class AlchemistGoal extends Goal {
         if (!needDragon) {
             return false;
         }
-        // 容器+背包里找一套合成材料
+        // 登记容器+货列里找一套合成材料（#84：原料不进背包）
         List<net.minecraft.world.Container> sources = new ArrayList<>();
         for (BlockPos pos : validContainers(level)) {
             var be = level.getBlockEntity(pos);
@@ -540,7 +565,6 @@ public class AlchemistGoal extends Goal {
                 sources.add(c);
             }
         }
-        sources.add(this.resident.getInventory());
         int haveChorus = 0, haveBlaze = 0, haveBottle = 0;
         for (var c : sources) {
             for (int i = 0; i < c.getContainerSize(); i++) {
@@ -554,26 +578,26 @@ public class AlchemistGoal extends Goal {
                 }
             }
         }
+        haveChorus += countCargo(stack -> stack.is(Items.CHORUS_FRUIT));
+        haveBlaze += countCargo(stack -> stack.is(Items.BLAZE_POWDER));
+        haveBottle += countCargo(stack -> stack.is(Items.GLASS_BOTTLE));
         if (haveChorus < 1 || haveBlaze < 1 || haveBottle < 1) {
             return false; // 材料不够：老实等补料
         }
-        // 消耗一套材料（先容器后背包）
-        consumeOne(sources, Items.CHORUS_FRUIT);
-        consumeOne(sources, Items.BLAZE_POWDER);
-        consumeOne(sources, Items.GLASS_BOTTLE);
+        // 消耗一套材料（先容器后货列）
+        consumeOneFrom(sources, Items.CHORUS_FRUIT);
+        consumeOneFrom(sources, Items.BLAZE_POWDER);
+        consumeOneFrom(sources, Items.GLASS_BOTTLE);
         ItemStack dragon = new ItemStack(Items.DRAGON_BREATH, DRAGON_BREATH_PER_CRAFT);
-        ItemStack leftover = this.resident.getInventory().addItem(dragon);
-        if (!leftover.isEmpty()) {
-            this.resident.spawnAtLocation(leftover);
-        }
+        addCargo(dragon); // 产物进货列（#84）：它就是下一步要装的"链料"
         LOGGER.info("[BmfTown][炼金] {} 合成龙息 ×{}（紫颂果+烈焰粉+玻璃瓶，NPC 专属配方）",
                 this.resident.getName().getString(), DRAGON_BREATH_PER_CRAFT);
         return true;
     }
 
-    /** 从容器列表里消耗一件指定物品（先扫到的先扣；扣不到静默跳过）。 */
-    private static void consumeOne(List<net.minecraft.world.Container> sources,
-                                   net.minecraft.world.item.Item item) {
+    /** 容器池+货列里消耗一件指定物品（先容器后货列；扣不到静默跳过）。 */
+    private void consumeOneFrom(List<net.minecraft.world.Container> sources,
+                                net.minecraft.world.item.Item item) {
         for (var c : sources) {
             for (int i = 0; i < c.getContainerSize(); i++) {
                 ItemStack st = c.getItem(i);
@@ -582,6 +606,16 @@ public class AlchemistGoal extends Goal {
                     c.setChanged();
                     return;
                 }
+            }
+        }
+        for (int i = 0; i < cargo().size(); i++) {
+            ItemStack st = cargo().get(i);
+            if (st.is(item)) {
+                st.shrink(1);
+                if (st.isEmpty()) {
+                    cargo().remove(i);
+                }
+                return;
             }
         }
     }
@@ -627,12 +661,102 @@ public class AlchemistGoal extends Goal {
         }
     }
 
+    // ==========================================================
+    //  工作货列（#84 2026-11-18 用户拍板"全套对齐酒保"）：取料/装水/
+    //  龙息产物一律进 Resident#getWorkCargo（随实体存档），不进背包——
+    //  酿造主料里有食物（金胡萝卜/蜘蛛眼/河豚等原版酿造注册表成员），
+    //  进背包会被自己的进食行为吃掉；下班孤儿回收交还登记容器。
+    //  成品药水（TAKE/STORE/回收）不受影响：不是食物、已有完整入库治理。
+    // ==========================================================
+
+    /** 在途货列（懒获取）。<b>绝不能在构造器里抓引用</b>：Goal 构造发生在
+     *  Resident 父类（Mob）构造器的 {@code registerGoals()} 期间，此刻
+     *  Resident 自有字段尚未初始化——构造期抓引用拿到的是 null（坑15
+     *  附带教训：构造期 this 泄漏，酒保 #82 实测）。 */
+    private List<ItemStack> cargo() {
+        if (this.cargoRef == null) {
+            this.cargoRef = this.resident.getWorkCargo();
+        }
+        return this.cargoRef;
+    }
+    @Nullable
+    private List<ItemStack> cargoRef;
+
+    /** 货列里匹配物品的总数。 */
+    private int countCargo(java.util.function.Predicate<ItemStack> test) {
+        int n = 0;
+        for (ItemStack st : cargo()) {
+            if (test.test(st)) {
+                n += st.getCount();
+            }
+        }
+        return n;
+    }
+
+    /** 货列里第一个匹配堆的下标；无则 -1。 */
+    private int findCargo(java.util.function.Predicate<ItemStack> test) {
+        for (int i = 0; i < cargo().size(); i++) {
+            if (test.test(cargo().get(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** 从货列第 idx 堆拆出 n 件（拆空则移除该堆）。 */
+    private ItemStack splitCargo(int idx, int n) {
+        ItemStack st = cargo().get(idx);
+        ItemStack out = st.split(n);
+        if (st.isEmpty()) {
+            cargo().remove(idx);
+        }
+        return out;
+    }
+
+    /** 并入货列（同类并堆；货列无容量上限，绝不掉东西）。 */
+    private void addCargo(ItemStack st) {
+        if (st.isEmpty()) {
+            return;
+        }
+        for (ItemStack have : cargo()) {
+            if (ItemStack.isSameItemSameComponents(have, st)) {
+                have.grow(st.getCount());
+                return;
+            }
+        }
+        cargo().add(st);
+    }
+
+    /** 货列整体退回登记容器（打断/下班/孤儿回收共用；先容器、背包兜底、
+     *  最后掉脚边——与酒保 returnCargoToCellar 同款，绝不吞）。 */
+    private void returnCargoToContainers(ServerLevel level) {
+        List<Container> targets = new ArrayList<>();
+        for (BlockPos pos : validContainers(level)) {
+            if (level.getBlockEntity(pos) instanceof Container c) {
+                targets.add(c);
+            }
+        }
+        for (ItemStack st : cargo()) {
+            boolean stored = false;
+            for (Container c : targets) {
+                if (com.bmf.bmfstown.entity.KegAccess.insertInto(c, st)) {
+                    stored = true;
+                    break;
+                }
+            }
+            if (!stored) {
+                JobKit.stowOrDrop(this.resident, st);
+            }
+        }
+        cargo().clear();
+    }
+
     /** 本周期缺什么料 → 去最近的登记容器拿（统一池）。定点补料模式只补缺的那件。 */
     private void tickFetchGo(ServerLevel level) {
-        // 链路柔性切换（决策 #37）：当前链料背包/容器都找不到、第 0 步未投料
+        // 链路柔性切换（决策 #37）：当前链料货列/容器都找不到、第 0 步未投料
         // → 换一条有料的等价路径（伤害=剧毒/蜘蛛眼 ↔ 治疗/闪烁西瓜，玩家备哪样走哪样）
         if (this.baseStepItem != null && this.stepIndex == 0
-                && countIn(this.resident.getInventory(), s -> s.is(this.baseStepItem)) == 0
+                && countCargo(s -> s.is(this.baseStepItem)) == 0
                 && !itemInAnyContainer(level, this.baseStepItem)) {
             var stand = standAt(level);
             if (stand == null || stand.getItem(3).isEmpty()) {
@@ -654,12 +778,11 @@ public class AlchemistGoal extends Goal {
         // → 拿空瓶去站上就地装水（模拟但材料账做实：炼药锅 1 格水=1 瓶，水源/含水无限）。
         // 有水瓶优先用水瓶——容器找得到水瓶时绝不走这条路（用户定稿）
         if (this.pendingNeed == null) {
-            var inv = this.resident.getInventory();
-            int waterHave = countIn(inv, waterBottleTest());
+            int waterHave = countCargo(waterBottleTest());
             if (waterHave < 3 && !waterInAnyContainer(level)
                     && nearestWaterStation(level) != null) {
                 int deficit = 3 - waterHave;
-                int empties = countIn(inv, stack -> stack.is(Items.GLASS_BOTTLE));
+                int empties = countCargo(stack -> stack.is(Items.GLASS_BOTTLE));
                 if (empties < deficit) {
                     int emptiesInChests = 0;
                     for (var pos : validContainers(level)) {
@@ -679,7 +802,7 @@ public class AlchemistGoal extends Goal {
                         needs = List.of(this.pendingNeed); // 本趟只取空瓶
                     }
                 } else {
-                    this.phase = Phase.WATER_GO; // 空瓶随身够用：直接去装水
+                    this.phase = Phase.WATER_GO; // 货列里空瓶够用：直接去装水
                     return;
                 }
             }
@@ -698,7 +821,7 @@ public class AlchemistGoal extends Goal {
                     .anyMatch(st -> st.is(Items.DRAGON_BREATH));
             if (dragonStuck && !dragonInAnyContainer
                     && craftDragonBreath(level, needs)) {
-                needs = planNeeds(); // 重新求缺口（龙息已在背包）
+                needs = planNeeds(); // 重新求缺口（龙息已在货列）
             }
         }
         if (needs.isEmpty()) {
@@ -799,8 +922,7 @@ public class AlchemistGoal extends Goal {
      * （NPC 寻路到精确点击面成本高、收益为零，模拟的账实相符即可）。
      */
     private void tickWaterFill(ServerLevel level) {
-        var inv = this.resident.getInventory();
-        int deficit = 3 - countIn(inv, waterBottleTest());
+        int deficit = 3 - countCargo(waterBottleTest());
         if (deficit <= 0) {
             this.waterTarget = null;
             this.phase = Phase.FETCH_GO;
@@ -818,22 +940,19 @@ public class AlchemistGoal extends Goal {
             return;
         }
         int filled = 0;
-        for (int i = 0; i < inv.getContainerSize() && filled < canTake; i++) {
-            ItemStack st = inv.getItem(i);
+        for (int i = cargo().size() - 1; i >= 0 && filled < canTake; i--) {
+            ItemStack st = cargo().get(i);
             if (!st.is(Items.GLASS_BOTTLE)) {
                 continue;
             }
             int take = Math.min(st.getCount(), canTake - filled);
-            inv.removeItem(i, take);
-            if (inv.getItem(i).isEmpty()) {
-                inv.setItem(i, ItemStack.EMPTY);
+            st.shrink(take);
+            if (st.isEmpty()) {
+                cargo().remove(i);
             }
             ItemStack water = PotionContents.createItemStack(Items.POTION, Potions.WATER);
             water.setCount(take);
-            var leftover = inv.addItem(water);
-            if (!leftover.isEmpty()) {
-                this.resident.spawnAtLocation(leftover); // 背包满也不吞水瓶
-            }
+            addCargo(water); // 水瓶进货列（#84）：它是下一瓶要装的"料"
             filled += take;
         }
         if (cauldron) {
@@ -911,7 +1030,7 @@ public class AlchemistGoal extends Goal {
                 && state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED);
     }
 
-    /** 把库存里的料装进酿造台（瓶 0-2、地狱疣 3、烈焰粉 4 若空）。 */
+    /** 把货列里的料装进酿造台（瓶 0-2、地狱疣 3、烈焰粉 4 若空；#84 料在货列）。 */
     private void tickLoad(ServerLevel level) {
         BrewingStandBlockEntity stand = standAt(level);
         if (stand == null) {
@@ -919,29 +1038,21 @@ public class AlchemistGoal extends Goal {
             this.phase = Phase.GO_POST;
             return;
         }
-        var inv = this.resident.getInventory();
         int loaded = 0;
         for (int slot = 0; slot < 3 && loaded < 3; slot++) {
             if (stand.getItem(slot).isEmpty()) {
-                int from = findItem(inv, waterBottleTest());
+                int from = findCargo(waterBottleTest());
                 if (from < 0) {
                     break;
                 }
-                ItemStack bottle = inv.getItem(from).split(1);
-                if (inv.getItem(from).isEmpty()) {
-                    inv.setItem(from, ItemStack.EMPTY);
-                }
-                stand.setItem(slot, bottle);
+                stand.setItem(slot, splitCargo(from, 1));
                 loaded++;
             }
         }
         if (stand.getItem(4).isEmpty()) {
-            int from = findItem(inv, stack -> stack.is(Items.BLAZE_POWDER));
+            int from = findCargo(stack -> stack.is(Items.BLAZE_POWDER));
             if (from >= 0) {
-                stand.setItem(4, inv.getItem(from).split(1));
-                if (inv.getItem(from).isEmpty()) {
-                    inv.setItem(from, ItemStack.EMPTY);
-                }
+                stand.setItem(4, splitCargo(from, 1));
             }
         }
         if (stand.getItem(3).isEmpty()) {
@@ -949,7 +1060,7 @@ public class AlchemistGoal extends Goal {
                 this.phase = Phase.BREW;
                 return;
             }
-            int from = findItem(inv, stack -> stack.is(this.steps.get(this.stepIndex)));
+            int from = findCargo(stack -> stack.is(this.steps.get(this.stepIndex)));
             if (from < 0) {
                 // 缺这一步的料：**绝不清台**——瓶留在台上，只去补缺的这件
                 // （2026-11-07 修：之前整台回收重凑 = "收走再放回来"整链重来的根源）
@@ -961,10 +1072,7 @@ public class AlchemistGoal extends Goal {
                 this.phase = Phase.FETCH_GO;
                 return;
             }
-            stand.setItem(3, inv.getItem(from).split(1));
-            if (inv.getItem(from).isEmpty()) {
-                inv.setItem(from, ItemStack.EMPTY);
-            }
+            stand.setItem(3, splitCargo(from, 1));
             this.brewStallTicks = 0;
         }
         this.phase = Phase.BREW;
@@ -1018,8 +1126,7 @@ public class AlchemistGoal extends Goal {
                 var acc = (com.bmf.bmfstown.mixin.BrewingStandBlockEntityAccessor)
                         (Object) stand;
                 if (acc.bmfstown$getFuel() <= 0 && stand.getItem(4).isEmpty()
-                        && findItem(this.resident.getInventory(),
-                                stack -> stack.is(Items.BLAZE_POWDER)) < 0) {
+                        && findCargo(stack -> stack.is(Items.BLAZE_POWDER)) < 0) {
                     this.pendingNeed = new Need(
                             stack -> stack.is(Items.BLAZE_POWDER), 1,
                             itemName(Items.BLAZE_POWDER));
@@ -1200,9 +1307,9 @@ public class AlchemistGoal extends Goal {
     }
 
     /**
-     * 柔性选链（决策 #37）：多条等价路径时选"背包或登记容器里已有链料"的那条；
-     * 都没有则回落首选（按注册名排序的第一条，确定可复现）。玩家备哪样走哪样——
-     * 死认一条会把另一条合法料变成"莫名缺料"（2026-11-07 实测）。
+     * 柔性选链（决策 #37，#84 口径更新）：多条等价路径时选"货列或登记容器里
+     * 已有链料"的那条；都没有则回落首选（按注册名排序的第一条，确定可复现）。
+     * 玩家备哪样走哪样——死认一条会把另一条合法料变成"莫名缺料"（2026-11-07 实测）。
      */
     private void chooseChain(ServerLevel level) {
         this.baseStepPotion = null;
@@ -1214,7 +1321,7 @@ public class AlchemistGoal extends Goal {
         }
         com.bmf.bmfstown.alchemy.AlchemyCatalog.Chain chosen = chains.get(0);
         for (var c : chains) {
-            if (countIn(this.resident.getInventory(), s -> s.is(c.item())) > 0
+            if (countCargo(s -> s.is(c.item())) > 0
                     || itemInAnyContainer(level, c.item())) {
                 chosen = c;
                 break;
@@ -1357,7 +1464,6 @@ public class AlchemistGoal extends Goal {
     }
 
     private void takeFromChest(Container chest, Need need) {
-        var inv = this.resident.getInventory();
         int want = need.count();
         for (int i = 0; i < chest.getContainerSize() && want > 0; i++) {
             ItemStack stack = chest.getItem(i);
@@ -1373,28 +1479,8 @@ public class AlchemistGoal extends Goal {
                 continue;
             }
             want -= take;
-            ItemStack leftover = inv.addItem(grab);
-            if (!leftover.isEmpty()) {
-                chest.setItem(i, mergeInto(chest, leftover));
-                return;
-            }
+            addCargo(grab); // 直接入货列（#84）：货列无容量上限，不存在"塞不下退回箱"分支
         }
-    }
-
-    private ItemStack mergeInto(Container chest, ItemStack stack) {
-        for (int i = 0; i < chest.getContainerSize() && !stack.isEmpty(); i++) {
-            ItemStack slot = chest.getItem(i);
-            if (slot.isEmpty()) {
-                chest.setItem(i, stack.copy());
-                stack.setCount(0);
-            } else if (ItemStack.isSameItemSameComponents(slot, stack)) {
-                int space = slot.getMaxStackSize() - slot.getCount();
-                int move = Math.min(space, stack.getCount());
-                slot.grow(move);
-                stack.shrink(move);
-            }
-        }
-        return stack;
     }
 
     /** 卡死/干扰回收：把酿造台里的瓶/料全部退走——**优先最近的登记容器**（工人
@@ -1581,16 +1667,6 @@ public class AlchemistGoal extends Goal {
 
     private void storeItem(Container container, ItemStack stack) {
         JobKit.storeItem(container, stack); // #68 收编
-    }
-
-    private int findItem(net.minecraft.world.Container inv,
-            java.util.function.Predicate<ItemStack> test) {
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            if (test.test(inv.getItem(i))) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private ServerLevel serverLevel() {

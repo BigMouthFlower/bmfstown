@@ -261,7 +261,40 @@ public final class ResidentCommands {
                                         EntityArgument.getEntities(ctx, "targets"),
                                         StringArgumentType.getString(ctx, "trait"))))));
 
+        // ---- /bmfstown brewskip ----
+        // 酿酒测试加速：对准在酿的酒桶把发酵进度拉到底——BAC 按 tick 推进，
+        // /time 快进不了它；下一 tick 自动完成出料（温度不满足会原地待命）。
+        root.then(Commands.literal("brewskip")
+                .executes(ResidentCommands::brewSkip));
+
         dispatcher.register(root);
+    }
+
+    /** 酿酒催熟：视线 5 格内对准酒桶执行 {@link KegAccess#skipFerment}。 */
+    private static int brewSkip(CommandContext<CommandSourceStack> ctx)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        net.minecraft.server.level.ServerLevel level = player.serverLevel();
+        net.minecraft.world.phys.Vec3 from = player.getEyePosition();
+        net.minecraft.world.phys.Vec3 to = from.add(
+                player.getViewVector(1.0F).scale(5.0D));
+        var hit = level.clip(new net.minecraft.world.level.ClipContext(from, to,
+                net.minecraft.world.level.ClipContext.Block.COLLIDER,
+                net.minecraft.world.level.ClipContext.Fluid.NONE, player));
+        if (hit.getType() != net.minecraft.world.phys.HitResult.Type.BLOCK) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "请对准 5 格内正在酿的酒桶再看"));
+            return 0;
+        }
+        String error = com.bmf.bmfstown.entity.KegAccess.skipFerment(
+                level, hit.getBlockPos());
+        if (error != null) {
+            ctx.getSource().sendFailure(Component.literal(error));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "酒桶发酵已拉到底——下一刻完成出料（窖里到账后酒保按库存判定收手）"), false);
+        return 1;
     }
 
     /** 直接指定特性（"random" = 等概率重抽）。生效即落 NBT，重开面板可见。 */
