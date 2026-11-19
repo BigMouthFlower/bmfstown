@@ -66,6 +66,7 @@ public final class KegAccess {
     private static final String KEY_FLUID_NAME = "FluidName"; // 旧版平铺键（仅读兼容）
     private static final String KEY_FERMENT_TIME = "FermentTime"; // BAC 当前发酵进度（刻）
     private static final String KEY_FERMENT_TOTAL = "FermentTimeTotal"; // BAC 配方总时长（刻）
+    private static final String KEY_TEMPERATURE = "Temperature"; // BAC 桶温<b>原始分数</b>（#85）
     /**
      * FluidStack.CODEC 的数量键——1.21.1 是<b>小写</b> {@code amount}
      * （{@code ExtraCodecs.POSITIVE_INT.fieldOf("amount")}，#76 二修实锤：
@@ -77,16 +78,87 @@ public final class KegAccess {
     /** BAC 4.3.0 槽位：0~3 投料、4 容器槽（GUI 灌装用）、5 出料（#76 核实）。 */
     private static final int SLOTS = 6;
     private static final int INPUT_SLOT_LAST = 3;
+    /** 5 号出料槽（#85 字节码核实：物品产物完成分支 insertItem(5, ...) 的落点）。 */
+    public static final int OUTPUT_SLOT = 5;
 
     /** 酒桶流体快照。 */
     public record FluidSnap(String fluidId, long droplets) {
     }
 
-    /** 酒桶整体快照（slots 为 6 槽副本，空槽为 EMPTY）。 */
-    public record KegSnap(FluidSnap fluid, ItemStack[] slots) {
+    /**
+     * 酒桶整体快照（slots 为 6 槽副本，空槽为 EMPTY）。
+     *
+     * @param temperature 当前温度<b>档位</b>（1~5；0=未知）。BAC NBT
+     *                    {@code Temperature} 存的是<b>原始分数</b>（热源分−冷源分），
+     *                    档位要经 {@link #temperatureTier} 按 BAC 配置阈值换算
+     *                    （坑 22：把分数直接当档位喂 isValidTemp 同款匹配表，
+     *                    1 个 cask=1 分永远够不上档 4 → "无适配桶"）——read 已换算，
+     *                    调用方拿到的直接是档位
+     */
+    public record KegSnap(FluidSnap fluid, ItemStack[] slots, int temperature) {
         public boolean isKegData() {
             return this.slots != null && this.slots.length == SLOTS;
         }
+    }
+
+    // ---- 温度档换算（坑 22，2026-11-18 反编译 getTemperature/isValidTemp 实锤）----
+
+    /** BAC 默认阈值（brewinandchewin-common.toml [keg]：cold=2/chilly=1/warm=1/hot=2）。
+     *  仅作反射失败时的回落；运行时优先以 BAC 自身 getTemperature() 为准。 */
+    public static final int CFG_COLD = 2, CFG_CHILLY = 1, CFG_WARM = 1, CFG_HOT = 2;
+
+    /**
+     * {@code KegBlockEntity.getTemperature()} 字节码同款换算（纯函数，GameTest 直测）：
+     * NBT 原始分数 → 档位 1~5——
+     * {@code 分数≤-cold→档1；≤-chilly→档2；<warm→档3；<hot→档4；否则档5}。
+     */
+    public static int temperatureTier(int score, int cold, int chilly, int warm, int hot) {
+        if (score <= -cold) {
+            return 1;
+        }
+        if (score <= -chilly) {
+            return 2;
+        }
+        if (score < warm) {
+            return 3;
+        }
+        if (score < hot) {
+            return 4;
+        }
+        return 5;
+    }
+
+    /** 反射缓存：BAC {@code getTemperature()}（找不到/不可调时 null，走回落换算）。 */
+    private static java.lang.reflect.Method getTemperatureMethod;
+    private static boolean getTemperatureResolved;
+
+    /**
+     * 从 BE + NBT 快照取温度档位（1~5；0=两边都拿不到）。优先反射调 BAC 自己的
+     * {@code getTemperature()}——配置阈值用户可改，BAC 实例方法是唯一权威；
+     * 失败（BAC 不在/配置未加载，如 GameTestServer 坑 15）回落 NBT 分数+默认阈值。
+     */
+    private static int readTemperatureTier(Object be, CompoundTag root) {
+        if (!getTemperatureResolved) {
+            try {
+                getTemperatureMethod = be.getClass().getMethod("getTemperature");
+            } catch (Throwable ignored) {
+                getTemperatureMethod = null;
+            }
+            getTemperatureResolved = true;
+        }
+        java.lang.reflect.Method m = getTemperatureMethod;
+        if (m != null) {
+            try {
+                return ((Number) m.invoke(be)).intValue();
+            } catch (Throwable ignored) {
+                // 配置未加载等运行时异常：走回落
+            }
+        }
+        if (root.contains(KEY_TEMPERATURE, Tag.TAG_INT)) {
+            return temperatureTier(root.getInt(KEY_TEMPERATURE),
+                    CFG_COLD, CFG_CHILLY, CFG_WARM, CFG_HOT);
+        }
+        return 0;
     }
 
     /**
@@ -167,7 +239,7 @@ public final class KegAccess {
                 }
             }
         }
-        return new KegSnap(fluid, slots);
+        return new KegSnap(fluid, slots, readTemperatureTier(be, root));
     }
 
     /** 写回：改完字段后调这个（root 来自 read 的同一对象修改）。 */
@@ -495,21 +567,16 @@ public final class KegAccess {
         return false;
     }
 
-    /** 容器里第一个匹配物品的槽位（无则 -1）。 */
-    public static int findItemSlot(Container c, ItemStack stack) {
-        for (int i = 0; i < c.getContainerSize(); i++) {
-            if (!c.getItem(i).isEmpty() && ItemStack.isSameItemSameComponents(c.getItem(i), stack)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     /** 容器清点：某物品总数。 */
     public static int countItem(Container c, ItemStack sample) {
+        return countIf(c, st -> ItemStack.isSameItemSameComponents(st, sample));
+    }
+
+    /** 容器内满足条件的总件数（#88：配料 tag 感知匹配用谓词口径）。 */
+    public static int countIf(Container c, java.util.function.Predicate<ItemStack> test) {
         int n = 0;
         for (int i = 0; i < c.getContainerSize(); i++) {
-            if (ItemStack.isSameItemSameComponents(c.getItem(i), sample)) {
+            if (test.test(c.getItem(i))) {
                 n += c.getItem(i).getCount();
             }
         }
@@ -518,7 +585,12 @@ public final class KegAccess {
 
     /** 从容器取走一件匹配物品（真实消耗）。 */
     public static ItemStack takeOne(Container c, ItemStack sample) {
-        int slot = findItemSlot(c, sample);
+        return takeIf(c, st -> ItemStack.isSameItemSameComponents(st, sample));
+    }
+
+    /** 从容器取走一件满足条件的物品（真实消耗；#88 tag 感知）。 */
+    public static ItemStack takeIf(Container c, java.util.function.Predicate<ItemStack> test) {
+        int slot = findSlotIf(c, test);
         if (slot < 0) {
             return ItemStack.EMPTY;
         }
@@ -529,6 +601,15 @@ public final class KegAccess {
         return out;
     }
 
+    private static int findSlotIf(Container c, java.util.function.Predicate<ItemStack> test) {
+        for (int i = 0; i < c.getContainerSize(); i++) {
+            if (test.test(c.getItem(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /** 简单工具：收集非空物品列表。 */
     public static List<ItemStack> nonEmpty(ItemStack[] slots) {
         List<ItemStack> out = new ArrayList<>();
@@ -536,6 +617,86 @@ public final class KegAccess {
             if (!st.isEmpty()) {
                 out.add(st);
             }
+        }
+        return out;
+    }
+
+    /**
+     * 温度档匹配（#85 阶段二，<b>照抄</b> BAC {@code isValidTemp} 字节码）：
+     * 配方要求 1 → 桶温 ≤1；2 → ≤2；3 → 1~4（常温带）；4 → ≥4；5 → ≥5。
+     * recipeTemp 0 = 配方 JSON 无温度字段（不判档，恒真）。
+     */
+    public static boolean tempOk(int kegTemp, int recipeTemp) {
+        return switch (recipeTemp) {
+            case 1 -> kegTemp <= 1;
+            case 2 -> kegTemp <= 2;
+            case 3 -> kegTemp >= 1 && kegTemp < 5;
+            case 4 -> kegTemp >= 4;
+            case 5 -> kegTemp >= 5;
+            default -> true;
+        };
+    }
+
+    /**
+     * 收货（#85 阶段二）：取走 5 号出料槽的物品产物（肉干/泡菜等——BAC 完成
+     * 分支 {@code inventory.insertItem(5, result.copy())} 的落点），清槽写回。
+     * 格式铁律同 {@link #insertIngredients}（Items 只含非空槽+Slot 索引+Size）。
+     * 槽空/不是酒桶格式/写回失败 → EMPTY 不动手。
+     */
+    public static ItemStack takeOutput(ServerLevel level, BlockPos pos) {
+        BlockEntity be;
+        CompoundTag root;
+        try {
+            be = level.getBlockEntity(pos);
+            if (be == null) {
+                return ItemStack.EMPTY;
+            }
+            root = be.saveWithFullMetadata(level.registryAccess());
+        } catch (RuntimeException e) {
+            return ItemStack.EMPTY; // GameTest 环境 keg BE 构造 NPE 坑，同 read 兜底
+        }
+        CompoundTag inv = root.getCompound(KEY_INVENTORY);
+        if (!inv.contains(KEY_ITEMS, Tag.TAG_LIST)) {
+            return ItemStack.EMPTY;
+        }
+        HolderLookup.Provider provider = level.registryAccess();
+        ItemStack[] slots = new ItemStack[SLOTS];
+        for (int i = 0; i < SLOTS; i++) {
+            slots[i] = ItemStack.EMPTY;
+        }
+        ListTag list = inv.getList(KEY_ITEMS, Tag.TAG_COMPOUND);
+        for (int i = 0; i < list.size(); i++) {
+            CompoundTag entry = list.getCompound(i);
+            int idx = entry.contains(KEY_SLOT, Tag.TAG_INT) ? entry.getInt(KEY_SLOT) : i;
+            if (idx >= 0 && idx < SLOTS) {
+                ItemStack.parse(provider, entry).ifPresent(st -> slots[idx] = st);
+            }
+        }
+        ItemStack out = slots[OUTPUT_SLOT];
+        if (out.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        slots[OUTPUT_SLOT] = ItemStack.EMPTY;
+        ListTag outList = new ListTag();
+        for (int i = 0; i < SLOTS; i++) {
+            if (!slots[i].isEmpty()) {
+                CompoundTag entry = new CompoundTag();
+                entry.putInt(KEY_SLOT, i);
+                outList.add(slots[i].save(provider, entry));
+            }
+        }
+        inv.put(KEY_ITEMS, outList);
+        if (!inv.contains(KEY_SIZE, Tag.TAG_INT)) {
+            inv.putInt(KEY_SIZE, SLOTS);
+        }
+        root.put(KEY_INVENTORY, inv);
+        try {
+            be.loadWithComponents(root, level.registryAccess());
+            be.setChanged();
+            net.minecraft.world.level.block.state.BlockState st = level.getBlockState(pos);
+            level.sendBlockUpdated(pos, st, st, 3);
+        } catch (RuntimeException e) {
+            return ItemStack.EMPTY; // 写回失败不吞货（槽里留着，下轮再试）
         }
         return out;
     }

@@ -48,6 +48,9 @@ public class BookkeeperGoal extends Goal {
 
     @Override
     public boolean canUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         return this.resident.getProfession()
                 == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER
                 && this.resident.getBookkeeperFindTarget() != null
@@ -58,6 +61,9 @@ public class BookkeeperGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         return this.resident.getBookkeeperFindTarget() != null
                 && this.resident.getProfession()
                 == com.bmf.bmfstown.entity.profile.ProfessionType.BOOKKEEPER;
@@ -141,17 +147,17 @@ public class BookkeeperGoal extends Goal {
             return;
         }
 
-        // 前往目标容器
-        if (this.resident.blockPosition().closerThan(target, 3.0D)) {
-            this.resident.getNavigation().stop();
-            this.markTimer = MARK_TICKS;
-            this.particleCooldown = 0;
+        // 前往目标容器（NavOps：有限重试，到不了就放弃这趟差事）
+        NavOps.Nav nav = NavOps.approach(this.resident, target, 3.0D,
+                com.bmf.bmfstown.config.Config.STROLL_SPEED.get());
+        if (nav == NavOps.Nav.STUCK) {
+            this.resident.setBookkeeperFindTarget(null); // 差事作废，下轮换目标
             return;
         }
-        if (this.resident.getNavigation().isDone()) {
-            this.resident.getNavigation().moveTo(
-                    target.getX() + 0.5D, target.getY(), target.getZ() + 0.5D,
-                    com.bmf.bmfstown.config.Config.STROLL_SPEED.get());
+        if (nav != NavOps.Nav.ARRIVED) {
+            return;
         }
+        this.markTimer = MARK_TICKS;
+        this.particleCooldown = 0;
     }
 }

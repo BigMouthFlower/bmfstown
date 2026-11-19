@@ -100,6 +100,10 @@ public class LeisureGoal extends Goal {
 
     @Override
     public boolean canUse() {
+        // 城外回城期间挂起（2026-11-19 #91b）：散步等活动会跟回城抢导航
+        if (this.resident.jobSuspended()) {
+            return false;
+        }
         ServerLevel level = this.resident.level() instanceof ServerLevel sl ? sl : null;
         if (level == null) {
             return false;
@@ -122,6 +126,10 @@ public class LeisureGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
+        // 城外回城期间挂起（2026-11-19 #91b）
+        if (this.resident.jobSuspended()) {
+            return false;
+        }
         ServerLevel level = this.resident.level() instanceof ServerLevel sl ? sl : null;
         if (level == null || this.current == null || !windowOpen(level)) {
             return false; // 窗口关闭 → stop() → abort（还书等当场收尾）

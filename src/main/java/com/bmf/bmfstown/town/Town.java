@@ -104,6 +104,16 @@ public class Town {
 
     private final WorkshopRegister workshop = new WorkshopRegister();
 
+    /**
+     * 酒吧菜单（决策 #86，2026-11-18）：饮品/食品产物物品 id → 维护目标量。
+     * 酒保排产、在途入账、缺料播报只认菜单内产物；二层酒需要的原料酒经
+     * 菜单闭包自动豁免（想要强根艾尔 → 啤酒按需补足，不占独立目标量）。
+     * <b>空表 = 未配置</b>——回落现状"全部可酿配方维护默认目标量"
+     * （老档兼容 + 首次体验不至于死酒馆）；一旦配置过，严格按菜单执行。
+     */
+    private final java.util.LinkedHashMap<String, Integer> tavernMenu =
+            new java.util.LinkedHashMap<>();
+
     public Town(UUID id, String name, String ownerName, String dimension,
                 BlockPos min, BlockPos max) {
         this(id, name, ownerName, dimension, min, max, System.currentTimeMillis());
@@ -200,6 +210,30 @@ public class Town {
         return this.workshop;
     }
 
+    // ==========================================================
+    //  酒吧菜单（决策 #86）
+    // ==========================================================
+
+    /** 菜单只读视图（物品 id → 目标量）；空表 = 未配置（全维护）。 */
+    public java.util.Map<String, Integer> tavernMenu() {
+        return java.util.Collections.unmodifiableMap(this.tavernMenu);
+    }
+
+    /** 设定/覆盖一项（目标量下限 1）。调用方负责标脏。 */
+    public void setTavernMenuItem(String itemId, int target) {
+        this.tavernMenu.put(itemId, Math.max(1, target));
+    }
+
+    /** 移除一项（返回是否真的移除了）。 */
+    public boolean removeTavernMenuItem(String itemId) {
+        return this.tavernMenu.remove(itemId) != null;
+    }
+
+    /** 清空菜单 = 回落"全维护"。 */
+    public void clearTavernMenu() {
+        this.tavernMenu.clear();
+    }
+
     public String dimension() {
         return dimension;
     }
@@ -235,7 +269,10 @@ public class Town {
         return createdAt;
     }
 
-    /** 方块（含整格）是否在城镇内：0 号外框或任一追加区块（v0.9.1 并集）。 */
+    /**
+     * 方块（含整格）是否在城镇内：0 号外框或任一追加区块（v0.9.1 并集）。
+     * <b>三轴严格口径</b>——领地保护、工坊登记等"方块级"判定用这个。
+     */
     public boolean contains(BlockPos pos) {
         if (pos.getX() >= min.getX() && pos.getX() <= max.getX()
                 && pos.getY() >= min.getY() && pos.getY() <= max.getY()
@@ -244,6 +281,30 @@ public class Town {
         }
         for (TownZone block : this.townBlocks) {
             if (block.contains(pos)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 实体（居民脚底坐标）是否算"在城里"：<b>只看 XZ 足迹，不卡 Y</b>
+     * （0 号外框或任一追加区块）。
+     *
+     * <p>背景（2026-11-19 实测，存档解码实锤）：选区 Y 是建城时的采集产物，
+     * 居民在地上走——酒馆选区 Y68~73（架空高台），居民在酒馆楼下 Y63、
+     * 在城框内走平地，都属正常活动。三轴严格判定把他们判成"跑出了城镇"，
+     * 回城目标又锁定高台中心（Y69，从楼下走不上去），掐掉-换点-睡觉三方
+     * 拔河整晚卡死。方块级判定仍走 {@link #contains} 的严格口径。
+     */
+    public boolean containsEntity(BlockPos pos) {
+        if (pos.getX() >= min.getX() && pos.getX() <= max.getX()
+                && pos.getZ() >= min.getZ() && pos.getZ() <= max.getZ()) {
+            return true;
+        }
+        for (TownZone block : this.townBlocks) {
+            if (pos.getX() >= block.min().getX() && pos.getX() <= block.max().getX()
+                    && pos.getZ() >= block.min().getZ() && pos.getZ() <= block.max().getZ()) {
                 return true;
             }
         }
@@ -371,6 +432,14 @@ public class Town {
             tag.putLongArray("WorkshopWaterSources", this.workshop.waterSources.stream()
                     .mapToLong(Long::longValue).toArray());
         }
+        // 酒吧菜单（决策 #86）：物品 id → 目标量
+        if (!this.tavernMenu.isEmpty()) {
+            CompoundTag menu = new CompoundTag();
+            for (Map.Entry<String, Integer> e : this.tavernMenu.entrySet()) {
+                menu.putInt(e.getKey(), e.getValue());
+            }
+            tag.put("TavernMenu", menu);
+        }
         return tag;
     }
 
@@ -422,6 +491,11 @@ public class Town {
         }
         for (long p : tag.getLongArray("WorkshopWaterSources")) {
             town.workshop.waterSources.add(p);
+        }
+        // 酒吧菜单（决策 #86）
+        CompoundTag menu = tag.getCompound("TavernMenu");
+        for (String key : menu.getAllKeys()) {
+            town.tavernMenu.put(key, Math.max(1, menu.getInt(key)));
         }
         // 老档自动归块（v0.9.1）：归属为空（区块功能实装前画的功能区）且
         // 几何上完整落在某个追加区块内 → 自动归到那个区块。主外框内的保持主区块。

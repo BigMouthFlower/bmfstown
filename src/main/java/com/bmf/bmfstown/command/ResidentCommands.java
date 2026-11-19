@@ -12,8 +12,12 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.commands.arguments.ResourceLocationArgument;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 
@@ -267,6 +271,32 @@ public final class ResidentCommands {
         root.then(Commands.literal("brewskip")
                 .executes(ResidentCommands::brewSkip));
 
+        // ---- /bmfstown tavernmenu [物品] [数量|off] / list / clear ----
+        // 酒吧菜单（决策 #86）：选酒吧维护哪几种产物（饮品+肉干等酿造原料
+        // 通吃）、各维护几个。未配置=全维护；配置后严格按菜单（排产/在途
+        // 入账/播报都只认菜单内）。物品 id 形如 brewinandchewin:mead。
+        root.then(Commands.literal("tavernmenu")
+                .executes(ctx -> tavernMenuList(ctx.getSource()))
+                .then(Commands.literal("list")
+                        .executes(ctx -> tavernMenuList(ctx.getSource())))
+                .then(Commands.literal("clear")
+                        .executes(ctx -> tavernMenuClear(ctx.getSource())))
+                .then(Commands.argument("物品", ResourceLocationArgument.id())
+                        .suggests((c, b) -> SharedSuggestionProvider.suggestResource(
+                                com.bmf.bmfstown.entity.KegRecipes
+                                        .all(c.getSource().getLevel()).stream()
+                                        .map(r -> net.minecraft.resources.ResourceLocation
+                                                .tryParse(r.resultFluidId()))
+                                        .filter(java.util.Objects::nonNull)
+                                        .distinct(),
+                                b))
+                        .executes(ctx -> tavernMenuRemove(ctx.getSource(),
+                                ResourceLocationArgument.getId(ctx, "物品")))
+                        .then(Commands.argument("数量", IntegerArgumentType.integer(1, 64))
+                                .executes(ctx -> tavernMenuSet(ctx.getSource(),
+                                        ResourceLocationArgument.getId(ctx, "物品"),
+                                        IntegerArgumentType.getInteger(ctx, "数量"))))));
+
         dispatcher.register(root);
     }
 
@@ -286,14 +316,101 @@ public final class ResidentCommands {
                     "请对准 5 格内正在酿的酒桶再看"));
             return 0;
         }
+        var snap = com.bmf.bmfstown.entity.KegAccess.read(level, hit.getBlockPos());
+        int temp = snap != null ? snap.temperature() : -1;
         String error = com.bmf.bmfstown.entity.KegAccess.skipFerment(
                 level, hit.getBlockPos());
         if (error != null) {
             ctx.getSource().sendFailure(Component.literal(error));
             return 0;
         }
+        String tempInfo = temp >= 0
+                ? "（当前温度档 " + temp + "：3=常温，≥4=暖侧，≤2=冷侧）"
+                : "";
         ctx.getSource().sendSuccess(() -> Component.literal(
-                "酒桶发酵已拉到底——下一刻完成出料（窖里到账后酒保按库存判定收手）"), false);
+                "酒桶发酵已拉到底——下一刻完成出料（窖里到账后酒保按库存判定收手）"
+                        + tempInfo), false);
+        return 1;
+    }
+
+    // ==========================================================
+    //  酒吧菜单（决策 #86）：/bmfstown tavernmenu
+    // ==========================================================
+
+    /** {@code /bmfstown tavernmenu} / {@code list}：打印当前菜单。 */
+    private static int tavernMenuList(CommandSourceStack source) {
+        Town town = memberTown(source);
+        if (town == null) {
+            return 0;
+        }
+        var menu = town.tavernMenu();
+        if (menu.isEmpty()) {
+            source.sendSuccess(() -> Component.literal(
+                    "【" + town.name() + "】菜单未配置——酒保全维护所有可酿产物"
+                            + "（配方全收，通用材料按缺口最少优先）。"
+                            + "用 /bmfstown tavernmenu <物品> <数量> 配置。"), false);
+            return 1;
+        }
+        StringBuilder sb = new StringBuilder("【" + town.name() + "】菜单（"
+                + menu.size() + " 项）：");
+        boolean first = true;
+        for (var e : menu.entrySet()) {
+            if (!first) {
+                sb.append("、");
+            }
+            first = false;
+            sb.append(e.getKey()).append(" ×").append(e.getValue());
+        }
+        String list = sb.toString();
+        source.sendSuccess(() -> Component.literal(list), false);
+        return menu.size();
+    }
+
+    /** {@code /bmfstown tavernmenu <物品> <数量>}：设定/覆盖一项。 */
+    private static int tavernMenuSet(CommandSourceStack source,
+            ResourceLocation itemId, int target) {
+        Town town = memberTown(source);
+        if (town == null) {
+            return 0;
+        }
+        town.setTavernMenuItem(itemId.toString(), target);
+        com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).setDirty();
+        String msg = "【" + town.name() + "】菜单已登记：" + itemId + " ×" + target
+                + "（二层酒要的原料酒会自动按需补足，不占独立目标量）";
+        source.sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    /** {@code /bmfstown tavernmenu <物品>}（不带数量）：移除该项。 */
+    private static int tavernMenuRemove(CommandSourceStack source,
+            ResourceLocation itemId) {
+        Town town = memberTown(source);
+        if (town == null) {
+            return 0;
+        }
+        if (!town.removeTavernMenuItem(itemId.toString())) {
+            source.sendFailure(Component.literal(
+                    "菜单里没有 " + itemId + "（/bmfstown tavernmenu 看现状）"));
+            return 0;
+        }
+        com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).setDirty();
+        boolean empty = town.tavernMenu().isEmpty();
+        String msg = "【" + town.name() + "】菜单已移除：" + itemId
+                + (empty ? "——菜单已清空，回落全维护" : "");
+        source.sendSuccess(() -> Component.literal(msg), false);
+        return 1;
+    }
+
+    /** {@code /bmfstown tavernmenu clear}：清空菜单 = 回落全维护。 */
+    private static int tavernMenuClear(CommandSourceStack source) {
+        Town town = memberTown(source);
+        if (town == null) {
+            return 0;
+        }
+        town.clearTavernMenu();
+        com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).setDirty();
+        source.sendSuccess(() -> Component.literal(
+                "【" + town.name() + "】菜单已清空——回落全维护"), false);
         return 1;
     }
 

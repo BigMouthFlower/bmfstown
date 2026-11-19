@@ -107,6 +107,9 @@ public class AlchemistGoal extends Goal {
     /** 水源站补水（决策 #34）：目标站位（水源方块/含水方块/含水炼药锅）。 */
     @Nullable
     private BlockPos waterTarget;
+    /** 当前水源站的落脚点（站旁可站立格；换站即清）。 */
+    @Nullable
+    private BlockPos waterSpot;
     /** 缺水瓶时先去容器取空瓶（取完转 WATER_GO）。 */
     private boolean fetchForWater;
 
@@ -166,6 +169,9 @@ public class AlchemistGoal extends Goal {
 
     @Override
     public boolean canUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         if (this.resident.getProfession() != ProfessionType.ALCHEMIST
                 || this.resident.isSleeping() || this.resident.isForaging()) {
             return false;
@@ -229,6 +235,9 @@ public class AlchemistGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         ServerLevel level = serverLevel();
         if (level == null || this.resident.isSleeping() || this.resident.isForaging()
                 || !inWorkHours(level)
@@ -305,6 +314,7 @@ public class AlchemistGoal extends Goal {
         this.fetchTarget = null;
         this.storeTarget = null;
         this.waterTarget = null;
+        this.waterSpot = null;
         this.fetchForWater = false;
         this.brewStallTicks = 0;
         this.stallRetries = 0;
@@ -357,22 +367,26 @@ public class AlchemistGoal extends Goal {
         if (this.standPos == null) {
             this.retryCooldown = IDLE_RETRY_TICKS;
             return;
-        }        if (this.resident.blockPosition().closerThan(this.standPos, OPEN_RANGE)) {
-            this.resident.getNavigation().stop();
-            BrewingStandBlockEntity stand = standAt(level);
-            if (stand == null) {
-                this.retryCooldown = IDLE_RETRY_TICKS;
+        }        switch (NavOps.approach(this.resident, this.standPos,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.retryCooldown = IDLE_RETRY_TICKS; // 台到不了：待机（台已拉黑，下轮认领别的）
                 return;
             }
-            // 回台第一件事：对账（不管是不是被打断过）——台上实物是唯一权威，
-            // 隔夜酿完的、被打断半路的、被玩家动过的，都在这里统一裁决
-            reconcileStand(stand);
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
+        }
+        BrewingStandBlockEntity stand = standAt(level);
+        if (stand == null) {
+            this.retryCooldown = IDLE_RETRY_TICKS;
             return;
         }
-        if (this.resident.getNavigation().isDone()) {
-            navigateToStand();
-            this.retryCooldown = 20;
-        }
+        // 回台第一件事：对账（不管是不是被打断过）——台上实物是唯一权威，
+        // 隔夜酿完的、被打断半路的、被玩家动过的，都在这里统一裁决
+        reconcileStand(stand);
     }
     // ==========================================================
     //  回台对账（打断/隔夜/换单恢复的统一入口）
@@ -849,14 +863,19 @@ public class AlchemistGoal extends Goal {
     }
 
     private void tickFetchTake(ServerLevel level) {
-        if (!this.resident.blockPosition().closerThan(this.fetchTarget, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                navigateTo(this.fetchTarget);
-                this.retryCooldown = 20;
+        switch (NavOps.approach(this.resident, this.fetchTarget,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.fetchTarget = null;
+                this.phase = Phase.FETCH_GO; // 箱到不了：换下一箱（箱已拉黑）
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        this.resident.getNavigation().stop();
         if (this.lidTimer == 0) {
             this.resident.containerFx(level, this.fetchTarget, true);
             this.lidTimer = 10;
@@ -899,19 +918,40 @@ public class AlchemistGoal extends Goal {
             this.waterTarget = nearestWaterStation(level);
             if (this.waterTarget == null) {
                 // 水源站没了（被拆/被舀干）：回常规凑料（缺水瓶就走等料播报）
+                this.waterSpot = null;
+                this.retryCooldown = IDLE_RETRY_TICKS;
+                this.phase = Phase.FETCH_GO;
+                return;
+            }
+            this.waterSpot = null;
+        }
+        if (this.waterSpot == null) {
+            // 2026-11-19 重做：不寻路到水源方块/含水树叶本身（围挡场景路径
+            // 退化、楔进方块缝任务永远完不成），改寻站旁可站立落脚点——
+            // 落脚点失败自动换下一个，全部失败才整站拉黑换下一站
+            this.waterSpot = NavOps.spotNear(level, this.resident, this.waterTarget,
+                    2, 1, OPEN_RANGE);
+            if (this.waterSpot == null) {
+                NavOps.blacklist(this.resident, this.waterTarget);
+                this.waterTarget = null;
                 this.retryCooldown = IDLE_RETRY_TICKS;
                 this.phase = Phase.FETCH_GO;
                 return;
             }
         }
-        if (!this.resident.blockPosition().closerThan(this.waterTarget, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                navigateTo(this.waterTarget);
-                this.retryCooldown = 20;
+        switch (NavOps.approach(this.resident, this.waterSpot,
+                1.5D, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                // 这个落脚点到不了（已被 NavOps 拉黑）：换下一个落脚点，站不动
+                this.waterSpot = null;
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        this.resident.getNavigation().stop();
         this.phase = Phase.WATER_FILL;
     }
 
@@ -925,6 +965,7 @@ public class AlchemistGoal extends Goal {
         int deficit = 3 - countCargo(waterBottleTest());
         if (deficit <= 0) {
             this.waterTarget = null;
+            this.waterSpot = null;
             this.phase = Phase.FETCH_GO;
             return;
         }
@@ -935,6 +976,7 @@ public class AlchemistGoal extends Goal {
         if (canTake <= 0) {
             // 锅被舀干（非本次操作也可能）：重找下一个水源站
             this.waterTarget = null;
+            this.waterSpot = null;
             this.retryCooldown = 20;
             this.phase = Phase.WATER_GO;
             return;
@@ -966,6 +1008,7 @@ public class AlchemistGoal extends Goal {
                 this.resident.getName().getString(), filled,
                 cauldron ? "炼药锅扣格" : "水源/含水方块");
         this.waterTarget = null;
+        this.waterSpot = null;
         this.phase = Phase.FETCH_GO;
     }
 
@@ -1004,6 +1047,9 @@ public class AlchemistGoal extends Goal {
             BlockPos pos = BlockPos.of(p);
             if (!isValidWaterStation(level, pos)) {
                 continue;
+            }
+            if (NavOps.blocked(this.resident, pos)) {
+                continue; // 寻路黑名单：放弃过的水源站 10 秒内不选
             }
             double d = this.resident.blockPosition().distSqr(pos);
             if (d < bestD) {
@@ -1214,14 +1260,18 @@ public class AlchemistGoal extends Goal {
                 return; // 抱着成品等清箱
             }
         }
-        if (!this.resident.blockPosition().closerThan(this.storeTarget, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                navigateTo(this.storeTarget);
-                this.retryCooldown = 20;
+        switch (NavOps.approach(this.resident, this.storeTarget,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.retryCooldown = IDLE_RETRY_TICKS; // 箱到不了：抱着成品等（箱已拉黑，下轮选别的）
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        this.resident.getNavigation().stop();
         this.resident.containerFx(level, this.storeTarget, true);
         this.lidTimer = 10;
         this.phase = Phase.STORE_PUT;
@@ -1544,6 +1594,9 @@ public class AlchemistGoal extends Goal {
             if (!isBrewingStand(level, pos)) {
                 continue;
             }
+            if (NavOps.blocked(this.resident, pos)) {
+                continue; // 寻路黑名单：放弃过的酿造台 10 秒内不认领
+            }
             Claim claim = BREW_CLAIMS.get(p);
             boolean taken = claim != null && !claim.holder().equals(self)
                     && System.currentTimeMillis() - claim.at() < CLAIM_STALE_MS;
@@ -1644,10 +1697,13 @@ public class AlchemistGoal extends Goal {
                 });
     }
 
-    /** 登记容器（顺手惰性清理被拆的——工人同款）。 */
+    /** 登记容器（顺手惰性清理被拆的——工人同款）；寻路黑名单容器剔除。 */
     private List<BlockPos> validContainers(ServerLevel level) {
         // #68 收编：惰性清理逻辑统一走 JobKit（原炼金私有实现）
-        return JobKit.validContainers(level, register(level));
+        List<BlockPos> out = new java.util.ArrayList<>(
+                JobKit.validContainers(level, register(level)));
+        out.removeIf(p -> NavOps.blocked(this.resident, p));
+        return out;
     }
 
     /** 离酿造台最近的、装得下成品药水的登记容器。 */

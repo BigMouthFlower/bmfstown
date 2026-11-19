@@ -470,6 +470,19 @@ public final class Config {
                     "Whether warriors target creepers (meleeing them usually triggers the explosion)")
             .define("warrior.attackCreepers", false);
 
+    /**
+     * 居民之间是否互不推挤（默认开）。
+     *
+     * <p>2026-11-19 实测："每次取水/投桶必卡"的物理机制——居民在 1 格宽
+     * 的围挡走廊（桶排与含水树叶之间）两头对撞，原版实体互推让双方原地
+     * 顶死，跳不出去只能等楔死传送兜底。互不推挤后走廊单通；玩家与怪物
+     * 照常推。副作用：拥挤时居民会重叠站位。关掉即恢复原版推挤行为。
+     */
+    public static final ModConfigSpec.BooleanValue RESIDENT_NO_PUSH = BUILDER
+            .comment("居民之间互不推挤（修复 1 格宽走廊对撞互楔死；关掉恢复原版推挤）",
+                    "Residents do not push each other (fixes pair-deadlock wedging in 1-block corridors)")
+            .define("resident.noPush", true);
+
     /** 击杀敌人一次涨多少格斗经验。 */
     public static final ModConfigSpec.IntValue WARRIOR_XP_PER_KILL = BUILDER
             .comment("击杀敌人获得的格斗经验（v0.14 起全民入账，不只战士）",

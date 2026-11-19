@@ -129,6 +129,9 @@ public class WorkerGoal extends Goal {
 
     @Override
     public boolean canUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         if (this.resident.getProfession() != ProfessionType.WORKER
                 || this.resident.isSleeping() || this.resident.isForaging()) {
             return false;
@@ -179,6 +182,9 @@ public class WorkerGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         ServerLevel level = serverLevel();
         if (level == null || this.resident.isSleeping() || this.resident.isForaging()
                 || !inWorkHours(level)) {
@@ -296,18 +302,22 @@ public class WorkerGoal extends Goal {
             this.retryCooldown = IDLE_RETRY_TICKS;
             return;
         }
-        if (this.resident.blockPosition().closerThan(this.tablePos, OPEN_RANGE)) {
-            this.resident.getNavigation().stop();
-            if (this.afterPostFetch) {
-                this.phase = Phase.FETCH_GO;
-            } else {
-                beginCraft();
+        switch (NavOps.approach(this.resident, this.tablePos,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.retryCooldown = IDLE_RETRY_TICKS; // 台到不了：待机（台已拉黑）
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        if (this.resident.getNavigation().isDone()) {
-            navigateToTable();
-            this.retryCooldown = 20; // 走不到（被围死等）：20 tick 后再试，防每 tick 重寻路
+        if (this.afterPostFetch) {
+            this.phase = Phase.FETCH_GO;
+        } else {
+            beginCraft();
         }
     }
 
@@ -361,14 +371,20 @@ public class WorkerGoal extends Goal {
 
     /** 到箱 → 开盖 → 见啥拿啥（按缺口封顶）→ 重算是否凑满。 */
     private void tickFetchTake(ServerLevel level) {
-        if (!this.resident.blockPosition().closerThan(this.fetchTarget, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                navigateTo(this.fetchTarget);
-                this.retryCooldown = 20; // 防不可达目标每 tick 重寻路
+        switch (NavOps.approach(this.resident, this.fetchTarget,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.fetchTarget = null;
+                this.retryCooldown = IDLE_RETRY_TICKS; // 箱到不了：待机重排（箱已拉黑）
+                this.phase = Phase.FETCH_GO;
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        this.resident.getNavigation().stop();
         if (this.lidTimer == 0) {
             this.resident.containerFx(level, this.fetchTarget, true);
             this.lidTimer = LID_TICKS;
@@ -452,14 +468,18 @@ public class WorkerGoal extends Goal {
                 return;
             }
         }
-        if (!this.resident.blockPosition().closerThan(this.storeTarget, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                navigateTo(this.storeTarget);
-                this.retryCooldown = 20; // 防不可达目标每 tick 重寻路
+        switch (NavOps.approach(this.resident, this.storeTarget,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.retryCooldown = IDLE_RETRY_TICKS; // 箱到不了：抱着成品等（箱已拉黑）
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        this.resident.getNavigation().stop();
         this.resident.containerFx(level, this.storeTarget, true);
         this.lidTimer = LID_TICKS;
         this.phase = Phase.STORE_PUT;
@@ -516,6 +536,9 @@ public class WorkerGoal extends Goal {
             if (!isCraftingTable(level, pos)) {
                 continue; // 被拆了：等登记表惰性清理，这里直接跳过
             }
+            if (NavOps.blocked(this.resident, pos)) {
+                continue; // 寻路黑名单：放弃过的台 10 秒内不认领
+            }
             if (WorkshopClaims.isTaken(p, self)) {
                 continue;
             }
@@ -564,7 +587,10 @@ public class WorkerGoal extends Goal {
      */
     private List<BlockPos> validContainers(ServerLevel level) {
         // #68 收编：惰性清理逻辑统一走 JobKit（原工人私有实现）
-        return JobKit.validContainers(level, register(level));
+        List<BlockPos> out = new java.util.ArrayList<>(
+                JobKit.validContainers(level, register(level)));
+        out.removeIf(p -> NavOps.blocked(this.resident, p));
+        return out;
     }
 
     /** 全池虚拟盘点：配方各原料在所有登记容器里的总量能凑几套。 */

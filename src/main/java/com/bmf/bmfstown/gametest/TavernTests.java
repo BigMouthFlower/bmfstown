@@ -2,7 +2,9 @@ package com.bmf.bmfstown.gametest;
 
 import com.bmf.bmfstown.BmfTown;
 import com.bmf.bmfstown.ModEntities;
+import com.bmf.bmfstown.entity.KegAccess;
 import com.bmf.bmfstown.entity.Resident;
+import com.bmf.bmfstown.entity.TavernkeepGoal;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
 import com.bmf.bmfstown.town.TownWandMode;
 import com.bmf.bmfstown.town.TownZone;
@@ -395,11 +397,14 @@ public class TavernTests {
     }
 
     /**
-     * 接瓶入窖 + 阈值（决策 #65）：酒桶里有酿好的酒（直接写啤酒流体）→
-     * 酒保接瓶入窖，到目标量（默认 3）停手——桶里剩的流体留给点单现场接。
+     * 排空入窖（2026-11-18 用户拍板"桶里有多少就取多少"）：酒桶里有酿好的
+     * 酒（直接写啤酒流体 1000mB=4 杯）→ 酒保整杯全接入窖（受空杯数限制）。
+     * 守恒断言：窖瓶 + 桶剩整杯数 == 4——不关心脚手架有几个空杯、酒保搬到
+     * 哪一步，任何静止时刻都成立（搬运途中瓶子在货列里，窗口瞬时，等到
+     * 守恒式成立即可）。
      */
     @GameTest(template = "room11x4x11", timeoutTicks = 12000)
-    public static void keeperDrawsBottlesToTarget(GameTestHelper helper) {
+    public static void keeperDrainsKegIntoCellar(GameTestHelper helper) {
         AlchemyScaffold.Setup s = AlchemyScaffold.prepareTown(
                 helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
         Resident keeper = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(4, 1, 5));
@@ -421,19 +426,23 @@ public class TavernTests {
         helper.startSequence()
                 .thenWaitUntil(() -> {
                     if (countItem(s.chest(helper), beer) < 3) {
-                        throw new GameTestAssertException("等待酒保接瓶入窖（啤酒 ≥3）");
+                        throw new GameTestAssertException("等待酒保排空接瓶入窖（啤酒 ≥3）");
                     }
                 })
-                .thenExecute(() -> {
+                .thenWaitUntil(() -> {
                     var snap = com.bmf.bmfstown.entity.KegAccess.read(level, kegAbs);
-                    if (snap == null || snap.fluid() == null) {
-                        helper.fail("接瓶后酒桶流体状态异常");
+                    if (snap == null) {
+                        helper.fail("酒桶 BE 读取失败");
+                        return;
                     }
-                    // 3 杯 = 60750 droplets，剩 20250（≥1 杯留作点单现场接）
-                    if (snap.fluid().droplets() > 2
-                            * com.bmf.bmfstown.entity.KegAccess.TANKARD_DROPLETS) {
-                        helper.fail("超过目标量仍在接瓶（阈值失效）：剩 "
-                                + snap.fluid().droplets());
+                    long left = snap.fluid() == null ? 0
+                            : snap.fluid().droplets()
+                                    / com.bmf.bmfstown.entity.KegAccess.TANKARD_DROPLETS;
+                    long inCellar = countItem(s.chest(helper), beer);
+                    if (inCellar + left != 4) {
+                        // 搬运途中瓶子在货列里，守恒式暂时不成立——继续等静止
+                        throw new GameTestAssertException("排空守恒未定：窖 " + inCellar
+                                + " + 桶剩 " + left + " ≠ 4");
                     }
                 })
                 .thenSucceed();
@@ -550,16 +559,59 @@ public class TavernTests {
     private static com.bmf.bmfstown.entity.KegRecipes.FermentRecipe beerRecipe() {
         return new com.bmf.bmfstown.entity.KegRecipes.FermentRecipe(
                 ResourceLocation.fromNamespaceAndPath("bmfstown", "test_beer"),
-                "brewinandchewin:beer", "minecraft:water", 1000,
+                "brewinandchewin:beer", 1, true,
+                "minecraft:water", 1000,
                 Items.WATER_BUCKET,
                 1000L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB,
-                List.of(new ItemStack(Items.WHEAT), new ItemStack(Items.WHEAT_SEEDS),
-                        new ItemStack(Items.BROWN_MUSHROOM)));
+                false, 0,
+                List.of(ing(new ItemStack(Items.WHEAT)),
+                        ing(new ItemStack(Items.WHEAT_SEEDS)),
+                        ing(new ItemStack(Items.BROWN_MUSHROOM))));
     }
 
-    /** 造酒桶快照（投料槽 0~3 依次填入，其余槽空）。 */
+    /**
+     * 测试配方：酒倒酒口径（#85 阶段一）——基液=酒（1000mB 配方 / 每份 250mB
+     * 累加 = 4 杯），基液源用苹果模拟"酒窖里的瓶装酒"（纯函数不查注册表）。
+     */
+    private static com.bmf.bmfstown.entity.KegRecipes.FermentRecipe drinkBaseRecipe() {
+        return new com.bmf.bmfstown.entity.KegRecipes.FermentRecipe(
+                ResourceLocation.fromNamespaceAndPath("bmfstown", "test_strongroot"),
+                "brewinandchewin:strongroot_ale", 1, true,
+                "brewinandchewin:beer", 1000,
+                Items.APPLE,
+                com.bmf.bmfstown.entity.KegAccess.TANKARD_DROPLETS,
+                true, 0,
+                List.of(ing(new ItemStack(Items.BEETROOT)),
+                        ing(new ItemStack(Items.POTATO)),
+                        ing(new ItemStack(Items.BROWN_MUSHROOM))));
+    }
+
+    /** 测试配方：直酿口径（#85 阶段二）——无基液配料直投，物品产物 x3。 */
+    private static com.bmf.bmfstown.entity.KegRecipes.FermentRecipe foodRecipe() {
+        return new com.bmf.bmfstown.entity.KegRecipes.FermentRecipe(
+                ResourceLocation.fromNamespaceAndPath("bmfstown", "test_jerky"),
+                "brewinandchewin:jerky", 3, false,
+                null, 0, null, 0, false, 4,
+                List.of(ing(new ItemStack(Items.BEEF)),
+                        ing(new ItemStack(Items.BEEF)),
+                        ing(new ItemStack(Items.BEEF))));
+    }
+
+    /** 测试配料：item 直指口径（无 tag）。 */
+    private static com.bmf.bmfstown.entity.KegRecipes.KegIng ing(ItemStack st) {
+        return new com.bmf.bmfstown.entity.KegRecipes.KegIng(st, null);
+    }
+
+    /** 造酒桶快照（投料槽 0~3 依次填入，其余槽空；温度档默认 0=不判档）。 */
     private static com.bmf.bmfstown.entity.KegAccess.KegSnap kegSnap(
             com.bmf.bmfstown.entity.KegAccess.FluidSnap fluid, ItemStack... inputSlots) {
+        return kegSnap(fluid, 0, inputSlots);
+    }
+
+    /** 同上，带温度档（#85 阶段二）。 */
+    private static com.bmf.bmfstown.entity.KegAccess.KegSnap kegSnap(
+            com.bmf.bmfstown.entity.KegAccess.FluidSnap fluid, int temperature,
+            ItemStack... inputSlots) {
         ItemStack[] slots = new ItemStack[6];
         for (int i = 0; i < 6; i++) {
             slots[i] = ItemStack.EMPTY;
@@ -567,7 +619,7 @@ public class TavernTests {
         for (int i = 0; i < inputSlots.length && i < 4; i++) {
             slots[i] = inputSlots[i];
         }
-        return new com.bmf.bmfstown.entity.KegAccess.KegSnap(fluid, slots);
+        return new com.bmf.bmfstown.entity.KegAccess.KegSnap(fluid, slots, temperature);
     }
 
     private static com.bmf.bmfstown.entity.TavernkeepGoal.ResumeResult resume(
@@ -595,7 +647,7 @@ public class TavernTests {
             helper.fail("应补 1 桶基液差额，实际 " + p.extraSources());
         }
         if (p.extraIngredients().size() != 3
-                || p.extraIngredients().get(0).getItem() != Items.WHEAT) {
+                || p.extraIngredients().get(0).displayItem() != Items.WHEAT) {
             helper.fail("应补全部 3 件配料（已投为空）");
         }
         if (p.assumedDroplets() != 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB
@@ -699,5 +751,396 @@ public class TavernTests {
             helper.fail("未知流体应回落玻璃瓶");
         }
         helper.succeed();
+    }
+
+    // ==========================================================
+    //  #85 二阶段扩展纯函数用例（温度档 / 酒倒酒续桶 / 直酿续桶）
+    // ==========================================================
+
+    /**
+     * 温度档匹配全表（照抄 BAC isValidTemp 字节码，#85 阶段二）：
+     * 1→≤1 / 2→≤2 / 3→1~4 / 4→≥4 / 5→≥5 / 0（无要求）→恒真。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void tempOkMatchesBacBytecode(GameTestHelper helper) {
+        for (int keg = 0; keg <= 6; keg++) {
+            if (!com.bmf.bmfstown.entity.KegAccess.tempOk(keg, 0)) {
+                helper.fail("无温度要求（0）应对任意桶温恒真（桶温=" + keg + "）");
+            }
+            if (com.bmf.bmfstown.entity.KegAccess.tempOk(keg, 1) != (keg <= 1)) {
+                helper.fail("档1 应为 keg≤1（桶温=" + keg + "）");
+            }
+            if (com.bmf.bmfstown.entity.KegAccess.tempOk(keg, 2) != (keg <= 2)) {
+                helper.fail("档2 应为 keg≤2（桶温=" + keg + "）");
+            }
+            if (com.bmf.bmfstown.entity.KegAccess.tempOk(keg, 3) != (keg >= 1 && keg < 5)) {
+                helper.fail("档3 应为 1≤keg<5（桶温=" + keg + "）");
+            }
+            if (com.bmf.bmfstown.entity.KegAccess.tempOk(keg, 4) != (keg >= 4)) {
+                helper.fail("档4 应为 keg≥4（桶温=" + keg + "）");
+            }
+            if (com.bmf.bmfstown.entity.KegAccess.tempOk(keg, 5) != (keg >= 5)) {
+                helper.fail("档5 应为 keg≥5（桶温=" + keg + "）");
+            }
+        }
+        helper.succeed();
+    }
+
+    /** 直酿配方（无基液）：仅配料半成品 → 补全配料；配料全齐在酿 → 不接手。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void resumePlanDirectFermentFood(GameTestHelper helper) {
+        var cellar = new net.minecraft.world.SimpleContainer(
+                new ItemStack(Items.BEEF));
+        // 半成品：只投了 1 份牛肉（配方要 3 份）→ 补 2 份，基液差额为 0
+        var half = kegSnap(null, new ItemStack(Items.BEEF));
+        var rr = com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                half, List.of(foodRecipe()), cellar);
+        if (rr.plan() == null) {
+            helper.fail("直酿半成品应可续桶（missing=" + rr.missing() + "）");
+            return;
+        }
+        var p = rr.plan();
+        if (p.extraSources() != 0) {
+            helper.fail("直酿配方不应有基液份数，实际 " + p.extraSources());
+        }
+        if (p.extraIngredients().size() != 2) {
+            helper.fail("应补 2 条差额（配方 3 条牛肉逐条扣额度，已投 1 条），实际 "
+                    + p.extraIngredients());
+        }
+        int beefTotal = (int) p.extraIngredients().stream()
+                .filter(ki -> ki.displayItem() == Items.BEEF).count();
+        if (beefTotal != 2) {
+            helper.fail("差额牛肉总数应为 2 份，实际 " + beefTotal);
+        }
+        // 配料全齐在酿 → 已配齐，不接手也不报缺口
+        var complete = kegSnap(null, new ItemStack(Items.BEEF),
+                new ItemStack(Items.BEEF), new ItemStack(Items.BEEF));
+        var rr2 = com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                complete, List.of(foodRecipe()), cellar);
+        if (rr2.plan() != null || rr2.missing() != null) {
+            helper.fail("直酿已配齐在酿的桶既非续桶也不该报缺口");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 酒倒酒配方（#85 阶段一）：基液=酒（250mB/杯累加）——半桶基酒 →
+     * 补差额杯数 + 全部配料；基酒别种流体不接手。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void resumePlanDrinkBaseTopsUp(GameTestHelper helper) {
+        var cellar = new net.minecraft.world.SimpleContainer(
+                new ItemStack(Items.APPLE), new ItemStack(Items.APPLE),
+                new ItemStack(Items.APPLE),
+                new ItemStack(Items.BEETROOT), new ItemStack(Items.POTATO),
+                new ItemStack(Items.BROWN_MUSHROOM));
+        var half = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "brewinandchewin:beer", 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB));
+        var rr = com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                half, List.of(drinkBaseRecipe()), cellar);
+        if (rr.plan() == null) {
+            helper.fail("半桶基酒应可续桶（missing=" + rr.missing() + "）");
+            return;
+        }
+        var p = rr.plan();
+        if (p.extraSources() != 2) {
+            helper.fail("500mB/250mB 应补 2 杯基酒，实际 " + p.extraSources());
+        }
+        if (p.extraIngredients().size() != 3) {
+            helper.fail("应补全部 3 件配料（已投为空）");
+        }
+        // 基酒超量（玩家手倒 1500mB > 1000mB 配方量）：不碰
+        var over = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "brewinandchewin:beer", 1500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB));
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                over, List.of(drinkBaseRecipe()), cellar).plan() != null) {
+            helper.fail("基酒超量不应被接手（尊重玩家手动操作）");
+        }
+        // 别种流体（水 ≠ 啤酒基）
+        var wrong = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "minecraft:water", 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB));
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                wrong, List.of(drinkBaseRecipe()), cellar).plan() != null) {
+            helper.fail("水基桶不该被酒基配方接手");
+        }
+        helper.succeed();
+    }
+
+    /** 新批次口径（#85）：直酿配方 extraSources=0；酒倒酒配方 4 杯；温度档进计划外判定。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void freshPlanCoversNewRecipeShapes(GameTestHelper helper) {
+        var food = com.bmf.bmfstown.entity.TavernkeepGoal.BrewPlan.fresh(foodRecipe());
+        if (food.extraSources() != 0 || food.extraIngredients().size() != 3) {
+            helper.fail("直酿新批次应取 0 份基液+全部配料");
+        }
+        var drink = com.bmf.bmfstown.entity.TavernkeepGoal.BrewPlan.fresh(drinkBaseRecipe());
+        if (drink.extraSources() != 4) {
+            helper.fail("酒倒酒新批次（1000mB/250mB 每杯）应取 4 杯基酒，实际 "
+                    + drink.extraSources());
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 水源站取水计划（#87 口径 + #101 混用）：<b>现成水桶 &gt; 现成水瓶；
+     * 有水源站时水瓶+空瓶按总水量混用</b>（水瓶优先、差额空瓶到站装）；
+     * 全不满足=不可行。1000mB=1 桶=4 瓶。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void waterPlanPriority(GameTestHelper helper) {
+        var p = com.bmf.bmfstown.entity.TavernkeepGoal.planWater(1000, 1, 0, 0, false);
+        if (!p.feasible() || p.buckets() != 1 || p.waterBottles() != 0
+                || p.emptyToFill() != 0) {
+            helper.fail("桶够应走桶路径（1 桶），实际 " + p);
+        }
+        p = com.bmf.bmfstown.entity.TavernkeepGoal.planWater(1000, 0, 4, 9, false);
+        if (!p.feasible() || p.waterBottles() != 4 || p.needsStation()) {
+            helper.fail("无桶有水瓶应走水瓶路径（4 瓶、不去站），实际 " + p);
+        }
+        // 混用（#101）：水瓶不够时用现成水瓶优先、差额取空瓶到站装
+        p = com.bmf.bmfstown.entity.TavernkeepGoal.planWater(1000, 0, 2, 4, true);
+        if (!p.feasible() || p.waterBottles() != 2 || p.emptyToFill() != 2
+                || !p.needsStation()) {
+            helper.fail("2 水瓶+4 空瓶+站应混用（2 现成+2 装水），实际 " + p);
+        }
+        // 用户实测场景（2026-11-20）：打断归窖的 3 水瓶+1 空瓶，合计正好 1000mB——
+        // 旧单模式口径误判缺料停工
+        p = com.bmf.bmfstown.entity.TavernkeepGoal.planWater(1000, 0, 3, 1, true);
+        if (!p.feasible() || p.waterBottles() != 3 || p.emptyToFill() != 1) {
+            helper.fail("3 水瓶+1 空瓶+站必须可行（3 现成+1 装水），实际 " + p);
+        }
+        p = com.bmf.bmfstown.entity.TavernkeepGoal.planWater(1000, 0, 2, 1, true);
+        if (p.feasible()) {
+            helper.fail("2 水瓶+1 空瓶（3<4 瓶水量）即使有站也不可行，实际 " + p);
+        }
+        p = com.bmf.bmfstown.entity.TavernkeepGoal.planWater(1000, 0, 0, 9, false);
+        if (p.feasible() || p.needsStation()) {
+            helper.fail("没登记水源站空瓶再多也不可行（老路径=水桶），实际 " + p);
+        }
+        p = com.bmf.bmfstown.entity.TavernkeepGoal.planWater(500, 0, 2, 0, false);
+        if (!p.feasible() || p.waterBottles() != 2) {
+            helper.fail("500mB 应折 2 瓶（向上取整），实际 " + p);
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 配料 tag 感知（#88，2026-11-18 实测：肉干配料 {@code foods/jerky_meat}
+     * =腐肉+各种生肉，旧实现锁"tag 首成员"——囤生牛肉就永远缺料）：
+     * tag 匹配任意成员 + 续桶对账认玩家手投的 tag 成员。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void kegIngredientTagMatchesAnyMember(GameTestHelper helper) {
+        var planks = net.minecraft.tags.TagKey.create(
+                net.minecraft.core.registries.Registries.ITEM,
+                ResourceLocation.withDefaultNamespace("planks"));
+        var spec = new com.bmf.bmfstown.entity.KegRecipes.KegIng(
+                new ItemStack(Items.OAK_PLANKS), planks);
+        if (!spec.matches(new ItemStack(Items.SPRUCE_PLANKS))) {
+            helper.fail("tag 配料应匹配任意成员（云杉木板）");
+        }
+        if (!spec.matches(new ItemStack(Items.OAK_PLANKS))) {
+            helper.fail("tag 配料应匹配代表物品（橡木木板）");
+        }
+        if (spec.matches(new ItemStack(Items.STONE)) || spec.matches(ItemStack.EMPTY)) {
+            helper.fail("tag 配料不应匹配 tag 外物品/空堆");
+        }
+        // 续桶对账：配方要 3 条 tag 配料，玩家手投了 1 块云杉木板 →
+        // 补 2 条差额，且差额能用橡木板从酒窖补出（成员不锁死）
+        var food = new com.bmf.bmfstown.entity.KegRecipes.FermentRecipe(
+                ResourceLocation.fromNamespaceAndPath("bmfstown", "test_tagfood"),
+                "brewinandchewin:jerky", 3, false, null, 0, null, 0, false, 0,
+                List.of(spec, spec, spec));
+        var cellar = new net.minecraft.world.SimpleContainer(new ItemStack(Items.OAK_PLANKS));
+        var half = kegSnap(null, new ItemStack(Items.SPRUCE_PLANKS));
+        var rr = com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                half, List.of(food), cellar);
+        if (rr.plan() == null || rr.plan().extraIngredients().size() != 2) {
+            helper.fail("tag 配料半成品应可续桶补 2 条差额（missing=" + rr.missing() + "）");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 排空优先的闸门（2026-11-18 用户拍板"桶里有多少就取多少"的配套）：
+     * 发酵中/投料中途的二层酒桶（基液酒流体+配料槽全是该配方配料）必须被
+     * 接瓶通道跳过——否则刚倒进去的啤酒又被接回窖、配料晾在桶里，倒出/接回
+     * 死循环；配料槽全空的同流体桶（成品酒/倒完基液没投料）不拦。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void midBrewKegGate(GameTestHelper helper) {
+        var droplets = com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB;
+        var recipes = List.of(drinkBaseRecipe(), beerRecipe());
+        // ① 发酵中的强根艾尔：啤酒流体+配料齐 → 必须拦
+        var fermenting = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                        "brewinandchewin:beer", 1000L * droplets),
+                new ItemStack(Items.BEETROOT), new ItemStack(Items.POTATO),
+                new ItemStack(Items.BROWN_MUSHROOM));
+        if (!com.bmf.bmfstown.entity.TavernkeepGoal.midBrewKeg(fermenting, recipes)) {
+            helper.fail("发酵中的二层酒桶（基液+配料）应被拦下");
+        }
+        // ② 成品啤酒桶（流体+配料槽全空）→ 不拦，排空
+        var finished = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "brewinandchewin:beer", 1000L * droplets));
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.midBrewKeg(finished, recipes)) {
+            helper.fail("成品酒桶（配料槽空）不该被拦");
+        }
+        // ③ 倒完基液还没投料（半量啤酒、槽空）→ 不拦（接回窖也只是多跑一趟）
+        var midPour = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "brewinandchewin:beer", 500L * droplets));
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.midBrewKeg(midPour, recipes)) {
+            helper.fail("投料中途（槽还空）不该被拦——续桶下轮自愈");
+        }
+        // ④ 槽里混了配方外的东西（金胡萝卜）→ 不拦（不认为是发酵中）
+        var foreign = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                        "brewinandchewin:beer", 1000L * droplets),
+                new ItemStack(Items.BEETROOT), new ItemStack(Items.GOLDEN_CARROT));
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.midBrewKeg(foreign, recipes)) {
+            helper.fail("投了配方外物品的桶不该被拦（尊重玩家操作）");
+        }
+        // ⑤ 水基配方（啤酒本体）发酵中：流体是水、配料齐 → 水没有瓶装
+        //    物品本来就不进接瓶通道，midBrewKeg 对水基配方不认（恒不拦）
+        var waterBase = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                        "minecraft:water", 1000L * droplets),
+                new ItemStack(Items.WHEAT), new ItemStack(Items.WHEAT_SEEDS),
+                new ItemStack(Items.BROWN_MUSHROOM));
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.midBrewKeg(waterBase, recipes)) {
+            helper.fail("水基发酵桶不该由本闸门拦（接瓶通道对无瓶装流体的桶不感兴趣）");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 温度档换算（坑 22，2026-11-18 实测"无适配桶(要温度档4)"实锤）：BAC NBT
+     * {@code Temperature} 存的是<b>原始分数</b>（热源分−冷源分），档位要按配置
+     * 阈值换算（默认 cold=2/chilly=1/warm=1/hot=2）——1 个 heating cask=1 分
+     * =档4，把分数直接当档位喂匹配表就永远够不上档 4。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void temperatureTierConvertsRawScore(GameTestHelper helper) {
+        int[][] cases = { // {原始分数, 期望档位}（默认阈值 cold=2 chilly=1 warm=1 hot=2）
+                {-3, 1}, {-2, 1}, {-1, 2}, {0, 3}, {1, 4}, {2, 5}, {5, 5}};
+        for (int[] c : cases) {
+            int tier = com.bmf.bmfstown.entity.KegAccess.temperatureTier(
+                    c[0], com.bmf.bmfstown.entity.KegAccess.CFG_COLD,
+                    com.bmf.bmfstown.entity.KegAccess.CFG_CHILLY,
+                    com.bmf.bmfstown.entity.KegAccess.CFG_WARM,
+                    com.bmf.bmfstown.entity.KegAccess.CFG_HOT);
+            if (tier != c[1]) {
+                helper.fail("分数 " + c[0] + " 应为档 " + c[1] + "，实际档 " + tier);
+            }
+        }
+        // 交叉验证：换算出的档位喂 isValidTemp 同款表，档4 配方认 1 分温暖桶
+        if (!com.bmf.bmfstown.entity.KegAccess.tempOk(
+                com.bmf.bmfstown.entity.KegAccess.temperatureTier(1,
+                        com.bmf.bmfstown.entity.KegAccess.CFG_COLD,
+                        com.bmf.bmfstown.entity.KegAccess.CFG_CHILLY,
+                        com.bmf.bmfstown.entity.KegAccess.CFG_WARM,
+                        com.bmf.bmfstown.entity.KegAccess.CFG_HOT), 4)) {
+            helper.fail("1 分（单 cask）换算档4 后应满足档4 配方");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 居民属性表必须含 ATTACK_SPEED：BAC 狂暴附着物（客人喝酒喝出来的
+     * Raging）tick 时无判空直接 getAttribute(ATTACK_SPEED).addTransientModifier，
+     * 缺属性=居民 tick 即 NPE 崩服（2026-11-19 崩溃报告实锤）。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 60)
+    public static void residentHasAttackSpeedAttribute(GameTestHelper helper) {
+        Resident r = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(2, 1, 2));
+        if (r.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_SPEED) == null) {
+            helper.fail("居民必须注册 ATTACK_SPEED——BAC 狂暴附着物 tick 无判空直取，缺了就崩服");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 步高 1.0（2026-11-19 实测"跳不起来"正解）：原版 0.6 上不去满格方块，
+     * 1 格高的酒桶/台阶全靠寻路跳节点+楔死自救兜底。1.0=玩家自动跳跃同款，
+     * collision 步进直接迈上去。马同款值；低于 1.0 一律 fail。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 60)
+    public static void residentStepHeightIsOneBlock(GameTestHelper helper) {
+        Resident r = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(2, 1, 2));
+        double step = r.getAttribute(
+                net.minecraft.world.entity.ai.attributes.Attributes.STEP_HEIGHT) == null
+                ? 0.0D
+                : r.getAttributeValue(
+                        net.minecraft.world.entity.ai.attributes.Attributes.STEP_HEIGHT);
+        if (step < 1.0D) {
+            helper.fail("居民步高必须 ≥1.0（实测 " + step
+                    + "）——0.6 上不去 1 格高的酒桶，楔死问题在移动层就不该发生");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 基液倒完余料口径（2026-11-19"吞瓶"实测）：水瓶没有合成余料，
+     * pourRemainder 必须补回空玻璃瓶——否则投 4 水瓶做一批酒瓶子全灭，
+     * vodka 永远缺玻璃瓶、排产停手。对照组：桶类与蜂蜜瓶照旧走合成余料。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 60)
+    public static void waterBottlePourReturnsEmptyBottle(GameTestHelper helper) {
+        ItemStack water = TavernkeepGoal.waterBottleTemplate();
+        ItemStack rem = TavernkeepGoal.pourRemainder(water);
+        if (rem.isEmpty() || !rem.is(Items.GLASS_BOTTLE)) {
+            helper.fail("水瓶倒完必须补回空玻璃瓶，实际 " + rem);
+        }
+        ItemStack bucket = new ItemStack(Items.WATER_BUCKET);
+        if (!TavernkeepGoal.pourRemainder(bucket).is(Items.BUCKET)) {
+            helper.fail("水桶倒完余料=空桶（合成余料口径不变）");
+        }
+        ItemStack honey = new ItemStack(Items.HONEY_BOTTLE);
+        if (!TavernkeepGoal.pourRemainder(honey).is(Items.GLASS_BOTTLE)) {
+            helper.fail("蜂蜜瓶倒完余料=玻璃瓶（合成余料口径不变）");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 酒窖聚合视图跨容器计数/取货（#99，2026-11-20 实机根因）：旧实现排产
+     * 与取料只读"最近一口容器"，物料分装在别的箱子时读数恒 0（日志实锤
+     * 缺料[glass_bottle×4] 整数缺口=单容器计数 0，而瓶子和杯子明明在窖里）。
+     * 两口箱子分装 2+2 瓶：聚合视图必须数出 4、取走一件必须落到对应箱子上。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 60)
+    public static void cellarViewCountsAcrossContainers(GameTestHelper helper) {
+        helper.setBlock(new BlockPos(2, 1, 2), net.minecraft.world.level.block.Blocks.CHEST);
+        helper.setBlock(new BlockPos(8, 1, 2), net.minecraft.world.level.block.Blocks.CHEST);
+        helper.startSequence().thenExecute(() -> {
+            ChestBlockEntity c1 = (ChestBlockEntity) helper.getLevel()
+                    .getBlockEntity(helper.absolutePos(new BlockPos(2, 1, 2)));
+            ChestBlockEntity c2 = (ChestBlockEntity) helper.getLevel()
+                    .getBlockEntity(helper.absolutePos(new BlockPos(8, 1, 2)));
+            if (c1 == null || c2 == null) {
+                helper.fail("两口箱子必须就位");
+            }
+            c1.setItem(0, new net.minecraft.world.item.ItemStack(
+                    net.minecraft.world.item.Items.GLASS_BOTTLE, 2));
+            c2.setItem(0, new net.minecraft.world.item.ItemStack(
+                    net.minecraft.world.item.Items.GLASS_BOTTLE, 2));
+            TavernkeepGoal.CellarView view = new TavernkeepGoal.CellarView(
+                    java.util.List.of(c1, c2));
+            int n = KegAccess.countItem(view,
+                    new net.minecraft.world.item.ItemStack(
+                            net.minecraft.world.item.Items.GLASS_BOTTLE));
+            if (n != 4) {
+                helper.fail("跨容器计数必须 2+2=4，实测 " + n
+                        + "（单容器口径=2，正是 #99 的缺料误判）");
+            }
+            // 取一件：必须真落到对应箱子上（shrink 生效）
+            ItemStack taken = KegAccess.takeOne(view,
+                    new net.minecraft.world.item.ItemStack(
+                            net.minecraft.world.item.Items.GLASS_BOTTLE));
+            if (taken.isEmpty()) {
+                helper.fail("聚合视图必须能跨容器取货");
+            }
+            if (countItem(c1, net.minecraft.world.item.Items.GLASS_BOTTLE)
+                    + countItem(c2, net.minecraft.world.item.Items.GLASS_BOTTLE) != 3) {
+                helper.fail("取走的瓶子必须真实扣减底层容器");
+            }
+        }).thenSucceed();
     }
 }

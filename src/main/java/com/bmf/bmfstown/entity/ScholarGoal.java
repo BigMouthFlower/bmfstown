@@ -76,6 +76,9 @@ public class ScholarGoal extends Goal {
 
     @Override
     public boolean canUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         if (this.resident.getProfession() != com.bmf.bmfstown.entity.profile.ProfessionType.SCHOLAR
                 || this.resident.isSleeping() || this.resident.isForaging()
                 || this.resident.getFollowResidentId() != null) {
@@ -97,6 +100,9 @@ public class ScholarGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
+        if (this.resident.jobSuspended()) {
+            return false; // 城外回城期间挂起（2026-11-19 #91b）
+        }
         ServerLevel level = serverLevel();
         WorkMode mode = this.resident.getWorkMode();
         if (mode != WorkMode.WRITE && mode != WorkMode.COPY) {
@@ -219,13 +225,17 @@ public class ScholarGoal extends Goal {
                 return; // 馆里没有书墨：待机等补料
             }
         }
-        if (!this.resident.blockPosition().closerThan(this.inputPos, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                this.resident.getNavigation().moveTo(
-                        this.inputPos.getX() + 0.5D, this.inputPos.getY(),
-                        this.inputPos.getZ() + 0.5D, Config.STROLL_SPEED.get());
+        switch (NavOps.approach(this.resident, this.inputPos,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.retryCooldown = IDLE_RETRY_TICKS; // 料箱到不了：待机（箱已拉黑）
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
         this.phase = Phase.FETCH_OPEN;
     }
@@ -282,15 +292,18 @@ public class ScholarGoal extends Goal {
                 return; // 馆里没有讲台
             }
         }
-        if (!this.resident.blockPosition().closerThan(this.lecternPos, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                this.resident.getNavigation().moveTo(
-                        this.lecternPos.getX() + 0.5D, this.lecternPos.getY(),
-                        this.lecternPos.getZ() + 0.5D, Config.STROLL_SPEED.get());
+        switch (NavOps.approach(this.resident, this.lecternPos,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                this.retryCooldown = IDLE_RETRY_TICKS; // 讲台到不了：待机（台已拉黑）
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        this.resident.getNavigation().stop();
         // 开写/开抄：随身书墨合成 WIP（非空=断点续写，直接进写作）
         if (activeWip().isEmpty()) {
             UUID townId = this.resident.getIdentity().townId();
@@ -399,15 +412,20 @@ public class ScholarGoal extends Goal {
                 return;
             }
         }
-        if (!this.resident.blockPosition().closerThan(this.shelfPos, OPEN_RANGE)) {
-            if (this.resident.getNavigation().isDone()) {
-                this.resident.getNavigation().moveTo(
-                        this.shelfPos.getX() + 0.5D, this.shelfPos.getY(),
-                        this.shelfPos.getZ() + 0.5D, Config.STROLL_SPEED.get());
+        switch (NavOps.approach(this.resident, this.shelfPos,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                // 书架到不了：成书进背包继续写下一本（架已拉黑，下轮换架）
+                storeToInventory(level);
+                this.phase = Phase.GO_INPUT;
+                return;
             }
-            return;
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
         }
-        this.resident.getNavigation().stop();
         this.phase = Phase.STORE_PUT;
     }
 
@@ -470,6 +488,9 @@ public class ScholarGoal extends Goal {
     /** 认领料箱：图书馆区内容器里找一个"同时含书和墨"的。 */
     private boolean claimSupplies(ServerLevel level) {
         for (BlockPos pos : libraryContainers(level)) {
+            if (NavOps.blocked(this.resident, pos)) {
+                continue; // 寻路黑名单：放弃过的料箱 10 秒内不认领
+            }
             Container c = containerAt(pos);
             if (c == null) {
                 continue;
@@ -493,6 +514,9 @@ public class ScholarGoal extends Goal {
     /** 认领讲台：图书馆区里第一个讲台。 */
     private boolean claimLectern(ServerLevel level) {
         for (BlockPos pos : libraryBlocks(level, Blocks.LECTERN)) {
+            if (NavOps.blocked(this.resident, pos)) {
+                continue; // 寻路黑名单：放弃过的讲台 10 秒内不认领
+            }
             this.lecternPos = pos;
             this.jobState().putLibraryLectern(pos);
             return true;
@@ -553,6 +577,9 @@ public class ScholarGoal extends Goal {
         for (BlockPos pos : libraryBlocks(level, Blocks.CHISELED_BOOKSHELF)) {
             if (!validShelf(level, pos)) {
                 continue;
+            }
+            if (NavOps.blocked(this.resident, pos)) {
+                continue; // 寻路黑名单：放弃过的书架 10 秒内不选
             }
             double d = this.resident.blockPosition().distSqr(pos);
             if (d < bestDist) {

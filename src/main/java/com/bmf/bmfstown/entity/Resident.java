@@ -210,6 +210,26 @@ public class Resident extends PathfinderMob {
      */
     private int townCheckCooldown = 0;
 
+    /** 人在城外、回城进行中（职业 Goal 挂起，导航权归回城逻辑，2026-11-19）。 */
+    private boolean confinedReturning = false;
+    /** 跨区放行的进度验收：上次检查的位置（相同=原地踏步）。 */
+    private BlockPos lastExemptPos = null;
+    /** 跨区放行的原地踏步计数（≥3 掐路径重选，2026-11-19）。 */
+    private int exemptStallCount = 0;
+    /** 回城路径当前目标（日志去重用：同目标只报一次）。 */
+    private BlockPos returnLogTarget = null;
+    /** 回城放弃的截止时刻（gameTime），之前不再重发回城寻路。 */
+    private long returnBlockedUntil = 0L;
+    /** 楔死观察：上次检查的位置（相同=没挪窝）。 */
+    private BlockPos wedgePos = null;
+    /** 楔死观察：从这个位置开始驻留的时刻（gameTime）。 */
+    private long wedgeSince = 0L;
+
+    /** 职业挂起：人在城外回城期间，各职业 Goal 的 canUse/canContinueToUse 须让路。 */
+    public boolean jobSuspended() {
+        return this.confinedReturning;
+    }
+
     /** 进食冷却剩余 tick 数。 */
     private int eatCooldown = 0;
 
@@ -500,11 +520,22 @@ public class Resident extends PathfinderMob {
     public static AttributeSupplier.Builder createAttributes() {
         // 注意：属性注册早于配置加载，必须走带兜底的读取
         //（直接 Config.MAX_HEALTH.get() 会在启动期抛 IllegalStateException）
+        // ATTACK_SPEED 必须注册：BAC 狂暴附着物（客人喝酒喝出来的 Raging）
+        // tick 时无判空直接 getAttribute(ATTACK_SPEED).addTransientModifier，
+        // 缺这个属性=居民 tick 即 NPE 崩服（2026-11-19 崩溃报告实锤）。
+        // 基值 4.0 = 原版默认（徒手 4 次/秒）。
+        // STEP_HEIGHT 1.0（2026-11-19 实测"还是跳不起来"的正解——用户开
+        // 辅助功能自动跳跃能直接上酒桶点破的）：原版 0.6 上不去满格方块，
+        // 靠寻路器插跳节点+楔死自救兜底；1.0 = 玩家自动跳跃同款，走进
+        // 1 格高的酒桶/台阶直接迈上去（collision 步进抬起），跳不过/楔进
+        // 缝这类问题在移动层就不发生。马同款步高，无副作用。
         return PathfinderMob.createMobAttributes()
                 .add(Attributes.MAX_HEALTH, Config.maxHealthOrDefault())
                 .add(Attributes.MOVEMENT_SPEED, Config.movementSpeedOrDefault())
                 .add(Attributes.FOLLOW_RANGE, Config.followRangeOrDefault())
-                .add(Attributes.ATTACK_DAMAGE, Config.attackDamageOrDefault());
+                .add(Attributes.ATTACK_DAMAGE, Config.attackDamageOrDefault())
+                .add(Attributes.ATTACK_SPEED, 4.0D)
+                .add(Attributes.STEP_HEIGHT, 1.0D);
     }
 
     // ==========================================================
@@ -528,6 +559,22 @@ public class Resident extends PathfinderMob {
         GroundPathNavigation navigation = new GroundPathNavigation(this, level);
         navigation.setCanOpenDoors(true);
         return navigation;
+    }
+
+    /**
+     * 居民之间互不推挤（可关，{@link Config#RESIDENT_NO_PUSH}）。
+     * 2026-11-19 实测"每次取水必卡"的物理机制：酒馆平台人多，1 格宽的
+     * 围挡走廊（桶排与含水树叶之间）两头对撞=互相顶死——原版实体互推
+     * 让双方都原地抖动，跳也跳不出去（轻量脱困救不动），只能等楔死传送
+     * 兜底。互不推挤后走廊单通，对撞消失；玩家与怪物照常推。副作用是
+     * 拥挤时居民会重叠站位（大量 NPC mod 同款取舍）。
+     */
+    @Override
+    public void push(net.minecraft.world.entity.Entity entity) {
+        if (entity instanceof Resident && Config.RESIDENT_NO_PUSH.get()) {
+            return;
+        }
+        super.push(entity);
     }
 
     @Override
@@ -1681,6 +1728,19 @@ public class Resident extends PathfinderMob {
         // ---- 3.5 perk 主动技能（坚盾/追猎：战斗中自动施放，30 秒冷却） ----
         this.tickActivePerks();
 
+        // ---- 3.6 楔死分级脱困（独立于城检节流：20t 轮询一次，内部自带
+        //      100t 门槛+轻量两级——2026-11-19 实测反馈"兜底能用但太慢、
+        //      缺轻量修正"。跟随玩家时同样可能楔进方块缝，不做 FOLLOW 豁免）
+        if (this.level() instanceof net.minecraft.server.level.ServerLevel sl
+                && this.level().getGameTime() % 20L == 0L) {
+            this.unstickIfWedged(sl);
+        }
+
+        // ---- 3.7 转圈监测（2026-11-20 用户点名：复现不了的现场靠实时采样
+        //      抓——视线大幅转向+几乎不位移=原地打转，自动把导航目标/路径/
+        //      脚下方块/拉黑状态打进日志，每轮只报一次）
+        this.spinWatch();
+
         // ---- 4. 城镇归属约束（跟随玩家时允许出领地，跳过） ----
         if (this.getWorkMode() != WorkMode.FOLLOW) {
             this.tickTownConfinement();
@@ -1760,6 +1820,7 @@ public class Resident extends PathfinderMob {
         if (!(this.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
             return;
         }
+
         UUID townId = this.identity.townId();
         if (townId == null) {
             return;
@@ -1777,47 +1838,439 @@ public class Resident extends PathfinderMob {
             return;
         }
 
-        if (town.contains(this.blockPosition())) {
-            return; // 人在城里（任一区块，v0.9.1 并集），一切正常
+        // 人在城里（外框+追加区块并集，实体口径只看 XZ 足迹——见 Town.containsEntity）
+        if (town.containsEntity(this.blockPosition())) {
+            this.confinedReturning = false;
+            this.returnLogTarget = null;
+            return; // 人在城里，一切正常
         }
-
-        // 跨区行程放行（v0.9.1 不连续选区）：当前导航目的地落在城镇并集内
+        // 跨区行程放行（v0.9.1 不连续选区）：当前导航目的地落在城里（宽口径）
         // = Goal 驱动的合法跨区（上班/回家/觅食——目的地在另一块区块），
         // 让他把路走完，别把人往回拽。此前这里无条件回主区中心，与
         // WorkerGoal 抢同一个导航器，工人一出主区就被拉回、永远到不了工坊。
+        // 挂起必须在放行成立时撤销（决策 #93b）：酒馆/工坊等追加区块在城框外，
+        // 人在区块间空隙带被判"不在任何区块"——若此处先挂起职业 Goal，断了
+        // 路径没人重发，下一轮 navTarget 变空 → 回城接管 → 拉回城里 → 挂起
+        // 解除 → Goal 又带他出去……"走出几步就跑回去"无限循环（2026-11-19
+        // 实测：酒保根本到不了酒吧上班）。合法跨区=职业 Goal 保持活跃。
         // 1.21.1 PathNavigation 没有 getTarget()——用当前路径终点当目的地
         net.minecraft.world.level.pathfinder.Path navPath = this.getNavigation().getPath();
         BlockPos navTarget = navPath == null ? null : navPath.getEndNode().asBlockPos();
-        if (navTarget != null && town.contains(navTarget)) {
+        if (navTarget != null && town.containsEntity(navTarget)) {
+            this.confinedReturning = false; // 合法跨区：职业 Goal 不挂起，自己重发路径
+            // 放行要验收进度（2026-11-19 实测）：路径物理上走不动时（顶方块
+            // 卡缝，navDone 永远 false），放行=永久静默卡死。连续几次检查
+            // 没挪窝就掐掉路径，交还 Goal（其下轮 NavOps 重推进）。
+            BlockPos here = this.blockPosition();
+            if (here.equals(this.lastExemptPos)) {
+                if (++this.exemptStallCount >= 3) { // 3 秒没挪窝
+                    this.exemptStallCount = 0;
+                    this.lastExemptPos = null;
+                    this.getNavigation().stop(); // 掐掉走不动的路径
+                    LOGGER.info("[BmfTown] {} 朝 {} 的路径 3 秒没挪窝——掐掉重选",
+                            this.getName().getString(), navTarget.toShortString());
+                    return;
+                } else {
+                    return;
+                }
+            } else {
+                this.lastExemptPos = here;
+                this.exemptStallCount = 0;
+                return;
+            }
+        }
+        // 真乱跑出来了（无目标/目标也在城外）：挂起职业 Goal，导航权归回城。
+        // 人在空隙带但带着合法城内目标的人上面已放行，走不到这里。
+        this.confinedReturning = true;
+        this.lastExemptPos = null;
+        this.exemptStallCount = 0;
+
+        // 真乱跑出来了（无目标/目标也在城外）：就近回最近区块的可站立中心。
+        // 走 NavOps 三态（部分路径也算推进、3 次失败放弃+拉黑递增）；
+        // 中心放弃后区内撒点换目标——别跟同一个不可达点死磕
+        // （2026-11-19 实测：边界卡酒桶、moveTo 恒真=部分路径，放弃逻辑永不触发）。
+        long now = serverLevel.getGameTime();
+        if (now < this.returnBlockedUntil) {
+            return; // 刚放弃过，歇够再说
+        }
+        BlockPos center = nearestBlockCenter(serverLevel, this, town, this.blockPosition());
+        if (center == null) {
+            // 所有候选点都在拉黑期：回城休战 15 秒，别每轮空转撞黑名单
+            this.returnBlockedUntil = now + 300L;
+            this.returnLogTarget = null;
             return;
         }
-
-        // 真乱跑出来了（无目标/目标也在城外）：就近回**最近**的区块中心
-        // （跨区行走定稿：不回"出发点"、不回固定主区——就近收容）
-        BlockPos center = nearestBlockCenter(town, this.blockPosition());
-        this.getNavigation().moveTo(
-                center.getX() + 0.5D, center.getY(), center.getZ() + 0.5D, Config.RETURN_HOME_SPEED.get());
-        LOGGER.debug("[BmfTown] {} 跑出了城镇「{}」，就近返回 ({})",
-                this.getName().getString(), town.name(), center.toShortString());
+        NavOps.Nav nav = NavOps.approach(this, center, 2.0D,
+                Config.RETURN_HOME_SPEED.get());
+        switch (nav) {
+            case ARRIVED -> this.returnLogTarget = null; // 到了，下轮 contains 会放行
+            case MOVING -> {
+                if (!center.equals(this.returnLogTarget)) {
+                    this.returnLogTarget = center;
+                    LOGGER.info("[BmfTown] {} 跑出了城镇「{}」，就近返回 {}（人在 {}）",
+                            this.getName().getString(), town.name(),
+                            center.toShortString(), this.blockPosition().toShortString());
+                }
+            }
+            case STUCK -> {
+                BlockPos alt = randomStandableInTown(serverLevel, town);
+                if (alt != null
+                        && NavOps.approach(this, alt, 2.0D,
+                                Config.RETURN_HOME_SPEED.get()) != NavOps.Nav.STUCK) {
+                    this.returnLogTarget = alt;
+                    LOGGER.info("[BmfTown] {} 回城目标 {} 到不了，换点 ({})",
+                            this.getName().getString(), center.toShortString(),
+                            alt.toShortString());
+                    return;
+                }
+                this.returnBlockedUntil = now + 200L;
+                this.returnLogTarget = null;
+                LOGGER.info("[BmfTown] {} 回城目标 {} 到不了且区内无备选——歇 10 秒",
+                        this.getName().getString(), center.toShortString());
+            }
+        }
     }
 
-    /** 距 {@code from} 最近的区块（0 号外框或追加区块）几何中心，y 夹进该区块范围。 */
-    private static BlockPos nearestBlockCenter(Town town, BlockPos from) {
-        BlockPos best = townCenter(town);
-        double bestDist = distSqr(best, from);
+    /**
+     * 分级脱困阈值（tick，2026-11-19 实测反馈"兜底能用但太慢、缺轻量修正"）：
+     * 卡 5 秒=轻量自救（跳+掐路径，Goal 重发换路）；轻量 2 次仍卡=短距传送脱困。
+     */
+    private static final long WEDGE_SOFT_TICKS = 100L;
+    /** 轻量自救最多连做次数（此后转传送，别反复跳半天不解决）。 */
+    private static final int WEDGE_SOFT_MAX = 2;
+
+    /** 本轮楔死已做的轻量自救次数（位置变化即清零）。 */
+    private int wedgeSoft = 0;
+
+    /** 上次楔死传送的格子（同一格反复楔死时拉黑时长递增）。 */
+    private BlockPos lastWedgeCell = null;
+    /** 上次楔死传送的游戏时刻。 */
+    private long lastWedgeAt = 0L;
+    /** 同一格连续楔死次数（60s 起步翻倍封顶 5 分钟）。 */
+    private int wedgeSeq = 0;
+
+    /** 上次轻量跳发起的时刻与起始 Y（跳不起来就别跳了——直转传送）。 */
+    private long wedgeHopAt = 0L;
+    private double wedgeHopY = 0.0D;
+
+    // ---- 转圈监测（2026-11-20：现场复现不了的打转行为靠实时采样抓） ----
+    /** 上一采样 tick 的视线偏航角（NaN=窗口起点，不累计）。 */
+    private float spinLastYRot = Float.NaN;
+    /** 窗口内累计转向角（绝对值，含回正）。 */
+    private float spinAccum;
+    /** 当前观察窗口起始 gameTime。 */
+    private long spinWinStart;
+    /** 窗口起始位置（位移几乎为零才算打转）。 */
+    private BlockPos spinAnchor;
+    /** 打转日志冷却（同一轮只报一次，防刷屏）。 */
+    private long spinLogUntil;
+
+    /**
+     * 转圈监测：3 秒一个窗口，累计视线转向角——原地（位移 &lt;1 格）累计
+     * 转向 ≥360° 即判定打转，把导航目标、路径状态、脚下方块、拉黑状态
+     * 全部打进日志（每轮冷却 10 秒只报一次）。打转=导航层出了问题但人没
+     * 被楔死（楔死由 unstickIfWedged 管住），这正是"踩上桶顶就转圈"那类
+     * 现场的取证通道。
+     */
+    private void spinWatch() {
+        if (this.level().isClientSide() || this.isSleeping() || this.isPassenger()) {
+            return;
+        }
+        long now = this.level().getGameTime();
+        if (now < this.spinLogUntil) {
+            return;
+        }
+        float yaw = this.getYRot();
+        if (Float.isNaN(this.spinLastYRot)) {
+            this.spinLastYRot = yaw;
+            this.spinWinStart = now;
+            this.spinAnchor = this.blockPosition();
+            return;
+        }
+        float d = yaw - this.spinLastYRot;
+        while (d > 180.0F) {
+            d -= 360.0F;
+        }
+        while (d < -180.0F) {
+            d += 360.0F;
+        }
+        this.spinAccum += Math.abs(d);
+        this.spinLastYRot = yaw;
+        if (now - this.spinWinStart < 60L) {
+            return;
+        }
+        boolean spinning = this.spinAccum >= 360.0F
+                && this.spinAnchor.distSqr(this.blockPosition()) < 1.0D;
+        if (spinning) {
+            var nav = this.getNavigation();
+            var path = nav.getPath();
+            BlockPos pos = this.blockPosition();
+            BlockPos below = pos.below();
+            StringBuilder sb = new StringBuilder("[BmfTown][转圈] {} 在 {} 原地打转：3 秒累计转向 {}°、位移 {} 格 | 导航目标 {} done={} 路径节点 {}");
+            java.util.List<Object> args = new java.util.ArrayList<>(java.util.List.of(
+                    this.getName().getString(), pos.toShortString(),
+                    (int) this.spinAccum,
+                    String.format("%.2f", Math.sqrt(this.spinAnchor.distSqr(pos))),
+                    nav.getTargetPos() == null ? "无" : nav.getTargetPos().toShortString(),
+                    nav.isDone(),
+                    path == null ? 0 : path.getNodeCount()));
+            if (path != null && !path.isDone()) {
+                sb.append(" 下一点 {}");
+                args.add(path.getNextNodePos().toShortString());
+            }
+            sb.append(" | 脚下方块 {} onGround={}");
+            args.add(this.level().getBlockState(below).getBlock().getName().getString());
+            args.add(this.onGround());
+            sb.append(" | 当前格{}、脚下方{}在黑名单");
+            args.add(NavOps.blocked(this, pos) ? "在" : "不在");
+            args.add(NavOps.blocked(this, below) ? "在" : "不在");
+            // 贴身邻居取证（2026-11-20）：noPush 后居民互不推挤，怀疑"下一格
+            // 被别的居民占着=碰撞冻结"——打转时把 1.5 格内邻居列出来直接验证
+            java.util.List<String> neighbors = new java.util.ArrayList<>();
+            for (var e : this.level().getEntitiesOfClass(Resident.class,
+                    this.getBoundingBox().inflate(0.6D), e -> e != this)) {
+                neighbors.add(e.getName().getString() + "@" + e.blockPosition().toShortString());
+            }
+            sb.append(" | 贴身邻居 {}");
+            args.add(neighbors.isEmpty() ? "无" : String.join(",", neighbors));
+            LOGGER.info(sb.toString(), args.toArray());
+            this.spinLogUntil = now + 200L;
+        }
+        this.spinAccum = 0;
+        this.spinWinStart = now;
+        this.spinAnchor = this.blockPosition();
+    }
+
+    /**
+     * 楔死脱困：导航进行中但长时间没挪窝（BAC 酒桶碰撞箱四边各缩 1/16，
+     * 实体蹭进缝里半悬空卡住；地形缝同理——2026-11-19 实测）。
+     * 物理推不动的路径重发没用，传送脱困。睡觉/坐下是合法驻留，排除。
+     * （public：GameTest 直接驱动观察窗口。）
+     */
+    public void unstickIfWedged(net.minecraft.server.level.ServerLevel level) {
+        if (this.isSleeping() || this.isPassenger()) {
+            this.wedgePos = null;
+            this.wedgeSoft = 0;
+            return;
+        }
+        BlockPos here = this.blockPosition();
+        if (!here.equals(this.wedgePos)) {
+            this.wedgePos = here;
+            this.wedgeSince = level.getGameTime();
+            this.wedgeSoft = 0;
+            return;
+        }
+        // 位置没变但导航已完成=工作驻足/发呆，合法驻留不脱困；
+        // 只有"路径在跑却纹丝不动"（楔缝）才脱困
+        if (this.getNavigation().isDone()) {
+            return;
+        }
+        long elapsed = level.getGameTime() - this.wedgeSince;
+        if (elapsed < WEDGE_SOFT_TICKS) {
+            // 上一跳的垂直验收（提前到门槛期内也做）：跳了却没离地
+            // （半悬空 onGround 恒不成立/顶上有盖/几何卡死）——轻量自救对
+            // 这种几何永远无效，立刻烧掉剩余次数直转传送，别白等 10 秒
+            //（2026-11-19 实测"还是跳不起来"二轮）。
+            if (this.wedgeSoft > 0
+                    && level.getGameTime() - this.wedgeHopAt >= 10L
+                    && this.getY() - this.wedgeHopY < 0.25D) {
+                this.wedgeSoft = WEDGE_SOFT_MAX;
+                this.wedgeSince = level.getGameTime() - WEDGE_SOFT_TICKS;
+            }
+            return;
+        }
+        // 第一级（轻量）：定向跳+掐掉路径——跳可能把半悬空的身子颠出缝，
+        // 掐掉让 Goal/NavOps 重发换路。最多 2 次，别反复跳半天不解决。
+        if (this.wedgeSoft < WEDGE_SOFT_MAX) {
+            this.wedgeSoft++;
+            this.wedgeSince = level.getGameTime();
+            this.wedgeHopAt = level.getGameTime();
+            this.wedgeHopY = this.getY();
+            // 先记前进方向再掐路径（stop() 会清掉 path）——用路径下一节点
+            // 而非目标中心：下一节点就是实体刚才顶着撞的那面墙，方向最正
+            var path = this.getNavigation().getPath();
+            net.minecraft.world.phys.Vec3 aim = null;
+            if (path != null && !path.isDone()) {
+                aim = net.minecraft.world.phys.Vec3.atBottomCenterOf(
+                        path.getNextNodePos());
+            } else if (this.getNavigation().getTargetPos() != null) {
+                aim = net.minecraft.world.phys.Vec3.atBottomCenterOf(
+                        this.getNavigation().getTargetPos());
+            }
+            this.getNavigation().stop();
+            this.getJumpControl().jump();
+            if (aim != null) {
+                // jumpControl 的跳只在 onGround 生效（楔死恰是半悬空=永不
+                // 生效），落地摩擦（石面 0.546/tick）还会把水平冲量吃掉——
+                // 直接给完整跳跃向量（水平 0.35 + 垂直 0.42），半悬空也能
+                // 弹起来（2026-11-19 实测"定向跳也跳不上去"二轮）。
+                double dx = aim.x - this.getX();
+                double dz = aim.z - this.getZ();
+                double d = Math.sqrt(dx * dx + dz * dz);
+                if (d > 0.2D) {
+                    this.setDeltaMovement(dx / d * 0.35D, 0.42D, dz / d * 0.35D);
+                } else {
+                    this.setDeltaMovement(this.getDeltaMovement().x, 0.42D,
+                            this.getDeltaMovement().z);
+                }
+                this.hasImpulse = true;
+            }
+            LOGGER.info("[BmfTown] {} 路径卡住没挪窝——轻量脱困（定向跳+掐掉重走，第 {}/{} 次）",
+                    this.getName().getString(), this.wedgeSoft, WEDGE_SOFT_MAX);
+            return;
+        }
+        // 第二级：轻量救不动=真楔死（酒桶缝半悬空，物理推不动），就近传送脱困
+        BlockPos spot = NavOps.findStandable(level, here, 6,
+                here.getY() - 4, here.getY() + 4, here); // 排除自己所在格（避免原地空转）
+        if (spot == null) {
+            spot = NavOps.findStandable(level, here, 12,
+                    here.getY() - 6, here.getY() + 6, here);
+        }
+        // 落点优先城内（containsEntity XZ 口径，2026-11-19 实测：楔死在酒桶旁
+        // 传到 19,69,21——酒馆区块外 1 格，把人传出城触发整条回城死链）。
+        // 近处落点在城外时，扩大半径在城内重找；城内实在没有才退回近处落点
+        if (spot != null && !this.inOwnTown(level, spot)) {
+            BlockPos inner = NavOps.findStandable(level, here, 24,
+                    here.getY() - 8, here.getY() + 8, here,
+                    p -> this.inOwnTown(level, p));
+            if (inner != null) {
+                spot = inner;
+            }
+        }
+        this.wedgeSince = level.getGameTime(); // 无论成败都重开观察窗口
+        this.wedgeSoft = 0;
+        // 楔死点拉黑，同一格反复楔死时递增翻倍（2026-11-19 实测：20,69,21
+        // 连送 4 轮"传送→5 秒又楔回同一缝"——固定 60 秒拦不住确定性陷阱，
+        // 每分钟重演一遍）。60s 起步翻倍封顶 5 分钟；换格或隔 60 秒以上
+        // 视为新陷阱重新计。选点器（spotNear）与 approach 路线审计都不再
+        // 接受"必经这个缝"的路线，下轮取水/投桶直接换目标。
+        long now2 = level.getGameTime();
+        if (here.equals(this.lastWedgeCell) && now2 - this.lastWedgeAt < 1200L) {
+            this.wedgeSeq = Math.min(this.wedgeSeq + 1, 5);
+        } else {
+            this.wedgeSeq = 0;
+        }
+        this.lastWedgeCell = here;
+        this.lastWedgeAt = now2;
+        NavOps.markWedge(this, here, Math.min(1200L << this.wedgeSeq, 6000L));
+        if (spot == null) {
+            return;
+        }
+        this.getNavigation().stop();
+        this.teleportTo(spot.getX() + 0.5D, spot.getY(), spot.getZ() + 0.5D);
+        LOGGER.info("[BmfTown] {} 在 {} 楔进方块缝（轻量脱困救不动，物理推不动）——传送脱困到 {}",
+                this.getName().getString(), here.toShortString(), spot.toShortString());
+    }
+
+    /** {@code pos} 是否落在本居民所属城的任意区块 XZ 内（无城=false）。 */
+    private boolean inOwnTown(net.minecraft.server.level.ServerLevel level, BlockPos pos) {
+        UUID townId = this.identity.townId();
+        if (townId == null) {
+            return false;
+        }
+        Town town = com.bmf.bmfstown.town.TownSaveData.get(level)
+                .findTown(townId.toString());
+        return town != null && town.containsEntity(pos);
+    }
+
+    /**
+     * 距 {@code from} 最近的区块（0 号外框或追加区块）的<b>可站立</b>位置：
+     * 先取几何中心再就近换算成能站的格子（中心落在方块里时螺旋外扩找站处）。
+     * 在 NavOps 黑名单里的候选（此前证死的点）不选，全被拉黑返回 null。
+     */
+    private static BlockPos nearestBlockCenter(net.minecraft.server.level.ServerLevel level,
+                                               Resident r, Town town, BlockPos from) {
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        BlockPos townCand = standableOrCenter(level, townCenter(town),
+                town.min().getY(), town.max().getY(), from.getY());
+        if (!NavOps.blocked(r, townCand)) {
+            best = townCand;
+            bestDist = distSqr(townCand, from);
+        }
+        // 第一轮只收"离所在区块边界 ≥2 格"的候选（2026-11-19 实测"城边转圈"）：
+        // 返回点贴边的话，回城刚落地、漫步一迈又出城——振荡不止。边距点让
+        // 居民回到城内腹地，冷却下来。全城都没有边距点（小选区）再放开。
+        BlockPos bestSafe = null;
+        double bestSafeDist = Double.MAX_VALUE;
+        if (!NavOps.blocked(r, townCand)
+                && insideMargin(townCand, town.min(), town.max(), 2)) {
+            bestSafe = townCand;
+            bestSafeDist = distSqr(townCand, from);
+        }
         for (TownZone block : town.townBlocks()) {
-            BlockPos c = new BlockPos(
-                    (block.min().getX() + block.max().getX()) / 2,
-                    Mth.clamp((block.min().getY() + block.max().getY()) / 2,
-                            block.min().getY(), block.max().getY()),
-                    (block.min().getZ() + block.max().getZ()) / 2);
+            BlockPos c = standableOrCenter(level,
+                    new BlockPos(
+                            (block.min().getX() + block.max().getX()) / 2,
+                            Mth.clamp((block.min().getY() + block.max().getY()) / 2,
+                                    block.min().getY(), block.max().getY()),
+                            (block.min().getZ() + block.max().getZ()) / 2),
+                    block.min().getY(), block.max().getY(), from.getY());
+            if (NavOps.blocked(r, c)) {
+                continue; // 此前证死的点不再反复撞（2026-11-19 实测：酒馆高台循环）
+            }
             double d = distSqr(c, from);
             if (d < bestDist) {
                 bestDist = d;
                 best = c;
             }
+            if (d < bestSafeDist && insideMargin(c, block.min(), block.max(), 2)) {
+                bestSafeDist = d;
+                bestSafe = c;
+            }
         }
-        return best;
+        return bestSafe != null ? bestSafe : best;
+    }
+
+    /** p 的 XZ 是否离 [min,max] 框每条边都 ≥ margin 格。 */
+    private static boolean insideMargin(BlockPos p, BlockPos min, BlockPos max, int margin) {
+        return p.getX() >= min.getX() + margin && p.getX() <= max.getX() - margin
+                && p.getZ() >= min.getZ() + margin && p.getZ() <= max.getZ() - margin;
+    }
+
+    /**
+     * 中心点就近换算可站立格（半径 4）；换不出就原样返回中心点。
+     * 先在居民所在 Y 层 ±2 内找（2026-11-19 实测：酒馆中心可站立格在 Y69
+     * 高台上，居民在楼下 Y63，返回目标飞到 6 格高的台面=走不上去无限 STUCK）；
+     * 同层实在没有再放宽到整个选区 Y 范围。
+     */
+    private static BlockPos standableOrCenter(net.minecraft.server.level.ServerLevel level,
+                                              BlockPos center, int yMin, int yMax,
+                                              int preferY) {
+        BlockPos stand = NavOps.findStandable(level, center, 4,
+                preferY - 2, preferY + 2);
+        if (stand == null) {
+            stand = NavOps.findStandable(level, center, 4,
+                    Math.min(yMin, center.getY()) - 1, Math.max(yMax, center.getY()) + 1);
+        }
+        return stand != null ? stand : center;
+    }
+
+    /** 城内随机撒一个可站立点（回城目标不可达时的备选：外框 + 各追加区块各试）。 */
+    private static BlockPos randomStandableInTown(net.minecraft.server.level.ServerLevel level,
+                                                  Town town) {
+        BlockPos cand = scatterInBox(level, town.min(), town.max());
+        if (cand != null) {
+            return cand;
+        }
+        for (TownZone block : town.townBlocks()) {
+            cand = scatterInBox(level, block.min(), block.max());
+            if (cand != null) {
+                return cand;
+            }
+        }
+        return null;
+    }
+
+    /** 在 AABB 内随机取 (x,z)、y 区间随机取层，就近找可站立格；找不到 null。 */
+    private static BlockPos scatterInBox(net.minecraft.server.level.ServerLevel level,
+                                         BlockPos min, BlockPos max) {
+        var rnd = level.random;
+        int x = Mth.randomBetweenInclusive(rnd, min.getX(), max.getX());
+        int z = Mth.randomBetweenInclusive(rnd, min.getZ(), max.getZ());
+        int yMid = Mth.randomBetweenInclusive(rnd, min.getY(), max.getY());
+        return NavOps.findStandable(level, new BlockPos(x, yMid, z), 2,
+                min.getY() - 1, max.getY() + 1);
     }
 
     private static double distSqr(BlockPos a, BlockPos b) {
@@ -2106,8 +2559,15 @@ public class Resident extends PathfinderMob {
 
     private void navigateToZone(TownZone zone) {
         double speed = Config.STROLL_SPEED.get();
-        // 先试中心点；不可站立/寻不到路时在区内随机撒点兜底——
-        // 中心点常悬在作物、栅栏或半空上，原版寻路对这种终点直接返回 false
+        // 先试"中心点就近的可站立格"（中心常悬在作物、栅栏、酒桶上，
+        // 2026-11-19：直接瞄准几何中心=往方块里走）；再撒点兜底
+        if (this.level() instanceof net.minecraft.server.level.ServerLevel sl) {
+            BlockPos stand = NavOps.findStandable(sl, zoneCenter(zone), 4,
+                    zone.min().getY() - 1, zone.max().getY() + 1);
+            if (stand != null && this.tryMoveToStandable(stand, speed)) {
+                return;
+            }
+        }
         if (this.tryMoveToStandable(zoneCenter(zone), speed)) {
             return;
         }
@@ -2688,11 +3148,16 @@ public class Resident extends PathfinderMob {
         }
         this.sleepState = SleepState.GO_HOME;
         this.sleepTravelTicks = 0;
-        BlockPos c = zoneCenter(zone);
+        // 目标=可站立格而非几何中心（中心可能落在床/栅栏/墙里，2026-11-19）；
+        // 优先居民所在 Y 层
+        BlockPos c = standableOrCenter(
+                (net.minecraft.server.level.ServerLevel) this.level(),
+                zoneCenter(zone), zone.min().getY(), zone.max().getY(),
+                this.blockPosition().getY());
         this.getNavigation().moveTo(
                 c.getX() + 0.5D, c.getY(), c.getZ() + 0.5D,
                 Config.SLEEP_WALK_SPEED.get());
-        LOGGER.debug("[BmfTown][睡眠] {} 天黑了，回家睡觉 ({})~({})",
+        LOGGER.info("[BmfTown][睡眠] {} 天黑了，回家睡觉 ({})~({})",
                 this.getName().getString(),
                 zone.min().toShortString(), zone.max().toShortString());
     }
@@ -2719,7 +3184,12 @@ public class Resident extends PathfinderMob {
             return;
         }
         if (this.getNavigation().isDone()) {
-            BlockPos c = zoneCenter(zone);
+            // 重发也用可站立格（中心在方块里时每轮重发都是推墙，2026-11-19）；
+            // 优先居民所在 Y 层——别让目标飞上 6 格高的台面走不上去
+            BlockPos c = standableOrCenter(
+                    (net.minecraft.server.level.ServerLevel) this.level(),
+                    zoneCenter(zone), zone.min().getY(), zone.max().getY(),
+                    this.blockPosition().getY());
             this.getNavigation().moveTo(
                     c.getX() + 0.5D, c.getY(), c.getZ() + 0.5D,
                     Config.SLEEP_WALK_SPEED.get());
@@ -2989,6 +3459,10 @@ public class Resident extends PathfinderMob {
                 if (resident.sleepState == SleepState.SLEEPING) {
                     return false;
                 }
+                // 城外回城期间不溜达：漫步会跟回城路径抢导航（2026-11-19 #91b）
+                if (resident.jobSuspended()) {
+                    return false;
+                }
                 // 工作中（跟随/站岗）不溜达——巡逻和跟着玩家就是他的"漫步"
                 if (resident.getWorkMode() != WorkMode.NONE) {
                     return false;
@@ -3049,11 +3523,16 @@ public class Resident extends PathfinderMob {
             max = picked.max();
         }
 
-        int spanX = Math.max(1, max.getX() - min.getX() - 1);
-        int spanZ = Math.max(1, max.getZ() - min.getZ() - 1);
-        int x = Mth.clamp(min.getX() + 1 + random.nextInt(spanX),
+        int spanX = Math.max(1, max.getX() - min.getX() - 3);
+        int spanZ = Math.max(1, max.getZ() - min.getZ() - 3);
+        // 缩进 2 格（2026-11-19 实测"城边转圈"）：缩进 1 的目标贴边，居民
+        // 走到位后步高 1.0 的动量常把他带出城框 1 格→城检拉回→漫步又出去
+        // ——来回振荡。窄块（宽 <5）退回缩进 1，别让目标池塌掉。
+        int inset = Math.min(2, Math.max(1,
+                (Math.min(max.getX() - min.getX(), max.getZ() - min.getZ()) - 1) / 2));
+        int x = Mth.clamp(min.getX() + inset + random.nextInt(spanX),
                 min.getX(), max.getX());
-        int z = Mth.clamp(min.getZ() + 1 + random.nextInt(spanZ),
+        int z = Mth.clamp(min.getZ() + inset + random.nextInt(spanZ),
                 min.getZ(), max.getZ());
         int y = Mth.clamp(this.blockPosition().getY(),
                 min.getY(), max.getY());

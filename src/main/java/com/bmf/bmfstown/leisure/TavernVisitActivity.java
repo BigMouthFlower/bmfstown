@@ -309,7 +309,11 @@ public class TavernVisitActivity implements LeisureActivity {
         this.seat = null;
         this.goSeatTicks = 0;
         this.phase = Phase.GO_SEAT;
-        navigateTo(resident, this.seatTarget != null ? this.seatTarget : this.zoneCenter);
+        // 无座兜底目标=中心就近的可站立格（中心落在酒桶里时别往桶上撞，2026-11-19）
+        BlockPos fallback = com.bmf.bmfstown.entity.NavOps.findStandable(level,
+                this.zoneCenter, 4, nearest.min().getY() - 1, nearest.max().getY() + 1);
+        navigateTo(resident, this.seatTarget != null ? this.seatTarget
+                : (fallback != null ? fallback : this.zoneCenter));
         return true;
     }
 
