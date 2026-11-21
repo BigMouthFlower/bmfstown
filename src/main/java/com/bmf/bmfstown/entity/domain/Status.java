@@ -561,8 +561,12 @@ public final class Status {
         }
         this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
         this.applyClamped(resident, resolveHope(resident, level, base));
+        // 对冲型事件：同一件事两极感受相反（仁慈难受/嗜血亢奋），
+        // 想法文案必须按符号分 key（_pos/_neg）——共用一份 key 会让
+        // 一半人口看到与结算符号错位的描述（2026-11-21 用户实测发现）。
         int tone = base > 0 ? TONE_POSITIVE : TONE_NEGATIVE;
-        addThought(level, tone, "mood.bmfstown.thought." + keyOf(type),
+        addThought(level, tone,
+                "mood.bmfstown.thought." + keyOf(type) + (tone > 0 ? "_pos" : "_neg"),
                 hopeMarker(resident, level, tone));
     }
 
