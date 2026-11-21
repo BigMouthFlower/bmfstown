@@ -115,6 +115,18 @@ public final class ModDataComponents {
                     .networkSynchronized(com.bmf.bmfstown.fireworks.FireworksMark.STREAM_CODEC)
                     .build());
 
+    /**
+     * 酒保点歌标记（v0.16 netmusic 联动）：酒保从酒窖取出唱片准备放进唱片机时打上。
+     * 这是"这张盘是我们放出去的"的唯一凭证——收唱片（放完从机器取回、插不进退回窖）
+     * 只认带标记的盘；玩家自己放/烧的唱片没有标记，酒保永不碰。
+     * 标记随物品存档，跨夜/存档重载都在。
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<Boolean>> DJ_QUEUED =
+            COMPONENTS.register("dj_queued", () -> DataComponentType.<Boolean>builder()
+                    .persistent(com.mojang.serialization.Codec.BOOL)
+                    .networkSynchronized(net.minecraft.network.codec.ByteBufCodecs.BOOL)
+                    .build());
+
     private ModDataComponents() {
     }
 

@@ -815,6 +815,15 @@ public final class Config {
                     "Mood bonus per drink")
             .defineInRange("tavern.moodBonus", 3, 0, 100);
 
+    // 酒保点歌（netmusic 联动）：工作时段每 5 秒掷一次骰，歌在放时机器会自然挡住
+    // 新触发（不打断），所以概率真正控制的是"上一首放完后隔多久接下一首"。
+    // 一首歌现实时长 3~4 分钟、工作窗默认 8000 刻（≈6.7 分钟）——10% 意味着
+    // 上一首放完后平均 50 秒内接上，一天期望 1~2 首；0 = 关闭。
+    public static final ModConfigSpec.IntValue TAVERN_DJ_CHANCE = BUILDER
+            .comment("酒保点歌概率（%）：营业时段每 5 秒掷骰一次，前置全满足才可能放歌；0=关闭",
+                    "Chance (%) per 5s scan that the bartender queues a record (netmusic); 0 disables")
+            .defineInRange("tavern.djChancePercent", 10, 0, 100);
+
     public static final ModConfigSpec.IntValue TAVERN_DRINK_FOOD = BUILDER
             .comment("喝一杯回复的饥饿值（点）",
                     "Hunger points restored per drink")

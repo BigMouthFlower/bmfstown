@@ -246,6 +246,8 @@ public class Resident extends PathfinderMob {
     private final JobState jobState = new JobState();
     /** 记忆仓（第七域，v0.9.1 表达层）：印象池+铭记（P1 仅印象池生效）。 */
     private final com.bmf.bmfstown.entity.domain.MemoryState memoryState = new com.bmf.bmfstown.entity.domain.MemoryState();
+    /** 称号（第九域，v0.16 数据结构先行）：已获得+佩戴，显示接线后补。 */
+    private final com.bmf.bmfstown.entity.domain.TitleState titleState = new com.bmf.bmfstown.entity.domain.TitleState();
 
     // ---- 觅食状态（就餐区箱子补给，v0.6） ----
     // 状态机：NONE（空闲）→ GO_ZONE（去就餐区）→ GO_CHEST（去箱子）
@@ -889,6 +891,25 @@ public class Resident extends PathfinderMob {
         return this.memoryState;
     }
 
+    /** 称号（第九域，v0.16 数据结构先行）。服务端专用（客户端实例为空壳）。 */
+    public com.bmf.bmfstown.entity.domain.TitleState getTitleState() {
+        return this.titleState;
+    }
+
+    /**
+     * 称号+名字展示串（用户拍板 2026-11-20：称号直接拼在名字前，无分隔符）。
+     * 称号未佩戴/为空返回原名。展示接线（名牌/面板/快照同步）后补——
+     * 本方法目前仅供调试与后续 UI 消费，未挂任何渲染路径。
+     */
+    public String titledName() {
+        String titleId = this.titleState.activeId();
+        String name = getName().getString();
+        if (titleId.isEmpty()) {
+            return name;
+        }
+        return ResidentTitles.textOf(titleId) + name;
+    }
+
     public JobState getJobState() {
         return this.jobState;
     }
@@ -1499,6 +1520,7 @@ public class Resident extends PathfinderMob {
         domains.put("Job", this.jobState.save());
         domains.put("Memory", this.memoryState.save());
         domains.put("Knowledge", this.knowledge.save());
+        domains.put("Title", this.titleState.save());
         tag.put("Domains", domains);
         // 背包（需要注册表来保存物品的数据组件）
         tag.put("ResidentInventory", this.inventory.save(this.registryAccess()));
@@ -1545,6 +1567,7 @@ public class Resident extends PathfinderMob {
             this.jobState.loadFrom(domains.getCompound("Job"), null, false);
             this.memoryState.loadFrom(domains.getCompound("Memory"));
             this.knowledge.loadFrom(domains.getCompound("Knowledge"));
+            this.titleState.loadFrom(domains.getCompound("Title"));
         } else {
             // 老存档（六域重构前）：从 ResidentProfile/MoodState 旧键迁移
             CompoundTag profileTag = tag.contains("ResidentProfile", Tag.TAG_COMPOUND)

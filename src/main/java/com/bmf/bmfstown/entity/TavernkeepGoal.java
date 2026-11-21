@@ -159,9 +159,18 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     private BlockPos waterTarget;
     /** 当前水源站的落脚点（站旁可站立格；换站即清）。 */
     private BlockPos waterSpot;
+    /** 当前操作的唱片机（原版唱片机或 netmusic 音乐机；DJ 通道）——也是区内唱片机的扫描缓存。 */
+    private BlockPos djMachinePos;
+    /** DJ 周期：本轮机器类型（true=原版唱片机）。盘与机器必须同型配对（#102 追记）。 */
+    private boolean djVanilla;
+    /** DJ 周期：到场后要先收旧盘（机器里躺着带我们标记的盘）。 */
+    private boolean djRetrieve;
+    /** DJ 周期：本轮带着新盘要放（cargo 里有标记盘）。 */
+    private boolean djHasNew;
 
-    private enum Phase { SCAN, FETCH, GO_WATER, GO_KEG, POUR, GO_PATRON, STORE }
-    private enum Kind { IDLE, SERVE_BOTTLE, SERVE_KEG, BREW, DRAW_STOCK, TAKE_FOOD }
+    private enum Phase { SCAN, FETCH, GO_WATER, GO_KEG, POUR, GO_PATRON, STORE,
+            GO_MUSIC, MUSIC_ACT }
+    private enum Kind { IDLE, SERVE_BOTTLE, SERVE_KEG, BREW, DRAW_STOCK, TAKE_FOOD, DJ }
 
     public TavernkeepGoal(Resident resident) {
         this.resident = resident;
@@ -233,6 +242,9 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         this.brewPlan = null;
         this.kegPos = null;
         this.cellarPos = null;
+        this.djMachinePos = null;
+        this.djRetrieve = false;
+        this.djHasNew = false;
         this.kind = Kind.IDLE;
         this.phase = Phase.SCAN;
         this.lidTimer = 0;
@@ -272,16 +284,19 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             case POUR -> tickPour(level);
             case GO_PATRON -> tickGoPatron(level);
             case STORE -> tickStore(level);
+            case GO_MUSIC -> tickGoMusic(level);
+            case MUSIC_ACT -> tickMusicAct(level);
         }
     }
 
-    /** FETCH 分发：上瓶装酒取瓶 / 酿造取料 / 接酒取空瓶（#81）。 */
+    /** FETCH 分发：上瓶装酒取瓶 / 酿造取料 / 接酒取空瓶（#81）/ DJ 取唱片。 */
     private void tickFetch(ServerLevel level) {
         switch (this.kind) {
             case SERVE_BOTTLE -> fetchServeBottle(level);
             case BREW -> fetchBrewSupplies(level);
             case DRAW_STOCK -> fetchDrawEmpties(level);
             case SERVE_KEG -> fetchServeKegEmpty(level);
+            case DJ -> fetchDjCd(level);
             default -> backToScan();
         }
     }
@@ -333,6 +348,11 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         }
         // 3) 有空桶+有料：开酿一轮
         if (tryBrew(level)) {
+            return;
+        }
+        // 3.5) DJ 通道（netmusic 联动）：酒保点歌——氛围事件，排正事后面；
+        //      正在放的歌绝不打断（机器在放时本方法直接让路）
+        if (tryDj(level)) {
             return;
         }
         // 4) 没活干：盘点播报（缺口全靠玩家/农业补，一律点名）。
@@ -1760,6 +1780,362 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         backToScan();
     }
 
+    // ==========================================================
+    //  DJ 通道：酒保点歌（netmusic 联动，2026-11-19 用户拍板）
+    // ==========================================================
+
+    /**
+     * DJ 周期（SCAN 落到此处时正事都排不上）。用户拍板的行为起点：
+     * <b>看见唱片机里有带我们标记的盘就先收起来，再放新盘</b>——这样"下班时
+     * 歌没放完、盘留在机器里"的情况由下一个营业日自然收尾，不需要额外簿记。
+     * 触发前置（全满足才掷骰）：区内有唱片机（原版或 netmusic）、机器不在放歌、
+     * 有活干（收旧盘或有新盘）。{@link Config#TAVERN_DJ_CHANCE} 0=关闭。
+     * 无 netmusic 时原版唱片机路径照常工作（原版盘不依赖 mod）。
+     */
+    private boolean tryDj(ServerLevel level) {
+        int chance = Config.TAVERN_DJ_CHANCE.get();
+        if (chance <= 0 || this.resident.getRandom().nextInt(100) >= chance) {
+            return false;
+        }
+        if (anyMachinePlaying(level)) {
+            return false; // 区内任何机器在放歌：绝不打断也绝不叠歌——一次只放一首（#102 三追）
+        }
+        BlockPos machine = findMachine(level);
+        if (machine == null) {
+            return false;
+        }
+        TavernDj.MachineState st = TavernDj.sense(level, machine);
+        boolean needRetrieve = false;
+        if (st == TavernDj.MachineState.DISC_IDLE) {
+            needRetrieve = true; // 带标记旧盘——findMachine 已筛过"别人的盘不碰"
+        }
+        // 盘与机器同型配对（#102 追记）：先定机器型，取盘/放盘全程只认同型盘——
+        // 原版机绝不抱 netmusic 盘过去（反之亦然），杜绝到场插不进的白跑
+        this.djVanilla = TavernDj.kindOf(level, machine) == TavernDj.MachineKind.VANILLA;
+        BlockPos cdSource = findCdStock(level, this.djVanilla
+                ? TavernDj.MachineKind.VANILLA : TavernDj.MachineKind.NETMUSIC);
+        if (!needRetrieve && cdSource == null) {
+            return false; // 机器空、窖里也没盘：无事可做
+        }
+        this.djMachinePos = machine;
+        this.djRetrieve = needRetrieve;
+        this.djHasNew = cdSource != null;
+        this.kind = Kind.DJ;
+        if (cdSource != null) {
+            this.cellarPos = cdSource;
+            this.phase = Phase.FETCH;
+            navigateTo(cdSource);
+        } else {
+            this.phase = Phase.GO_MUSIC;
+            navigateTo(machine);
+        }
+        diag("dj", "点歌周期启动 收旧盘=" + needRetrieve + " 放新盘=" + (cdSource != null));
+        return true;
+    }
+
+    /**
+     * 区内是否有任何 DJ 机器（原版或 netmusic）正在放歌——掷骰命中后全店扫描
+     * 一遍：哪怕被选中的最近机器闲着，也别在另一台还唱着的时候开第二首
+     * （两台机器并存时防叠歌，#102 三追）。酒吧一次只有一首歌。
+     */
+    private boolean anyMachinePlaying(ServerLevel level) {
+        Block netmusicPlayer = TavernDj.musicPlayerBlock();
+        for (TownZone zone : tavernZones()) {
+            for (BlockPos pos : TownZone.iterate(zone)) {
+                net.minecraft.world.level.block.state.BlockState bs = level.getBlockState(pos);
+                if (!bs.is(net.minecraft.world.level.block.Blocks.JUKEBOX)
+                        && (netmusicPlayer == null || !bs.is(netmusicPlayer))) {
+                    continue;
+                }
+                if (TavernDj.sense(level, pos) == TavernDj.MachineState.PLAYING) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 全酒吧<b>随机</b>挑一台可行动的 DJ 机器（原版唱片机或 netmusic 音乐机；
+     * #102 五追 2026-11-21 用户拍板：不再就近也不再粘住一台——离哪台近就老放哪类
+     * 没有随机性）。可行动 = 要收带标记旧盘（DISC_IDLE+标记），或机器空且窖里有
+     * 同型盘；放歌中（不该到这，anyMachinePlaying 已拦）与装着别人的盘的不算候选。
+     */
+    private BlockPos findMachine(ServerLevel level) {
+        Block netmusicPlayer = TavernDj.musicPlayerBlock(); // netmusic 不在 = null，只扫原版
+        List<BlockPos> actionable = new ArrayList<>();
+        for (TownZone zone : tavernZones()) {
+            for (BlockPos pos : TownZone.iterate(zone)) {
+                net.minecraft.world.level.block.state.BlockState bs = level.getBlockState(pos);
+                if (!bs.is(net.minecraft.world.level.block.Blocks.JUKEBOX)
+                        && (netmusicPlayer == null || !bs.is(netmusicPlayer))) {
+                    continue;
+                }
+                TavernDj.MachineState st = TavernDj.sense(level, pos);
+                if (st == TavernDj.MachineState.DISC_IDLE) {
+                    if (TavernDj.hasDjMark(TavernDj.peekDisc(level, pos))) {
+                        actionable.add(pos.immutable()); // 带标记旧盘：收盘随时可动
+                    }
+                } else if (st == TavernDj.MachineState.EMPTY) {
+                    // 空机器：窖里有同型盘才值得走一趟（否则随机到它=白跑一轮）
+                    boolean vanilla = TavernDj.kindOf(level, pos) == TavernDj.MachineKind.VANILLA;
+                    if (hasCdStock(level, vanilla
+                            ? TavernDj.MachineKind.VANILLA : TavernDj.MachineKind.NETMUSIC)) {
+                        actionable.add(pos.immutable());
+                    }
+                }
+            }
+        }
+        if (actionable.isEmpty()) {
+            return null;
+        }
+        return actionable.get(this.resident.getRandom().nextInt(actionable.size()));
+    }
+
+    /** 窖里（未被拉黑的容器中）是否存在该型可放唱片（非 VIP）——存在性快查。 */
+    private boolean hasCdStock(ServerLevel level, TavernDj.MachineKind kind) {
+        for (BlockPos pos : cellarContainers(level)) {
+            if (NavOps.blocked(this.resident, pos)) {
+                continue;
+            }
+            Container c = containerAt(level, pos);
+            if (c == null) {
+                continue;
+            }
+            for (int i = 0; i < c.getContainerSize(); i++) {
+                if (TavernDj.cdPlayableFor(kind, c.getItem(i))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * <b>随机</b>挑一个装着可放唱片（非 VIP）的酒窖容器（#102 五追：不再就近，
+     * 不然永远翻同一个箱子）；无则 null。只认同型盘。箱内抽哪张盘仍是到箱后再随机。
+     */
+    private BlockPos findCdStock(ServerLevel level, TavernDj.MachineKind kind) {
+        List<BlockPos> candidates = new ArrayList<>();
+        for (BlockPos pos : cellarContainers(level)) {
+            if (NavOps.blocked(this.resident, pos)) {
+                continue;
+            }
+            Container c = containerAt(level, pos);
+            if (c == null) {
+                continue;
+            }
+            boolean has = false;
+            for (int i = 0; i < c.getContainerSize(); i++) {
+                if (TavernDj.cdPlayableFor(kind, c.getItem(i))) {
+                    has = true;
+                    break;
+                }
+            }
+            if (has) {
+                candidates.add(pos.immutable());
+            }
+        }
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        return candidates.get(this.resident.getRandom().nextInt(candidates.size()));
+    }
+
+    /** FETCH/DJ：到酒窖取一张可放的唱片（随机挑，端着走——点歌要看得见盘）。 */
+    private void fetchDjCd(ServerLevel level) {
+        if (!this.djHasNew || this.cellarPos == null) {
+            // 口径错乱兜底：没新盘计划却进了取货——若还要收旧盘就空手去机器
+            if (this.djRetrieve && this.djMachinePos != null) {
+                this.phase = Phase.GO_MUSIC;
+                navigateTo(this.djMachinePos);
+            } else {
+                backToScan();
+            }
+            return;
+        }
+        switch (NavOps.approach(this.resident, this.cellarPos,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                djAbort(level); // 窖到不了：周期作废，盘回窖
+                return;
+            }
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
+        }
+        if (this.lidTimer == 0) {
+            this.resident.containerFx(level, this.cellarPos, true);
+            this.lidTimer = LID_TICKS;
+            return;
+        }
+        if (--this.lidTimer > 0) {
+            return;
+        }
+        this.resident.containerFx(level, this.cellarPos, false);
+        Container stock = cellarView(level);
+        TavernDj.MachineKind kind = this.djVanilla
+                ? TavernDj.MachineKind.VANILLA : TavernDj.MachineKind.NETMUSIC;
+        java.util.List<Integer> cdSlots = new ArrayList<>();
+        for (int i = 0; i < stock.getContainerSize(); i++) {
+            if (TavernDj.cdPlayableFor(kind, stock.getItem(i))) {
+                cdSlots.add(i);
+            }
+        }
+        if (cdSlots.isEmpty()) {
+            // 被人拿走了：还要收旧盘就继续空跑收盘，否则收摊
+            if (this.djRetrieve && this.djMachinePos != null) {
+                this.phase = Phase.GO_MUSIC;
+                navigateTo(this.djMachinePos);
+            } else {
+                backToScan();
+            }
+            return;
+        }
+        int slot = cdSlots.get(this.resident.getRandom().nextInt(cdSlots.size()));
+        ItemStack taken = stock.getItem(slot).copy();
+        taken.setCount(1);
+        stock.getItem(slot).shrink(1);
+        stock.setChanged();
+        TavernDj.markDj(taken); // 出窖即打点歌标记——这是"我们放出去的"唯一凭证
+        carryVisible(taken);
+        diag("dj", "取盘：" + TavernDj.cdTitle(taken));
+        this.phase = Phase.GO_MUSIC;
+        navigateTo(this.djMachinePos);
+    }
+
+    /** GO_MUSIC：走到唱片机旁，停一拍再动手。 */
+    private void tickGoMusic(ServerLevel level) {
+        if (this.djMachinePos == null) {
+            djAbort(level);
+            return;
+        }
+        if (TavernDj.sense(level, this.djMachinePos) == TavernDj.MachineState.NO_PLAYER) {
+            this.djMachinePos = null; // 机器被拆：缓存作废（下轮重扫）
+            djAbort(level);
+            return;
+        }
+        switch (NavOps.approach(this.resident, this.djMachinePos,
+                OPEN_RANGE, Config.STROLL_SPEED.get())) {
+            case STUCK -> {
+                djAbort(level); // 唱片机到不了：拉黑，周期作废
+                return;
+            }
+            case MOVING -> {
+                return;
+            }
+            case ARRIVED -> {
+            }
+        }
+        // 停一拍再动手（机器没有盖子，纯停顿；对齐 LID_TICKS 节奏）
+        if (this.lidTimer == 0) {
+            this.lidTimer = LID_TICKS;
+            return;
+        }
+        if (--this.lidTimer > 0) {
+            return;
+        }
+        this.phase = Phase.MUSIC_ACT;
+    }
+
+    /** MUSIC_ACT：先收旧盘（有标记的）再放新盘——用户拍板的行为起点。 */
+    private void tickMusicAct(ServerLevel level) {
+        if (this.lidTimer > 0) {
+            this.lidTimer--;
+            return;
+        }
+        if (this.djMachinePos == null) {
+            djAbort(level);
+            return;
+        }
+        TavernDj.MachineState st = TavernDj.sense(level, this.djMachinePos);
+        if (st == TavernDj.MachineState.PLAYING || st == TavernDj.MachineState.NO_PLAYER) {
+            djAbort(level); // 到场时有人抢先放了/机器被拆：盘回窖，绝不打断
+            return;
+        }
+        // 收旧盘段
+        if (this.djRetrieve) {
+            ItemStack inSlot = TavernDj.peekDisc(level, this.djMachinePos);
+            if (!inSlot.isEmpty()) {
+                if (!TavernDj.hasDjMark(inSlot)) {
+                    djAbort(level); // 盘被换成了别人的：不碰，新盘回窖
+                    return;
+                }
+                ItemStack old = TavernDj.extractDisc(level, this.djMachinePos);
+                if (!old.isEmpty()) {
+                    reclaimCarried(); // 端着的新盘先归队（腾出主手）
+                    cargo().add(old);
+                    diag("dj", "收旧盘：" + TavernDj.cdTitle(old));
+                }
+            }
+            this.djRetrieve = false;
+            this.lidTimer = LID_TICKS; // 收完停一拍再放新的
+            return;
+        }
+        // 放新盘段
+        if (this.djHasNew) {
+            ItemStack disc = takeDjDisc();
+            this.djHasNew = false;
+            if (disc.isEmpty()) {
+                djAbort(level); // 盘丢了（理论不发生）：走回窖兜底
+                return;
+            }
+            if (!TavernDj.insertAndPlay(level, this.djMachinePos, disc)) {
+                cargo().add(0, disc); // 槽被占/触发失败：盘回窖，冷却拉长别硬撞
+                diag("dj", "放盘失败（槽被占或盘不可放）：" + TavernDj.cdTitle(disc));
+                this.retryCooldown = 200;
+                djAbort(level);
+                return;
+            }
+            diag("dj", "放盘开演：" + TavernDj.cdTitle(disc));
+            // 手上/货列还有收来的旧盘 → STORE 回窖；没有就直接收摊
+            if (!cargo().isEmpty() || !this.carried.isEmpty()) {
+                this.phase = Phase.STORE;
+                this.cellarPos = findStock(level);
+                navigateTo(this.cellarPos != null ? this.cellarPos
+                        : this.resident.blockPosition());
+            } else {
+                backToScan();
+            }
+            return;
+        }
+        // 只收不放（窖里没新盘，纯收旧盘）→ 回窖
+        djAbort(level);
+    }
+
+    /** 从货列取一张唱片（收来的旧盘/新盘都认 isCd；就地消耗）。 */
+    private ItemStack takeDjDisc() {
+        reclaimCarried();
+        TavernDj.MachineKind kind = this.djVanilla
+                ? TavernDj.MachineKind.VANILLA : TavernDj.MachineKind.NETMUSIC;
+        for (int i = 0; i < cargo().size(); i++) {
+            ItemStack st = cargo().get(i);
+            if (TavernDj.cdPlayableFor(kind, st)) {
+                ItemStack one = st.copyWithCount(1);
+                st.shrink(1);
+                if (st.isEmpty()) {
+                    cargo().remove(i);
+                }
+                return one;
+            }
+        }
+        return ItemStack.EMPTY;
+    }
+
+    /** DJ 周期作废：手上/货列有盘就走去回窖（绝不丢盘），否则直接收摊。 */
+    private void djAbort(ServerLevel level) {
+        if (!cargo().isEmpty() || !this.carried.isEmpty()) {
+            this.phase = Phase.STORE;
+            this.cellarPos = findStock(level);
+            navigateTo(this.cellarPos != null ? this.cellarPos
+                    : this.resident.blockPosition());
+        } else {
+            backToScan();
+        }
+    }
+
     /** 手上的货就地放回酒窖（被打断/客人变卦的兜底）。 */
     private void returnCargoToCellar(ServerLevel level) {
         reclaimCarried(); // 主手展示品（或被导演收进背包的那份）先归队
@@ -1791,6 +2167,9 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         this.waterSpot = null;
         this.kegPos = null;
         this.cellarPos = null;
+        this.djMachinePos = null;
+        this.djRetrieve = false;
+        this.djHasNew = false;
         this.kind = Kind.IDLE;
         this.phase = Phase.SCAN;
         this.retryCooldown = REST_TICKS;
@@ -2071,11 +2450,18 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         return out;
     }
 
-    /** 区内全部容器（酒窖候选）。 */
+    /** 区内全部容器（酒窖候选；排除唱片机——原版唱片机自己就是 Container，
+     *  不排除的话机器里的盘会被当成窖源，甚至播放中被抽盘=打断歌）。 */
     private List<BlockPos> cellarContainers(ServerLevel level) {
         List<BlockPos> out = new ArrayList<>();
+        Block netmusicPlayer = TavernDj.musicPlayerBlock();
         for (TownZone zone : tavernZones()) {
             for (BlockPos pos : TownZone.iterate(zone)) {
+                net.minecraft.world.level.block.state.BlockState bs = level.getBlockState(pos);
+                if (bs.is(net.minecraft.world.level.block.Blocks.JUKEBOX)
+                        || (netmusicPlayer != null && bs.is(netmusicPlayer))) {
+                    continue; // 机器不是窖
+                }
                 try {
                     if (level.getBlockEntity(pos) instanceof Container) {
                         out.add(pos.immutable());

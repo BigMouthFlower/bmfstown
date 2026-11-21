@@ -472,6 +472,16 @@ public class TavernTests {
 
         helper.startSequence()
                 .thenWaitUntil(() -> {
+                    // 并行用例竞争防御（#68 抖动再现，2026-11-21）：全服静态 Config
+                    // 的还原窗口（writeChannel 用例还原 cap=2 等）能落在"本用例
+                    // set(100) 之后、酒保首次掷骰之前"，5% 落空即被每日闸门锁死
+                    // 当天 → 超时抖挂。等书期间每 tick 重设概率/上限并清本镇闸门，
+                    // 对冲一切还原窗口；回调逐个顺序执行，不会打断写书用例的
+                    // 原子窗口（#67），闸门按 townId 记账也只影响本镇。
+                    com.bmf.bmfstown.config.Config.NAUSEA_ASK_CHANCE.set(100);
+                    com.bmf.bmfstown.config.Config.NAUSEA_BOOK_CAP.set(1000);
+                    com.bmf.bmfstown.alchemy.NauseaSecretLedger.get(helper.getLevel())
+                            .testOnlyResetTavernGate(s.town().id());
                     if (findUnlockBook(helper, s,
                             com.bmf.bmfstown.alchemy.NauseaSecretLedger.NAUSEA_UNLOCK) == null) {
                         throw new GameTestAssertException("等待酒保把反胃秘传放进酒窖");
@@ -1140,6 +1150,151 @@ public class TavernTests {
             if (countItem(c1, net.minecraft.world.item.Items.GLASS_BOTTLE)
                     + countItem(c2, net.minecraft.world.item.Items.GLASS_BOTTLE) != 3) {
                 helper.fail("取走的瓶子必须真实扣减底层容器");
+            }
+        }).thenSucceed();
+    }
+
+    // ==========================================================
+    //  DJ 通道（netmusic 联动）——GameTest 环境不装 netmusic（坑15 同款），
+    //  主链路无法自动化，只验"门是关的"与标记组件这两个纯骨架。
+    // ==========================================================
+
+    /**
+     * netmusic 不在场时 DJ 门必须全关（本环境结构性成立）：mod 检测 false、
+     * 注册表两查皆空、唱片机感知一律 NO_PLAYER、任何盘都不可放。
+     * 真实环境装了 netmusic 后本用例的"空"断言不再成立——它只应跑在
+     * GameTestServer（不装 netmusic），实机回归由 DJ 手测清单覆盖。
+     * 注意（原版唱片支持后）：DJ 门不再因缺 netmusic 而关——原版路径
+     * 不依赖 mod，本用例改验"netmusic 注册查询为空 + 原版盘照常可放"。
+     */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 60)
+    public static void djGateClosedWithoutNetmusic(GameTestHelper helper) {
+        if (com.bmf.bmfstown.entity.TavernDj.loaded()) {
+            helper.succeed(); // 环境装了 netmusic：门不该关，用例不适用
+            return;
+        }
+        helper.startSequence().thenExecute(() -> {
+            if (com.bmf.bmfstown.entity.TavernDj.musicPlayerBlock() != null) {
+                helper.fail("mod 不在场时唱片机方块查询必须为 null");
+            }
+            if (com.bmf.bmfstown.entity.TavernDj.cdItem() != null) {
+                helper.fail("mod 不在场时唱片物品查询必须为 null");
+            }
+            if (com.bmf.bmfstown.entity.TavernDj.sense(helper.getLevel(),
+                    helper.absolutePos(new BlockPos(1, 2, 1)))
+                    != com.bmf.bmfstown.entity.TavernDj.MachineState.NO_PLAYER) {
+                helper.fail("空位置感知必须 NO_PLAYER");
+            }
+            ItemStack disc = new ItemStack(net.minecraft.world.item.Items.MUSIC_DISC_CAT);
+            if (!com.bmf.bmfstown.entity.TavernDj.cdPlayable(disc)) {
+                helper.fail("原版盘必须可放（原版路径不依赖 netmusic）");
+            }
+            if (!com.bmf.bmfstown.entity.TavernDj.isCd(disc)) {
+                helper.fail("原版盘必须被认成唱片");
+            }
+            if (com.bmf.bmfstown.entity.TavernDj.cdPlayable(ItemStack.EMPTY)) {
+                helper.fail("空物不可放");
+            }
+            // 盘与机器同型配对（#102 追记）：原版盘进原版机可以、进 netmusic 机不行
+            if (!com.bmf.bmfstown.entity.TavernDj.cdPlayableFor(
+                    com.bmf.bmfstown.entity.TavernDj.MachineKind.VANILLA, disc)) {
+                helper.fail("原版盘必须配原版机");
+            }
+            if (com.bmf.bmfstown.entity.TavernDj.cdPlayableFor(
+                    com.bmf.bmfstown.entity.TavernDj.MachineKind.NETMUSIC, disc)) {
+                helper.fail("原版盘不得配 netmusic 机（无 SongInfo）");
+            }
+            if (com.bmf.bmfstown.entity.TavernDj.cdPlayableFor(
+                    com.bmf.bmfstown.entity.TavernDj.MachineKind.VANILLA, ItemStack.EMPTY)) {
+                helper.fail("空物不得配任何机器");
+            }
+        }).thenSucceed();
+    }
+
+    /** 原版唱片机链路：插入即开播（setTheItem 自动 play + HAS_RECORD）。
+     *  原版路径无 mod 依赖——DJ 主链路首次可自动化。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 60)
+    public static void djVanillaInsertPlays(GameTestHelper helper) {
+        BlockPos p = new BlockPos(1, 2, 1);
+        helper.setBlock(p, net.minecraft.world.level.block.Blocks.JUKEBOX);
+        helper.startSequence().thenExecute(() -> {
+            var level = helper.getLevel();
+            var abs = helper.absolutePos(p);
+            ItemStack disc = new ItemStack(net.minecraft.world.item.Items.MUSIC_DISC_CAT);
+            if (!com.bmf.bmfstown.entity.TavernDj.insertAndPlay(level, abs, disc)) {
+                helper.fail("原版唱片机插原版盘必须成功");
+            }
+            if (!(level.getBlockEntity(abs) instanceof net.minecraft.world.level.block.entity.JukeboxBlockEntity jbe)) {
+                helper.fail("唱片机方块实体缺失");
+                return;
+            }
+            if (jbe.getTheItem().isEmpty()
+                    || !jbe.getTheItem().is(net.minecraft.world.item.Items.MUSIC_DISC_CAT)) {
+                helper.fail("槽里必须是插进去的那张盘");
+            }
+            if (!helper.getBlockState(p).getValue(net.minecraft.world.level.block.JukeboxBlock.HAS_RECORD)) {
+                helper.fail("插入后方块必须置 HAS_RECORD");
+            }
+            if (com.bmf.bmfstown.entity.TavernDj.sense(level, abs)
+                    != com.bmf.bmfstown.entity.TavernDj.MachineState.PLAYING) {
+                helper.fail("插入即开播：sense 必须 PLAYING");
+            }
+        }).thenSucceed();
+    }
+
+    /** 原版唱片机链路：歌放完（songPlayer.stop 模拟）→ DISC_IDLE → 取盘 →
+     *  槽空 + HAS_RECORD 复位 + 盘带 DJ 标记可收。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 60)
+    public static void djVanillaExtractAfterStop(GameTestHelper helper) {
+        BlockPos p = new BlockPos(1, 2, 1);
+        helper.setBlock(p, net.minecraft.world.level.block.Blocks.JUKEBOX);
+        helper.startSequence().thenExecute(() -> {
+            var level = helper.getLevel();
+            var abs = helper.absolutePos(p);
+            ItemStack disc = new ItemStack(net.minecraft.world.item.Items.MUSIC_DISC_CAT);
+            com.bmf.bmfstown.entity.TavernDj.markDj(disc);
+            if (!com.bmf.bmfstown.entity.TavernDj.insertAndPlay(level, abs, disc)) {
+                helper.fail("插入必须成功");
+                return;
+            }
+            if (!(level.getBlockEntity(abs) instanceof net.minecraft.world.level.block.entity.JukeboxBlockEntity jbe)) {
+                helper.fail("唱片机方块实体缺失");
+                return;
+            }
+            jbe.getSongPlayer().stop(level, level.getBlockState(abs)); // 模拟歌放完
+            if (com.bmf.bmfstown.entity.TavernDj.sense(level, abs)
+                    != com.bmf.bmfstown.entity.TavernDj.MachineState.DISC_IDLE) {
+                helper.fail("停播后必须 DISC_IDLE（有盘没放）");
+            }
+            ItemStack out = com.bmf.bmfstown.entity.TavernDj.extractDisc(level, abs);
+            if (out.isEmpty() || !out.is(net.minecraft.world.item.Items.MUSIC_DISC_CAT)) {
+                helper.fail("取盘必须拿到原盘");
+            }
+            if (!com.bmf.bmfstown.entity.TavernDj.hasDjMark(out)) {
+                helper.fail("取出的盘必须带 DJ 标记");
+            }
+            if (jbe.getTheItem().isEmpty()
+                    && helper.getBlockState(p)
+                    .getValue(net.minecraft.world.level.block.JukeboxBlock.HAS_RECORD)) {
+                helper.fail("取盘后 HAS_RECORD 必须复位");
+            }
+        }).thenSucceed();
+    }
+
+    /** 点歌标记组件：打标→认标→随物品存档口径（copy 带走）→可清除。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 60)
+    public static void djMarkRoundTrip(GameTestHelper helper) {
+        helper.startSequence().thenExecute(() -> {
+            ItemStack st = new ItemStack(net.minecraft.world.item.Items.MUSIC_DISC_CAT);
+            if (com.bmf.bmfstown.entity.TavernDj.hasDjMark(st)) {
+                helper.fail("新盘必须无点歌标记");
+            }
+            com.bmf.bmfstown.entity.TavernDj.markDj(st);
+            if (!com.bmf.bmfstown.entity.TavernDj.hasDjMark(st)) {
+                helper.fail("打标后必须认标");
+            }
+            if (!com.bmf.bmfstown.entity.TavernDj.hasDjMark(st.copy())) {
+                helper.fail("标记必须随物品拷贝走（存档/货列转移不丢）");
             }
         }).thenSucceed();
     }

@@ -105,6 +105,16 @@ public final class NauseaSecretLedger extends SavedData {
         return this.issued;
     }
 
+    /**
+     * 仅测试用：清掉某镇本日的酒保通道掷骰闸门。并行 GameTest 共享全服静态
+     * Config，别的用例的还原窗口能把本用例首次掷骰打回 5%——落空即锁死当天
+     * （#68 实证的抖动模式）。测试等书期间每 tick 重设概率+清本镇闸门即可
+     * 对冲；闸门只按 townId 记账，清自己镇的不影响并行用例的镇。
+     */
+    public void testOnlyResetTavernGate(UUID townId) {
+        this.tavernRolled.remove(townId);
+    }
+
     // ------------------------------------------------------------
     //  存档往返
     // ------------------------------------------------------------
