@@ -861,6 +861,8 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         //    被打断/有半成品的桶必须接上——料已经进去一半，弃之既浪费又留死桶。
         //    续桶<b>不做菜单门/温度门</b>（料已半进桶，弃之死局；BAC 自己等温度），
         //    但出料槽有货的桶除外——先走收货通道（#85：滞留产物+投新料=丢产物）。
+        // 水源站登记态一次取定：续桶基液补差的瓶路径可行性判断要用（#87/#101）
+        boolean stationRegistered = waterStationAt(level) != null;
         BlockPos keg = null;
         BrewPlan plan = null;
         double bestDist = Double.MAX_VALUE;
@@ -876,7 +878,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                     k.snap().fluid().fluidId())) {
                 continue; // 成品流体：归接瓶通道
             }
-            BrewPlan p = resumePlanFor(k, recipes, cellarC);
+            BrewPlan p = resumePlanFor(k, recipes, cellarC, stationRegistered);
             if (p == null) {
                 continue; // 对不上任何配方/缺料：不碰（尊重玩家的手动操作），缺口已记播报
             }
@@ -1057,19 +1059,26 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             keg = bestKeg;
             plan = BrewPlan.fresh(best);
         }
-        // 水基取水计划（决策 #87）：仅新批次走（fresh 的 assumedFluidId=null）；
-        // 续桶基液补差仍走水桶老路径。计划与 missingFor 同源，结论矛盾=竞态，
-        // 下轮重算。瓶/桶口径不同→份数改写进计划（POUR 按份数循环）。
+        // 水基取水计划（决策 #87）：新批次=足量；续桶（2026-11-21 收尾）=
+        // 基液补差额也走瓶路径——三来源混用（水桶/水瓶/空瓶+水源站），
+        // 酒窖没水桶但有水瓶也能把半成品桶续完。份数按取水计划改写
+        // （POUR 每份口径跟着货物走：水桶 1000mB/水瓶 250mB，倒满封顶）。
+        // 计划与 computeResumePlan 同源，结论矛盾=竞态，下轮重算。
         this.waterPlan = null;
         this.waterTarget = null;
         this.waterSpot = null;
-        if (plan.assumedFluidId() == null && isWaterBase(plan.recipe())) {
+        if (isWaterBase(plan.recipe())) {
+            int remainMb = plan.assumedFluidId() == null
+                    ? plan.recipe().baseAmountMb()
+                    : (int) ((plan.recipe().baseAmountMb()
+                            * (long) KegAccess.DROPLETS_PER_MB - plan.assumedDroplets())
+                            / KegAccess.DROPLETS_PER_MB);
             Container cc = cellarView(level);
-            WaterPlan wp = planWater(plan.recipe().baseAmountMb(),
+            WaterPlan wp = planWater(remainMb,
                     KegAccess.countItem(cc, new ItemStack(Items.WATER_BUCKET)),
                     KegAccess.countItem(cc, waterBottleTemplate()),
                     KegAccess.countItem(cc, new ItemStack(Items.GLASS_BOTTLE)),
-                    waterStationAt(level) != null);
+                    stationRegistered);
             if (!wp.feasible()) {
                 return false;
             }
@@ -1106,8 +1115,8 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
      * @return 续桶计划；null = 这桶对不上或补不起（保持不动）
      */
     private BrewPlan resumePlanFor(KegAt k, List<KegRecipes.FermentRecipe> recipes,
-            Container cellar) {
-        ResumeResult rr = computeResumePlan(k.snap(), recipes, cellar);
+            Container cellar, boolean stationRegistered) {
+        ResumeResult rr = computeResumePlan(k.snap(), recipes, cellar, stationRegistered);
         if (rr.plan() == null && rr.missing() != null
                 && (this.lastBrewMissing == null
                         || rr.missing().size() < this.lastBrewMissing.size())) {
@@ -1127,18 +1136,32 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
      *   <li>已配齐（流体足量+配料全在）= 正在酿的桶，不属续桶（在途入账管）；</li>
      *   <li>差额部分酒窖补不出 → 不接手，缺口带回（比整批缺口更精准）。</li>
      * </ul>
+     *
+     * <p><b>基液差额的可行性走 #87/#101 瓶路径（2026-11-21 续桶补差收尾）</b>：
+     * 水基配方按 {@link #planWater} 三来源混用对账（水桶/水瓶/空瓶+水源站）——
+     * 酒窖没水桶但有水瓶（或空瓶+水源站）也能续；非水基仍只认基液源物品。
      */
     public static ResumeResult computeResumePlan(KegAccess.KegSnap snap,
             List<KegRecipes.FermentRecipe> recipes, Container cellar) {
+        return computeResumePlan(snap, recipes, cellar, false);
+    }
+
+    /** {@link #computeResumePlan(KegAccess.KegSnap, List, Container)} 的
+     * 水源站感知版：{@code stationRegistered}=镇上登记过水源站。 */
+    public static ResumeResult computeResumePlan(KegAccess.KegSnap snap,
+            List<KegRecipes.FermentRecipe> recipes, Container cellar,
+            boolean stationRegistered) {
         KegAccess.FluidSnap f = snap.fluid();
         for (KegRecipes.FermentRecipe r : recipes) {
             String assumedFid;
             long assumedDroplets;
             int extraSources;
+            int remainMb;
             if (f == null) {
                 assumedFid = null;
                 assumedDroplets = -1L;
                 extraSources = sourceCountFor(r);
+                remainMb = r.baseAmountMb();
             } else if (f.fluidId().equals(r.baseFluidId())) {
                 long needTotal = (long) r.baseAmountMb() * KegAccess.DROPLETS_PER_MB;
                 if (f.droplets() > needTotal) {
@@ -1149,6 +1172,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 long remain = needTotal - f.droplets();
                 extraSources = (int) ((remain + r.basePerSourceDroplets() - 1)
                         / r.basePerSourceDroplets());
+                remainMb = (int) (remain / KegAccess.DROPLETS_PER_MB);
             } else {
                 continue; // 别种流体：换下条配方
             }
@@ -1188,12 +1212,25 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             if (extraSources == 0 && extra.isEmpty()) {
                 continue; // 已配齐在酿：归在途入账，不是续桶
             }
-            // 差额部分酒窖补得出吗（补不出不接手——否则取一半卡半路又是死局）
+            // 差额部分酒窖补得出吗（补不出不接手——否则取一半卡半路又是死局）。
+            // 水基走瓶路径三来源混用对账（#87/#101——2026-11-21 续桶补差接入，
+            // 没水桶有水瓶/空瓶+水源站也能续）；非水基仍只认基液源物品。
             List<ItemStack> missing = new ArrayList<>();
             if (r.baseSource() != null) {
-                int haveBase = KegAccess.countItem(cellar, new ItemStack(r.baseSource()));
-                if (extraSources > 0 && haveBase < extraSources) {
-                    missing.add(new ItemStack(r.baseSource()));
+                if (isWaterBase(r)) {
+                    WaterPlan wp = planWater(remainMb,
+                            KegAccess.countItem(cellar, new ItemStack(Items.WATER_BUCKET)),
+                            KegAccess.countItem(cellar, waterBottleTemplate()),
+                            KegAccess.countItem(cellar, new ItemStack(Items.GLASS_BOTTLE)),
+                            stationRegistered);
+                    if (extraSources > 0 && !wp.feasible()) {
+                        missing.add(new ItemStack(r.baseSource()));
+                    }
+                } else {
+                    int haveBase = KegAccess.countItem(cellar, new ItemStack(r.baseSource()));
+                    if (extraSources > 0 && haveBase < extraSources) {
+                        missing.add(new ItemStack(r.baseSource()));
+                    }
                 }
             }
             for (KegRecipes.KegIng e : extra) {

@@ -759,6 +759,57 @@ public class TavernTests {
         helper.succeed();
     }
 
+    /** 续桶补差走瓶路径（2026-11-21 #87/#101 收尾）：酒窖没水桶，两个满水瓶
+     *  正好补 500mB 差额——应可续桶（旧实现死认水桶会误报缺水停工）。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void resumePlanWaterBaseBottlePath(GameTestHelper helper) {
+        var cellar = new net.minecraft.world.SimpleContainer(
+                com.bmf.bmfstown.entity.TavernkeepGoal.waterBottleTemplate(),
+                com.bmf.bmfstown.entity.TavernkeepGoal.waterBottleTemplate(),
+                new ItemStack(Items.WHEAT), new ItemStack(Items.WHEAT_SEEDS),
+                new ItemStack(Items.BROWN_MUSHROOM));
+        var snap = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "minecraft:water", 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB));
+        // 无水源站：两瓶满水瓶恰好够 500mB——可行
+        var rr = com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                snap, List.of(beerRecipe()), cellar, false);
+        if (rr.plan() == null) {
+            helper.fail("没水桶但有足量水瓶应可续桶（missing=" + rr.missing() + "）");
+        }
+        helper.succeed();
+    }
+
+    /** 瓶路径混用（#101 口径在续桶端成立）：1 满水瓶+1 空瓶不够 → 有水源站
+     *  就可行（空瓶到站装水）；没水源站就仍缺（缺口点名水桶）。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void resumePlanWaterBaseStationFillGap(GameTestHelper helper) {
+        var cellar = new net.minecraft.world.SimpleContainer(
+                com.bmf.bmfstown.entity.TavernkeepGoal.waterBottleTemplate(),
+                new ItemStack(Items.GLASS_BOTTLE),
+                new ItemStack(Items.WHEAT), new ItemStack(Items.WHEAT_SEEDS),
+                new ItemStack(Items.BROWN_MUSHROOM));
+        var snap = kegSnap(new com.bmf.bmfstown.entity.KegAccess.FluidSnap(
+                "minecraft:water", 500L * com.bmf.bmfstown.entity.KegAccess.DROPLETS_PER_MB));
+        // ① 有水源站：1 瓶+1 空瓶到站装水=2 瓶量——可行
+        var withStation = com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                snap, List.of(beerRecipe()), cellar, true);
+        if (withStation.plan() == null) {
+            helper.fail("有水源站时空瓶可补差，应可续桶（missing="
+                    + withStation.missing() + "）");
+        }
+        // ② 没水源站：瓶量不够且空瓶装不了水——不可续，缺口点名水桶
+        var noStation = com.bmf.bmfstown.entity.TavernkeepGoal.computeResumePlan(
+                snap, List.of(beerRecipe()), cellar, false);
+        if (noStation.plan() != null) {
+            helper.fail("没水源站且瓶量不足不应接手");
+        }
+        if (noStation.missing() == null || noStation.missing().stream()
+                .noneMatch(st -> st.is(Items.WATER_BUCKET))) {
+            helper.fail("缺口应点名水桶");
+        }
+        helper.succeed();
+    }
+
     /** 新批次计划 = 进度为零的续桶：假定桶全空、取足量基液+全部配料。 */
     @GameTest(template = "empty3x3x3", timeoutTicks = 200)
     public static void freshPlanAssumesEmptyKeg(GameTestHelper helper) {
