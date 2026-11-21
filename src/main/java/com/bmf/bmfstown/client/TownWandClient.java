@@ -434,7 +434,8 @@ public final class TownWandClient {
             case DINING -> new float[]{1.0F, 0.65F, 0.0F};   // 橙
             case HOUSING -> new float[]{0.33F, 1.0F, 1.0F};  // 青
             case WORK -> new float[]{0.65F, 1.0F, 0.33F};    // 绿
-            default -> new float[]{1.0F, 1.0F, 1.0F};
+            case TAVERN -> new float[]{0.95F, 0.30F, 0.45F}; // 酒红（酒吧主题，白/橙/青/绿之外不撞色）
+            default -> new float[]{1.0F, 1.0F, 1.0F};        // 城镇外框独占白
         };
     }
 

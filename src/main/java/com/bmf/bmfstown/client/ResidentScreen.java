@@ -559,6 +559,31 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     }
 
     @Override
+    public void render(GuiGraphics gfx, int mouseX, int mouseY, float partialTick) {
+        super.render(gfx, mouseX, mouseY, partialTick);
+        // 槽位 tooltip：1.21.1 的 AbstractContainerScreen.render() 本体不画
+        // tooltip——原版箱子/背包界面都是各屏幕在 render() 里显式补一刀
+        // （ContainerScreen/InventoryScreen 同款）。漏了这一刀 = 玩家背包/
+        // 镇民背包/装备行/书稿槽悬停全无提示（恐怖手记/学者写的书看不出是啥）。
+        // 隐形格子不提示：归属页/工作页藏起来的镇民格子按"隐形搬运"设计
+        // 可以盲拿盲放，但如果悬停时冒出看不见的物品名会让人困惑——跳过。
+        Slot hovered = this.hoveredSlot;
+        if (hovered != null && slotHiddenOnCurrentPage(hovered)) {
+            return;
+        }
+        this.renderTooltip(gfx, mouseX, mouseY);
+    }
+
+    /** 当前页被列表顶替而隐藏的格子（与 {@link #renderSlot} 的隐藏条件同源）。 */
+    private boolean slotHiddenOnCurrentPage(Slot slot) {
+        if (this.page == PAGE_TOWN && slot.y < ResidentMenu.PLAYER_INV_Y) {
+            return true;
+        }
+        return this.page == PAGE_WORK && slot.y < ResidentMenu.PLAYER_INV_Y
+                && !ResidentMenu.isWipSlot(slot);
+    }
+
+    @Override
     public void renderSlot(GuiGraphics gfx, Slot slot) {
         // 归属页：只隐藏"镇民自己的格子"（装备行 + 镇民背包）——
         // 它们是第一页的内容，归属页的菜单区域顶替了它们的位置。
