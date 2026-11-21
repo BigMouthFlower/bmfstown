@@ -84,6 +84,12 @@ public final class ModItems {
             ITEMS.registerSimpleBlockItem(com.bmf.bmfstown.block.ModBlocks.BULLETIN_BOARD);
 
     /**
+     * 酒吧菜单板（#86 升格）：区内右键开菜单编辑 UI，区外只读；数据在镇级。
+     */
+    public static final DeferredItem<net.minecraft.world.item.BlockItem> TAVERN_MENU_BOARD =
+            ITEMS.registerSimpleBlockItem(com.bmf.bmfstown.block.ModBlocks.TAVERN_MENU_BOARD);
+
+    /**
      * 写作中的书（v0.11 学者）：开写即抽定内容，进度/实践计数/作者链全在
      * 组件 NBT 里——死亡掉落、换人续写、销毁退池都随书走。
      * 名字恒为"未完成的书"，玩家打不开（内容保密）。

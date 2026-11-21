@@ -853,7 +853,8 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         Container cellarC = cellarView(level); // 聚合视图：跨容器计数/取货（#99）
         Stock stock = cellarScan(level);
         int defaultTarget = Math.max(1, Config.TAVERN_STOCK_TARGET.get());
-        // 酒吧菜单（决策 #86）：null=未配置全维护；非 null=严格按菜单
+        // 酒吧菜单（决策 #86，2026-11-21 二次拍板）：null=未配置**不维护**
+        // （不开新批次、不喊奶/蜜缺货，上酒有什么上什么）；非 null=严格按菜单
         Map<Item, Integer> menu = tavernMenu();
 
         // ① 续桶优先（2026-11-18 用户拍板，炼金 reconcileStand 同思想）：
@@ -889,6 +890,13 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         // ② 空桶新批次：菜单闭包 + 温度门（#85 阶段二）+ 原料预留（#85 阶段一）。
         //    lastBrewMissing 优先保留 ① 记下的续桶缺口（半成品差额更精准可达成）。
         if (keg == null) {
+            // 菜单未配置=不维护（#86 二次拍板 2026-11-21）：酒保不自行开新批次
+            // ——上酒端本来就不查菜单（客人点单不带酒种，窖里有什么送什么），
+            // 酿什么是玩家配菜单后才启动的经营决策。半成品续桶①不受此门
+            // （料已半进桶，弃之死局——清理性质不属"维护目标"）。
+            if (menu == null) {
+                return false;
+            }
             // 菜单闭包（决策 #86）：直接产物 ∈ 菜单 + 二层酒要的原料酒豁免进池
             // （想要强根艾尔 → 啤酒自动豁免——它没有独立目标量，按需补料即可）。
             java.util.Set<Item> wanted = menuClosure(level, menu);
@@ -2247,12 +2255,17 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     }
 
     private Stock cellarScan(ServerLevel level) {
+        return cellarScanOf(level, tavernZones());
+    }
+
+    /** {@link #cellarScan} 静态版（菜单板快照复用——口径唯一来源）。 */
+    private static Stock cellarScanOf(ServerLevel level, List<TownZone> zones) {
         int milk = 0;
         int honey = 0;
         int nausea = 0;
         Map<Item, Integer> bottled = new HashMap<>();
-        for (BlockPos pos : cellarContainers(level)) {
-            Container c = containerAt(level, pos);
+        for (BlockPos pos : cellarContainersOf(level, zones)) {
+            Container c = JobKit.containerAt(level, pos);
             if (c == null) {
                 continue;
             }
@@ -2318,13 +2331,18 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
      * BAC 酿造桶排除——桶内半成品不是窖存（收货通道管）。
      */
     private Container cellarView(ServerLevel level) {
+        return cellarViewOf(level, tavernZones());
+    }
+
+    /** {@link #cellarView} 静态版（菜单板快照复用——口径唯一来源）。 */
+    private static Container cellarViewOf(ServerLevel level, List<TownZone> zones) {
         List<Container> parts = new ArrayList<>();
         Block keg = kegBlock();
-        for (BlockPos pos : cellarContainers(level)) {
+        for (BlockPos pos : cellarContainersOf(level, zones)) {
             if (keg != null && level.getBlockState(pos).is(keg)) {
                 continue; // 酿造桶不是储物箱
             }
-            Container c = containerAt(level, pos);
+            Container c = JobKit.containerAt(level, pos);
             if (c != null) {
                 parts.add(c);
             }
@@ -2453,9 +2471,14 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     /** 区内全部容器（酒窖候选；排除唱片机——原版唱片机自己就是 Container，
      *  不排除的话机器里的盘会被当成窖源，甚至播放中被抽盘=打断歌）。 */
     private List<BlockPos> cellarContainers(ServerLevel level) {
+        return cellarContainersOf(level, tavernZones());
+    }
+
+    /** {@link #cellarContainers} 的静态版（菜单板快照/同步复用——口径唯一来源，#86 升格）。 */
+    static List<BlockPos> cellarContainersOf(ServerLevel level, List<TownZone> zones) {
         List<BlockPos> out = new ArrayList<>();
         Block netmusicPlayer = TavernDj.musicPlayerBlock();
-        for (TownZone zone : tavernZones()) {
+        for (TownZone zone : zones) {
             for (BlockPos pos : TownZone.iterate(zone)) {
                 net.minecraft.world.level.block.state.BlockState bs = level.getBlockState(pos);
                 if (bs.is(net.minecraft.world.level.block.Blocks.JUKEBOX)
@@ -2542,18 +2565,22 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
 
     /** 区内全部酒桶快照（一次扫描，{@link #findKeg} 与在途折算共用）。 */
     private List<KegAt> scanKegs(ServerLevel level) {
+        List<KegAt> list = scanKegsOf(level, tavernZones());
+        list.removeIf(k -> NavOps.blocked(this.resident, k.pos()));
+        return list;
+    }
+
+    /** {@link #scanKegs} 静态版（菜单板快照复用；不做寻路黑名单——展示账按物理事实算）。 */
+    private static List<KegAt> scanKegsOf(ServerLevel level, List<TownZone> zones) {
         List<KegAt> list = new ArrayList<>();
         Block keg = kegBlock();
         if (keg == null) {
             return list;
         }
-        for (TownZone zone : tavernZones()) {
+        for (TownZone zone : zones) {
             for (BlockPos pos : TownZone.iterate(zone)) {
                 if (!level.getBlockState(pos).is(keg)) {
                     continue;
-                }
-                if (NavOps.blocked(this.resident, pos)) {
-                    continue; // 寻路黑名单：放弃过的桶 10 秒内不选
                 }
                 KegAccess.KegSnap snap = KegAccess.read(level, pos);
                 if (snap != null) {
@@ -2599,7 +2626,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     /** 产物在手量（2026-11-18 口径扩展）：饮品产物=窖瓶折算+在途瓶；
      *  物品产物（肉干等）=窖内件数+出料槽积货+在酿整批折算——否则物品
      *  产物恒 0，衍生目标量永远"没够过"，链式预留死循环。 */
-    private int productOnHand(KegRecipes.FermentRecipe r, Stock stock,
+    private static int productOnHand(KegRecipes.FermentRecipe r, Stock stock,
             List<KegAt> kegs, Container cellarC) {
         Item res = resultItem(r);
         if (r.resultIsFluid()) {
@@ -2619,7 +2646,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         return have;
     }
 
-    private int inFlightBottles(List<KegAt> kegs, KegRecipes.FermentRecipe r) {
+    private static int inFlightBottles(List<KegAt> kegs, KegRecipes.FermentRecipe r) {
         int bottles = 0;
         for (KegAt k : kegs) {
             KegAccess.KegSnap snap = k.snap();
@@ -2695,10 +2722,16 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     /**
      * 菜单闭包（决策 #86）：直接产物 ∈ 菜单 + 二层酒要的原料酒<b>递归</b>
      * 豁免进池（想要强根艾尔 → 啤酒进池；啤酒若是别的高层酒基液则继续豁免）。
-     * {@code menu == null}（未配置全维护）→ 返回 null（= 不过滤）。
+     * {@code menu == null}（未配置不维护）→ 返回 null（= 不过滤，仅剩续桶路径在用）。
      * 排产预留与缺料播报共用同一口径。
      */
     private java.util.Set<Item> menuClosure(ServerLevel level,
+            Map<Item, Integer> menu) {
+        return menuClosureOf(level, menu);
+    }
+
+    /** {@link #menuClosure} 静态版（菜单板快照豁免标签复用——口径唯一来源）。 */
+    public static java.util.Set<Item> menuClosureOf(ServerLevel level,
             Map<Item, Integer> menu) {
         if (menu == null) {
             return null;
@@ -2741,11 +2774,47 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         return false;
     }
 
+    /**
+     * 菜单板快照账（#86 升格，2026-11-21）：菜单每项产物的<b>在手量</b>，与排产
+     * {@link #productOnHand} 完全同源（窖瓶/窖内件数+出料槽+在途折算）——板面
+     * 显示"2/4"时酒保排产认的也是这个 2，杜绝口径分裂（#99 教训）。菜单外无
+     * 配方的条目按窖存实物计数。无 resident 参数（展示账不做寻路黑名单过滤）。
+     */
+    public static Map<Item, Integer> menuStockOf(ServerLevel level, Town town,
+            Map<Item, Integer> menu) {
+        Map<Item, Integer> out = new HashMap<>();
+        if (menu == null || menu.isEmpty()) {
+            return out;
+        }
+        List<TownZone> zones = town.zones(com.bmf.bmfstown.town.TownWandMode.TAVERN);
+        Stock stock = cellarScanOf(level, zones);
+        List<KegAt> kegs = scanKegsOf(level, zones);
+        Container cellarC = cellarViewOf(level, zones);
+        List<KegRecipes.FermentRecipe> recipes = KegRecipes.all(level);
+        for (Map.Entry<Item, Integer> e : menu.entrySet()) {
+            Item item = e.getKey();
+            int have = 0;
+            boolean matched = false;
+            for (KegRecipes.FermentRecipe r : recipes) {
+                if (resultItem(r) == item) {
+                    have += productOnHand(r, stock, kegs, cellarC);
+                    matched = true;
+                }
+            }
+            if (!matched) {
+                have = stock.bottled().getOrDefault(item, 0)
+                        + KegAccess.countItem(cellarC, new ItemStack(item));
+            }
+            out.put(item, have);
+        }
+        return out;
+    }
+
     /** 闭包内是否存在以 {@code source} 为基液的配方（奶/蜜维护播报的门）。 */
     private boolean closureUsesSource(ServerLevel level,
             java.util.Set<Item> wanted, Item source) {
         if (wanted == null) {
-            return true; // 未配置全维护：奶/蜜照旧维护
+            return false; // 菜单未配置=不维护（#86 二次拍板）：没有目标就没有原料需求，不喊
         }
         for (KegRecipes.FermentRecipe r : KegRecipes.all(level)) {
             if (source.equals(r.baseSource()) && wanted.contains(resultItem(r))) {

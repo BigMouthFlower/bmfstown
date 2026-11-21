@@ -48,6 +48,17 @@ public final class ModBlocks {
                             .strength(1.5F)
                             .sound(SoundType.WOOD));
 
+    /**
+     * 酒吧菜单板（#86 升格，2026-11-21 拍板）：菜单=酒馆资产不绑酒保实体；
+     * 区内右键开编辑 UI、区外只读打印；数据在镇级 Town.tavernMenu，拆板不丢。
+     */
+    public static final DeferredBlock<TavernMenuBoardBlock> TAVERN_MENU_BOARD =
+            BLOCKS.registerBlock("tavern_menu_board", TavernMenuBoardBlock::new,
+                    BlockBehaviour.Properties.of()
+                            .mapColor(MapColor.WOOD)
+                            .strength(1.2F)
+                            .sound(SoundType.WOOD));
+
     private ModBlocks() {
     }
 

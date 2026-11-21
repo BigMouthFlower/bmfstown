@@ -2476,9 +2476,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
             // ---- 效率行（v0.8.1 建立，v0.10.4 全因素化）：实时公式逐段连乘，
             //      每段可悬停看"这一段为什么是这个数"。算式与服务端
-            //      （Resident.professionEfficiency / ScholarGoal.efficiency /
-            //      WorkerGoal.craftTicks / tick 层活字印刷）逐段对齐——
+            //      （ScholarGoal.efficiency / WorkerGoal.craftTicks /
+            //      tick 层活字印刷）逐段对齐——
             //      面板展示的就是实际生效的数值，没生效的因素不显示。
+            //      （2026-11-21 起：战斗伤害倍率与职业脱钩，全员按格斗线
+            //      Resident.combatEfficiency 结算——战士页展示的公式与之一致，
+            //      非战士页展示的是各自工作效率，格斗倍率暂无面板展示）
             this.effParts.clear();
             var profile = resident.getArchive();
             int effY = textY + 20;

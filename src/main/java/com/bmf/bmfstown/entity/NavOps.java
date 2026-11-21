@@ -165,7 +165,7 @@ public final class NavOps {
                 }
                 long len = Math.min(BLOCK_TICKS << Math.min(seq, 5), BLOCK_TICKS_MAX);
                 s.blocked.put(target.asLong(), new long[]{now + len, len, seq + 1});
-                LOGGER.info("[BmfTown][寻路] {} 到不了 {}（{} 次推进失败）——放弃本单，{} 秒内不再选它，挑别的目标",
+                LOGGER.debug("[BmfTown][寻路] {} 到不了 {}（{} 次推进失败）——放弃本单，{} 秒内不再选它，挑别的目标",
                         r.getName().getString(), target.toShortString(),
                         MAX_ATTEMPTS, len / 20);
                 return Nav.STUCK;
@@ -275,7 +275,7 @@ public final class NavOps {
                 : Math.min(BLOCK_TICKS << Math.min(seq, 5), BLOCK_TICKS_MAX);
         s.blocked.put(target.asLong(), new long[]{now + len, len, seq + 1});
         s.pathOk.clear(); // 可达缓存立即失效：新拉黑可能让原有路径变成"穿缝必楔"
-        LOGGER.info("[BmfTown][寻路] {} 的目标 {} 暂时放弃（{} 秒内不再选它）",
+        LOGGER.debug("[BmfTown][寻路] {} 的目标 {} 暂时放弃（{} 秒内不再选它）",
                 r.getName().getString(), target.toShortString(), len / 20);
     }
 

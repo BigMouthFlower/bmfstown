@@ -15,7 +15,10 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -728,6 +731,77 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：酒吧菜单板编辑（#86 升格，2026-11-21 拍板）。op：0=set（itemId+
+     * target，UI 限 1~32 服务端再钳）、1=remove、2=clear（回落不维护——#108）。
+     * 服务端复核：板在镇领地内 + 板在酒馆区内 + 城镇成员（与命令同口径），
+     * 全过才改 {@code Town.tavernMenu} 并回快照。
+     */
+    public record TavernMenuEditPayload(int op, String itemId, int target, BlockPos boardPos)
+            implements CustomPacketPayload {
+
+        public static final Type<TavernMenuEditPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "tavern_menu_edit"));
+
+        public static final StreamCodec<ByteBuf, TavernMenuEditPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, TavernMenuEditPayload::op,
+                        ByteBufCodecs.STRING_UTF8, TavernMenuEditPayload::itemId,
+                        ByteBufCodecs.VAR_INT, TavernMenuEditPayload::target,
+                        BlockPos.STREAM_CODEC, TavernMenuEditPayload::boardPos,
+                        TavernMenuEditPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * S → C：酒吧菜单快照（菜单板右键开 UI / 编辑后刷新）。条目
+     * {@code itemId|target|stock|exempt}（exempt=闭包豁免项标签，#86 排产
+     * 口径）——库存<b>服务端算好下发</b>（{@code TavernkeepGoal.menuStockOf}，
+     * 排产同源口径），客户端不算账（口径分裂防坑）。
+     */
+    public record TavernMenuSnapshotPayload(boolean editable, boolean open,
+            BlockPos boardPos, java.util.List<String> entries)
+            implements CustomPacketPayload {
+
+        public static final Type<TavernMenuSnapshotPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "tavern_menu_snapshot"));
+
+        public static final StreamCodec<ByteBuf, TavernMenuSnapshotPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.BOOL, TavernMenuSnapshotPayload::editable,
+                        ByteBufCodecs.BOOL, TavernMenuSnapshotPayload::open,
+                        BlockPos.STREAM_CODEC, TavernMenuSnapshotPayload::boardPos,
+                        stringList(), TavernMenuSnapshotPayload::entries,
+                        TavernMenuSnapshotPayload::new);
+
+        private static StreamCodec<ByteBuf, java.util.List<String>> stringList() {
+            return StreamCodec.of(
+                    (buf, list) -> {
+                        ByteBufCodecs.VAR_INT.encode(buf, list.size());
+                        for (String e : list) {
+                            ByteBufCodecs.STRING_UTF8.encode(buf, e);
+                        }
+                    },
+                    buf -> {
+                        int n = ByteBufCodecs.VAR_INT.decode(buf);
+                        java.util.List<String> out = new java.util.ArrayList<>(n);
+                        for (int i = 0; i < n; i++) {
+                            out.add(ByteBufCodecs.STRING_UTF8.decode(buf));
+                        }
+                        return out;
+                    });
+        }
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * S → C：炼金目录同步（客户端 PotionBrewing 是 vanilla 自举实例，
      * 反查必须服务端做——条目 "potionId|hasLong|hasStrong"）。
      */
@@ -1394,6 +1468,91 @@ public final class ModNetworking {
         });
     }
 
+    /** C2S 处理：酒吧菜单板编辑——板镇内+酒馆区内+成员三道闸（命令同口径），改账回快照。 */
+    private static void handleTavernMenuEdit(TavernMenuEditPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer sp)
+                    || !(sp.level() instanceof net.minecraft.server.level.ServerLevel sl)) {
+                return;
+            }
+            var town = com.bmf.bmfstown.block.TavernMenuBoardBlock.resolveTown(sl, payload.boardPos());
+            if (town == null || !com.bmf.bmfstown.block.TavernMenuBoardBlock
+                    .inTavernZone(town, payload.boardPos())) {
+                return; // 板无归属/不在酒馆区：不给编辑（区外只读设计）
+            }
+            if (!town.isMember(sp.getUUID())) {
+                sp.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                        "msg.bmfstown.town.not_member", town.name()), true);
+                return;
+            }
+            switch (payload.op()) {
+                case 0 -> {
+                    if (payload.itemId() != null && !payload.itemId().isBlank()) {
+                        // UI 上限 1~32（设计稿 §6.3）；命令链不限（测试/管理用）
+                        town.setTavernMenuItem(payload.itemId(),
+                                Math.max(1, Math.min(32, payload.target())));
+                    }
+                }
+                case 1 -> town.removeTavernMenuItem(payload.itemId());
+                case 2 -> town.clearTavernMenu();
+                default -> { }
+            }
+            com.bmf.bmfstown.town.TownSaveData.get(sl).setDirty();
+            sendTavernMenuSnapshot(sp, town, payload.boardPos(), true, false);
+        });
+    }
+
+    /**
+     * 构建并发送菜单快照（S2C）。条目 {@code itemId|target|stock|exempt}：
+     * 库存走 {@code TavernkeepGoal.menuStockOf}（排产同源口径——板上显示 2/4
+     * 时排产认的也是这个 2）；豁免标签=闭包减菜单直选（#86 二层酒/配料豁免）。
+     */
+    public static void sendTavernMenuSnapshot(ServerPlayer player,
+            com.bmf.bmfstown.town.Town town, BlockPos boardPos,
+            boolean editable, boolean open) {
+        if (!(player.level() instanceof net.minecraft.server.level.ServerLevel sl)) {
+            return;
+        }
+        java.util.Map<Item, Integer> menu = new java.util.LinkedHashMap<>();
+        for (var e : town.tavernMenu().entrySet()) {
+            var rl = net.minecraft.resources.ResourceLocation.tryParse(e.getKey());
+            Item it = rl == null ? null : BuiltInRegistries.ITEM.get(rl);
+            if (it != null && it != Items.AIR) {
+                menu.put(it, e.getValue());
+            }
+        }
+        java.util.Set<Item> closure = menu.isEmpty()
+                ? java.util.Set.of()
+                : com.bmf.bmfstown.entity.TavernkeepGoal.menuClosureOf(sl, menu);
+        // 快照行 = 菜单直选项 + 闭包豁免项（target=0 暗行，#86 二层酒/配料豁免
+        // 可视化——玩家不用懂闭包规则也能看懂酒保为什么顺手酿啤酒/肉干）
+        java.util.Map<Item, Integer> bill = new java.util.LinkedHashMap<>(menu);
+        for (Item it : closure) {
+            bill.putIfAbsent(it, 0);
+        }
+        java.util.Map<Item, Integer> stock = bill.isEmpty()
+                ? java.util.Map.of()
+                : com.bmf.bmfstown.entity.TavernkeepGoal.menuStockOf(sl, town, bill);
+        java.util.List<String> entries = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<Item, Integer> e : bill.entrySet()) {
+            int stockN = stock.getOrDefault(e.getKey(), 0);
+            boolean exempt = !menu.containsKey(e.getKey());
+            entries.add(BuiltInRegistries.ITEM.getKey(e.getKey()) + "|"
+                    + e.getValue() + "|" + stockN + "|" + (exempt ? "1" : "0"));
+        }
+        player.connection.send(new TavernMenuSnapshotPayload(editable, open,
+                boardPos.immutable(), entries));
+    }
+
+    /** S2C 处理：菜单快照入客户端缓存；open=开板 UI，open=false 刷新已开 UI。 */
+    private static void handleTavernMenuSnapshot(TavernMenuSnapshotPayload payload,
+            IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            com.bmf.bmfstown.client.ClientTavernMenu.accept(payload.editable(),
+                    payload.open(), payload.boardPos(), payload.entries());
+        });
+    }
+
     /** 工人订单：校验职业、索引合法与段位解锁，落账。 */
     private static void handleWorkerOrder(WorkerOrderPayload payload, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
@@ -1844,6 +2003,10 @@ public final class ModNetworking {
                 ModNetworking::handleAlchemistOrder);
         registrar.playToServer(FireworksOrderPayload.TYPE, FireworksOrderPayload.STREAM_CODEC,
                 ModNetworking::handleFireworksOrder);
+        registrar.playToServer(TavernMenuEditPayload.TYPE, TavernMenuEditPayload.STREAM_CODEC,
+                ModNetworking::handleTavernMenuEdit);
+        registrar.playToClient(TavernMenuSnapshotPayload.TYPE, TavernMenuSnapshotPayload.STREAM_CODEC,
+                ModNetworking::handleTavernMenuSnapshot);
         registrar.playToClient(AlchemyCatalogSyncPayload.TYPE, AlchemyCatalogSyncPayload.STREAM_CODEC,
                 ModNetworking::handleAlchemyCatalogSync);
         registrar.playToServer(AlchemyCatalogRequestPayload.TYPE, AlchemyCatalogRequestPayload.STREAM_CODEC,

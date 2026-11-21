@@ -459,7 +459,7 @@ public class FireworksmanGoal extends Goal {
         if (spec != null) {
             if (!consumeStarMaterials(spec)) {
                 // 星料对不上（池被中途抽干）：跳过这颗，靠组装段的从严校验兜底
-                LOGGER.info("[BmfTown][烟火] {} 造星缺料（{}），跳过该颗",
+                LOGGER.debug("[BmfTown][烟火] {} 造星缺料（{}），跳过该颗",
                         this.resident.getName().getString(), spec.encode());
             } else {
                 ItemStack star = FireworksCatalog.assembleStar(level, spec);

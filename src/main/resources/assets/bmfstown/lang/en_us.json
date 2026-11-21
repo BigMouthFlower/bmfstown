@@ -825,7 +825,6 @@
   "zone.bmfstown.mode.town": "Town",
   "zone.bmfstown.mode.tavern": "Tavern",
   "zone.bmfstown.mode.work": "Library",
-
   "block.bmfstown.bulletin_board": "Town Bulletin Board",
   "bulletin.bmfstown.header": "—— Town Bulletin Board ——",
   "bulletin.bmfstown.empty": "(No unusual announcements recently)",
@@ -849,5 +848,21 @@
   "book.bmfstown.horror.test.ch8": "(Test placeholder) I dug a rusted bell from the old wall. Its clapper was long gone.",
   "book.bmfstown.horror.test.ch9": "(Test placeholder) Total silence tonight. The quiet is more unsettling than the sound.",
   "book.bmfstown.horror.test.ch10": "(Test placeholder) The bell rang once in my palm. The thirteenth sound had found its clapper.",
-  "tag.item.bmfstown.tavern_drinks": "Tavern Drinks (milk/honey/BAC whitelist)"
+  "tag.item.bmfstown.tavern_drinks": "Tavern Drinks (milk/honey/BAC whitelist)",
+  "block.bmfstown.tavern_menu_board": "Tavern Menu Board",
+  "gui.bmfstown.menu_board.title": "Tavern Menu",
+  "gui.bmfstown.menu_board.empty": "Not configured - keeper won't brew; serves what's in stock",
+  "gui.bmfstown.menu_board.add": "Add Drink",
+  "gui.bmfstown.menu_board.clear": "Clear",
+  "gui.bmfstown.menu_board.confirm_clear": "Confirm clear?",
+  "gui.bmfstown.menu_board.done": "Done",
+  "gui.bmfstown.menu_board.back": "Back",
+  "gui.bmfstown.menu_board.exempt": "auto-exempt",
+  "gui.bmfstown.menu_board.not_editable": "Read-only (not a town member)",
+  "gui.bmfstown.menu_board.no_drinks": "No drinks available in tag",
+  "msg.bmfstown.menu_board.no_town": "This menu board belongs to no town",
+  "msg.bmfstown.menu_board.header": "[%s] Tavern Menu:",
+  "msg.bmfstown.menu_board.empty": "Menu not configured - keeper won't brew; serves what's in stock",
+  "msg.bmfstown.menu_board.entry": " * %s target x%s",
+  "msg.bmfstown.menu_board.outside_hint": "(Outside tavern zone: read-only - place inside the zone to edit)"
 }

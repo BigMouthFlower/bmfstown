@@ -414,7 +414,7 @@ public class AlchemistGoal extends Goal {
         // ① 新批次
         if (waterPhase) {
             this.stepIndex = 0;
-            LOGGER.info("[BmfTown][炼金] {} 对账：新批次（订单={}）",
+            LOGGER.debug("[BmfTown][炼金] {} 对账：新批次（订单={}）",
                     this.resident.getName().getString(), this.currentOrderKey);
             if (ing.isEmpty()) {
                 this.phase = planNeeds().isEmpty() ? Phase.LOAD : Phase.FETCH_GO;
@@ -437,7 +437,7 @@ public class AlchemistGoal extends Goal {
         }
         if (best >= 0) {
             this.stepIndex = best + 1;
-            LOGGER.info("[BmfTown][炼金] {} 对账：复用台进（已完成 {} 步），续作",
+            LOGGER.debug("[BmfTown][炼金] {} 对账：复用台进（已完成 {} 步），续作",
                     this.resident.getName().getString(), best + 1);
             if (this.stepIndex >= this.steps.size()) {
                 this.phase = Phase.TAKE;
@@ -455,7 +455,7 @@ public class AlchemistGoal extends Goal {
             return;
         }
         // ③ 全不匹配：整台回收重凑（回收的药水也照常盖章，绝不产"无章药水"）
-        LOGGER.info("[BmfTown][炼金] {} 对账不符，整台回收重凑",
+        LOGGER.debug("[BmfTown][炼金] {} 对账不符，整台回收重凑",
                 this.resident.getName().getString());
         salvageStand(stand);
         this.stepIndex = 0;
@@ -499,7 +499,7 @@ public class AlchemistGoal extends Goal {
                 : com.bmf.bmfstown.alchemy.ModPotions.secretIdOf(finalPotion);
         if (recipe == null || (secretId != null
                 && !com.bmf.bmfstown.alchemy.AlchemyGate.isOpen(secretId))) {
-            LOGGER.info("[BmfTown][炼金] {} 订单变更：{} 解析失败（野键/秘传未解锁），待机",
+            LOGGER.debug("[BmfTown][炼金] {} 订单变更：{} 解析失败（野键/秘传未解锁），待机",
                     this.resident.getName().getString(), this.currentOrderKey);
             releaseClaim();
             this.standPos = null;
@@ -511,7 +511,7 @@ public class AlchemistGoal extends Goal {
         this.orderMod = this.currentOrderKey.split("\\|")[2];
         this.finalPotion = this.recipe.finalPotion(this.orderMod);
         rebuildSteps(level);
-        LOGGER.info("[BmfTown][炼金] {} 订单变更：{}，回台对账复用/回收",
+        LOGGER.debug("[BmfTown][炼金] {} 订单变更：{}，回台对账复用/回收",
                 this.resident.getName().getString(), this.currentOrderKey);
         this.phase = Phase.GO_POST;
         navigateToStand();
@@ -1113,7 +1113,7 @@ public class AlchemistGoal extends Goal {
                 this.pendingNeed = new Need(
                         stack -> stack.is(this.steps.get(this.stepIndex)), 1,
                         itemName(this.steps.get(this.stepIndex)));
-                LOGGER.info("[BmfTown][炼金] {} 缺步骤料 {}，只补这一件（台不动）",
+                LOGGER.debug("[BmfTown][炼金] {} 缺步骤料 {}，只补这一件（台不动）",
                         this.resident.getName().getString(), this.steps.get(this.stepIndex));
                 this.phase = Phase.FETCH_GO;
                 return;
@@ -1162,7 +1162,7 @@ public class AlchemistGoal extends Goal {
                 this.brewStallTicks = 0;
                 this.stallRetries++;
                 ItemStack stuck = stand.getItem(3);
-                LOGGER.info("[BmfTown][炼金] {} 步骤 {} 没起酿（料槽={}），第 {}/{} 次收走重装",
+                LOGGER.debug("[BmfTown][炼金] {} 步骤 {} 没起酿（料槽={}），第 {}/{} 次收走重装",
                         this.resident.getName().getString(), this.stepIndex,
                         stuck.isEmpty() ? "空" : stuck.getItem(),
                         this.stallRetries, STALL_RETRIES_MAX);

@@ -229,7 +229,7 @@ public class Town {
         return this.tavernMenu.remove(itemId) != null;
     }
 
-    /** 清空菜单 = 回落"全维护"。 */
+    /** 清空菜单 = 回落"不维护"（#86 二次拍板 2026-11-21：有什么上什么，不自行酿造）。 */
     public void clearTavernMenu() {
         this.tavernMenu.clear();
     }

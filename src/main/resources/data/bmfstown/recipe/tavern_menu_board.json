@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "PP",
+    " S"
+  ],
+  "key": {
+    "P": {"item": "minecraft:paper"},
+    "S": {"item": "minecraft:oak_sign"}
+  },
+  "result": {
+    "count": 2,
+    "id": "bmfstown:tavern_menu_board"
+  }
+}

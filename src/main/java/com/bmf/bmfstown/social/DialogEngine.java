@@ -281,7 +281,7 @@ public final class DialogEngine {
                 ? Component.translatable(line.key(), (Object[]) args)
                 : Component.translatable(line.key());
         spawnDisplay(level, resident, text);
-        BmfTown.LOGGER.info("[BmfTown][台词] {} →「{}」",
+        BmfTown.LOGGER.debug("[BmfTown][台词] {} →「{}」",
                 resident.getName().getString(), text.getString());
     }
 

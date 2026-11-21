@@ -1890,7 +1890,7 @@ public class Resident extends PathfinderMob {
                     this.exemptStallCount = 0;
                     this.lastExemptPos = null;
                     this.getNavigation().stop(); // 掐掉走不动的路径
-                    LOGGER.info("[BmfTown] {} 朝 {} 的路径 3 秒没挪窝——掐掉重选",
+                    LOGGER.debug("[BmfTown] {} 朝 {} 的路径 3 秒没挪窝——掐掉重选",
                             this.getName().getString(), navTarget.toShortString());
                     return;
                 } else {
@@ -1941,14 +1941,14 @@ public class Resident extends PathfinderMob {
                         && NavOps.approach(this, alt, 2.0D,
                                 Config.RETURN_HOME_SPEED.get()) != NavOps.Nav.STUCK) {
                     this.returnLogTarget = alt;
-                    LOGGER.info("[BmfTown] {} 回城目标 {} 到不了，换点 ({})",
+                    LOGGER.debug("[BmfTown] {} 回城目标 {} 到不了，换点 ({})",
                             this.getName().getString(), center.toShortString(),
                             alt.toShortString());
                     return;
                 }
                 this.returnBlockedUntil = now + 200L;
                 this.returnLogTarget = null;
-                LOGGER.info("[BmfTown] {} 回城目标 {} 到不了且区内无备选——歇 10 秒",
+                LOGGER.debug("[BmfTown] {} 回城目标 {} 到不了且区内无备选——歇 10 秒",
                         this.getName().getString(), center.toShortString());
             }
         }
@@ -2138,7 +2138,7 @@ public class Resident extends PathfinderMob {
                 }
                 this.hasImpulse = true;
             }
-            LOGGER.info("[BmfTown] {} 路径卡住没挪窝——轻量脱困（定向跳+掐掉重走，第 {}/{} 次）",
+            LOGGER.debug("[BmfTown] {} 路径卡住没挪窝——轻量脱困（定向跳+掐掉重走，第 {}/{} 次）",
                     this.getName().getString(), this.wedgeSoft, WEDGE_SOFT_MAX);
             return;
         }
@@ -4233,19 +4233,21 @@ public class Resident extends PathfinderMob {
     }
 
     /**
-     * 当前职业效率：统一走 {@code EfficiencyMath.total}（客户端面板展示的公式
-     * 与此同源，所见即所得）。无职业 / 无主技能 → 1.0：效率是<b>职业</b>参数，
-     * 无业不吃减益也不吃增益。强壮 perk 与心情打折的语义见 EfficiencyMath。
-     * v0.14：心情打折阈值随坚韧轴位移、新增专注轴 ±5% 段。
+     * 战斗伤害倍率（2026-11-21 用户拍板：战斗能力是全员共通的成长线，不挂职业）：
+     * 只看格斗线（{@code SkillType.COMBAT}）的累计经验——职业只决定行为
+     * （跟随/站岗/耕田），不管现在干哪行，攻击/反击的伤害倍率都按自己的
+     * 格斗段位取（生疏 Lv1 默认低倍率 0.6，传奇 Lv10 = 1.5）。
+     * 击杀经验 v0.14 起全民入账，与本倍率构成完整"干中学"闭环：
+     * 非战士杀了怪也涨格斗经验→格斗段位涨→伤害变高，与现职无关。
+     *
+     * <p>倍率组成与职业效率同源（{@code EfficiencyMath.total}）：
+     * 基础(格斗段位) × 强壮 perk × 心情打折（坚韧轴位移阈值） × 专注 ±5%。
+     * 客户端战士工作页展示的公式与此同源；非战士职业页展示的是各自工作
+     * 效率（另一维度），格斗倍率暂无面板展示（登记待补）。
      */
-    private double professionEfficiency() {
-        var profession = this.identity.profession();
-        var skill = profession == null ? null : profession.mainSkill();
-        if (skill == null) {
-            return 1.0;
-        }
+    public double combatEfficiency() {
         return com.bmf.bmfstown.entity.profile.EfficiencyMath.total(
-                this.growth.skillXp(skill),
+                this.growth.skillXp(com.bmf.bmfstown.entity.profile.SkillType.COMBAT),
                 this.status.mood(),
                 hasPerk(com.bmf.bmfstown.entity.profile.Perks.NODE_ADEPT, "strong"),
                 this.axisValue(com.bmf.bmfstown.entity.profile.PersonalityAxis.GRIT),
@@ -4263,10 +4265,10 @@ public class Resident extends PathfinderMob {
     /**
      * 挥出一击（原版 {@code MeleeAttackGoal} 命中判定通过后由它调用）。
      *
-     * <h2>职业效率怎么乘进伤害（武器无关）</h2>
+     * <h2>战斗倍率怎么乘进伤害（武器无关，2026-11-21 全员共通格斗线）</h2>
      * 原版近战伤害 = {@code ATTACK_DAMAGE} 属性值，武器加成本来就是挂在
-     * 这个属性上的 modifier——所以"效率"不挑武器：出手前往属性上临时挂一个
-     * <b>补正 modifier</b>（补正量 = 当前攻击力 × (效率 − 1)，效率 &lt; 1 时为负），
+     * 这个属性上的 modifier——所以"倍率"不挑武器：出手前往属性上临时挂一个
+     * <b>补正 modifier</b>（补正量 = 当前攻击力 × (倍率 − 1)，倍率 &lt; 1 时为负），
      * 原版结算读到的就是放大后的攻击力，打完立刻移除。
      * 附魔、击退、护甲减免全部走原版逻辑，我们只动入口数值。
      *
@@ -4307,7 +4309,7 @@ public class Resident extends PathfinderMob {
             return killed;
         }
 
-        double efficiency = professionEfficiency();
+        double efficiency = combatEfficiency();
         // 《五轮书》《孙子兵法》（MELEE_DAMAGE）：装备已学特殊书的近战伤害加成
         efficiency *= 1.0 + learnedEffectBonus(
                 com.bmf.bmfstown.book.SpecialBookEffect.Type.MELEE_DAMAGE) / 100.0;
@@ -4340,8 +4342,9 @@ public class Resident extends PathfinderMob {
                 this.status.noteKill(this, killLevel);
             }
             if (target instanceof net.minecraft.world.entity.LivingEntity living) {
-                // 观察期用 debug（调回默认级；需要肉眼对比时临时升 INFO）
-                LOGGER.debug("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
+                // 观察期 INFO（runClient 的 log4j root=INFO，debug 不落盘看不见；
+                // 倍率观察期结束后随降噪批次一起收回 debug）
+                LOGGER.info("[BmfTown][战斗] {} 攻击 {}：命中={}，攻击力={}，效率={}%，结算≈{}，血量 {} → {}，主手={}",
                         this.getName().getString(), target.getType().toShortString(), hit,
                         String.format("%.1f", attackAttr == null ? 0.0 : attackAttr.getValue() / efficiency),
                         String.format("%.0f", efficiency * 100),

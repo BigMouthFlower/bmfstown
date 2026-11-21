@@ -272,9 +272,10 @@ public final class ResidentCommands {
                 .executes(ResidentCommands::brewSkip));
 
         // ---- /bmfstown tavernmenu [物品] [数量|off] / list / clear ----
-        // 酒吧菜单（决策 #86）：选酒吧维护哪几种产物（饮品+肉干等酿造原料
-        // 通吃）、各维护几个。未配置=全维护；配置后严格按菜单（排产/在途
-        // 入账/播报都只认菜单内）。物品 id 形如 brewinandchewin:mead。
+        // 酒吧菜单（决策 #86，2026-11-21 二次拍板）：选酒吧维护哪几种产物（饮品
+        // +肉干等酿造原料通吃）、各维护几个。未配置=不维护（有什么上什么，不
+        // 自行开新批次）；配置后严格按菜单（排产/在途入账/播报都只认菜单内）。
+        // 物品 id 形如 brewinandchewin:mead。
         root.then(Commands.literal("tavernmenu")
                 .executes(ctx -> tavernMenuList(ctx.getSource()))
                 .then(Commands.literal("list")
@@ -346,9 +347,9 @@ public final class ResidentCommands {
         var menu = town.tavernMenu();
         if (menu.isEmpty()) {
             source.sendSuccess(() -> Component.literal(
-                    "【" + town.name() + "】菜单未配置——酒保全维护所有可酿产物"
-                            + "（配方全收，通用材料按缺口最少优先）。"
-                            + "用 /bmfstown tavernmenu <物品> <数量> 配置。"), false);
+                    "【" + town.name() + "】菜单未配置——酒保不自行酿造，有什么上什么"
+                            + "（窖里现存照常给客人上；半成品桶会接着酿完）。"
+                            + "用 /bmfstown tavernmenu <物品> <数量> 配置菜单开始排产。"), false);
             return 1;
         }
         StringBuilder sb = new StringBuilder("【" + town.name() + "】菜单（"
@@ -396,12 +397,12 @@ public final class ResidentCommands {
         com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).setDirty();
         boolean empty = town.tavernMenu().isEmpty();
         String msg = "【" + town.name() + "】菜单已移除：" + itemId
-                + (empty ? "——菜单已清空，回落全维护" : "");
+                + (empty ? "——菜单已清空，回落不维护（有什么上什么）" : "");
         source.sendSuccess(() -> Component.literal(msg), false);
         return 1;
     }
 
-    /** {@code /bmfstown tavernmenu clear}：清空菜单 = 回落全维护。 */
+    /** {@code /bmfstown tavernmenu clear}：清空菜单 = 回落不维护。 */
     private static int tavernMenuClear(CommandSourceStack source) {
         Town town = memberTown(source);
         if (town == null) {
@@ -410,7 +411,7 @@ public final class ResidentCommands {
         town.clearTavernMenu();
         com.bmf.bmfstown.town.TownSaveData.get(source.getLevel()).setDirty();
         source.sendSuccess(() -> Component.literal(
-                "【" + town.name() + "】菜单已清空——回落全维护"), false);
+                "【" + town.name() + "】菜单已清空——酒保不再自行酿造，有什么上什么"), false);
         return 1;
     }
 

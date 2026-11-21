@@ -297,6 +297,8 @@ public class TavernTests {
                 helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
         Resident keeper = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(4, 1, 5));
         tavern(s, helper, keeper);
+        // 菜单未配置=不维护（#86 二次拍板 2026-11-21）：开新批次酿造必须有菜单
+        s.town().setTavernMenuItem("brewinandchewin:beer", 4);
         BlockPos kegAbs = placeKegOrSkip(helper, new BlockPos(9, 1, 4));
         if (kegAbs == null) {
             return;
@@ -335,6 +337,40 @@ public class TavernTests {
                     }
                 })
                 .thenSucceed();
+    }
+
+    /**
+     * 菜单未配置=不维护（#86 二次拍板 2026-11-21）：不设菜单时酒保<b>不</b>开新
+     * 批次——料全在窖里桶全空，等足排产轮次桶仍应全空（旧口径"空菜单=全维护"
+     * 会立刻酿起来）。续桶/排空/上酒三通道不受此门，各自有专属用例。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 600)
+    public static void emptyMenuMeansNoBrewing(GameTestHelper helper) {
+        AlchemyScaffold.Setup s = AlchemyScaffold.prepareTown(
+                helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
+        Resident keeper = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(4, 1, 5));
+        tavern(s, helper, keeper);
+        // 不设菜单——关键差异
+        BlockPos kegAbs = placeKegOrSkip(helper, new BlockPos(9, 1, 4));
+        if (kegAbs == null) {
+            return;
+        }
+        var chest = s.chest(helper);
+        chest.setItem(0, new ItemStack(Items.WATER_BUCKET));
+        chest.setItem(1, new ItemStack(Items.WHEAT));
+        chest.setItem(2, new ItemStack(Items.WHEAT_SEEDS));
+        chest.setItem(3, new ItemStack(Items.BROWN_MUSHROOM));
+        chest.setChanged();
+
+        helper.runAfterDelay(400, () -> {
+            var snap = com.bmf.bmfstown.entity.KegAccess.read(helper.getLevel(), kegAbs);
+            boolean untouched = snap != null && snap.fluid() == null
+                    && com.bmf.bmfstown.entity.KegAccess.nonEmpty(snap.slots()).isEmpty();
+            if (!untouched) {
+                helper.fail("空菜单不应开新批次（桶被投了料）");
+            }
+            helper.succeed();
+        });
     }
 
     /**
@@ -1152,6 +1188,55 @@ public class TavernTests {
                 helper.fail("取走的瓶子必须真实扣减底层容器");
             }
         }).thenSucceed();
+    }
+
+    /**
+     * 菜单板（#86 升格，2026-11-21 拍板）：归属解析 + 区内/区外交互分流 +
+     * 注册链。payload 编辑链路要 ServerPlayer 网络层（GameTest 无此脚手架），
+     * 自动化只盖静态判定；编辑落账语义由 emptyMenuMeansNoBrewing/
+     * keeperBrewsBeerFromSupplies 经 Town API 覆盖。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 60)
+    public static void menuBoardResolvesTownAndZone(GameTestHelper helper) {
+        AlchemyScaffold.Setup s = AlchemyScaffold.prepareTown(
+                helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
+        // 领地=整间房，酒馆区只圈左半——右半留作"区外"对照
+        s.town().addZone(TownWandMode.TAVERN, new TownZone(UUID.randomUUID(), "菜单板区",
+                helper.absolutePos(new BlockPos(1, 1, 1)),
+                helper.absolutePos(new BlockPos(6, 1, 9))));
+        var level = helper.getLevel();
+        // 区内板 + 区外板
+        helper.setBlock(new BlockPos(4, 1, 4),
+                com.bmf.bmfstown.block.ModBlocks.TAVERN_MENU_BOARD.get().defaultBlockState());
+        helper.setBlock(new BlockPos(9, 1, 8),
+                com.bmf.bmfstown.block.ModBlocks.TAVERN_MENU_BOARD.get().defaultBlockState());
+        var townIn = com.bmf.bmfstown.block.TavernMenuBoardBlock.resolveTown(
+                level, helper.absolutePos(new BlockPos(4, 1, 4)));
+        var townOut = com.bmf.bmfstown.block.TavernMenuBoardBlock.resolveTown(
+                level, helper.absolutePos(new BlockPos(9, 1, 8)));
+        if (townIn == null || !townIn.id().equals(s.town().id())) {
+            helper.fail("区内板应解析到本镇（领地登记制）");
+        }
+        if (townOut == null || !townOut.id().equals(s.town().id())) {
+            helper.fail("区外板仍在领地内，也应解析到本镇");
+        }
+        if (!com.bmf.bmfstown.block.TavernMenuBoardBlock.inTavernZone(townIn,
+                helper.absolutePos(new BlockPos(4, 1, 4)))) {
+            helper.fail("板在酒馆区内必须命中（开编辑 UI 的条件）");
+        }
+        if (com.bmf.bmfstown.block.TavernMenuBoardBlock.inTavernZone(townOut,
+                helper.absolutePos(new BlockPos(9, 1, 8)))) {
+            helper.fail("板在酒馆区外不得命中（区外只读的条件）");
+        }
+        // 注册链：方块/物品/方块物品三件齐
+        var blockId = ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "tavern_menu_board");
+        if (!BuiltInRegistries.BLOCK.containsKey(blockId)
+                || !BuiltInRegistries.ITEM.containsKey(blockId)
+                || !(BuiltInRegistries.ITEM.get(blockId)
+                        instanceof net.minecraft.world.item.BlockItem)) {
+            helper.fail("菜单板方块/物品注册链不完整");
+        }
+        helper.succeed();
     }
 
     // ==========================================================

@@ -379,6 +379,33 @@ public class PersonalityAxisTests {
         });
     }
 
+    /**
+     * 战斗倍率全员共通格斗线（2026-11-21 用户拍板）：伤害倍率只认格斗
+     * （COMBAT）经验，与现职无关——生疏默认低倍率，段位升了倍率升。
+     */
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void combatEfficiencyUsesCombatSkillForAll(GameTestHelper helper) {
+        Checks c = new Checks();
+        Resident r = spawnResident(helper, new BlockPos(2, 1, 2));
+        // 生疏 Lv1：基础段 0.6，即使专注轴拉满（×1.05）也远低于 1.0
+        double eff0 = r.combatEfficiency();
+        c.isTrue(eff0 < 1.0, "零格斗经验应默认低倍率（实际 " + eff0 + "）");
+        // 换职业不改变倍率：职业只决定行为，倍率只认格斗线
+        r.getIdentity().setProfession(com.bmf.bmfstown.entity.profile.ProfessionType.WORKER);
+        double effWorker = r.combatEfficiency();
+        r.getIdentity().setProfession(com.bmf.bmfstown.entity.profile.ProfessionType.WARRIOR);
+        double effWarrior = r.combatEfficiency();
+        c.eq(effWorker, effWarrior, 1e-9, "倍率不应随职业变化");
+        // 格斗经验涨 → 倍率涨（干中学闭环的伤害端，任何职业都吃这条线）
+        r.addSkillXp(com.bmf.bmfstown.entity.profile.SkillType.COMBAT,
+                com.bmf.bmfstown.entity.profile.SkillTiers
+                        .XP_THRESHOLDS[com.bmf.bmfstown.entity.profile.SkillTiers.MAX_TIER]);
+        double effMax = r.combatEfficiency();
+        c.isTrue(effMax > effWarrior, "格斗段位升满后倍率应上升");
+        c.throwIfAny(helper, "combatEfficiencyUsesCombatSkillForAll");
+        helper.runAfterDelay(20, () -> r.discard());
+    }
+
     /** 面板标签：中性轴不出现；key 形如 personality.bmfstown.axis.tag.<tier>.<axis>。 */
     @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
     public static void axisVisibleTags(GameTestHelper helper) {
@@ -674,6 +701,41 @@ public class PersonalityAxisTests {
         c.isTrue(!hasResidentTargetGoal(creeper), "苦力怕不注入");
 
         c.throwIfAny(helper, "aggroInjectionAndExclusions");
+    }
+
+    /** 史莱姆家族注入（2026-11-21 扩展）：Mob 直接实现 Enemy 但走标准 targetSelector——注入有效。 */
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void aggroInjectionSlimeFamily(GameTestHelper helper) {
+        Checks c = new Checks();
+        var slime = helper.spawn(EntityType.SLIME, new BlockPos(2, 1, 2));
+        slime.setNoAi(true);
+        c.isTrue(hasResidentTargetGoal(slime), "史莱姆入图注入 ResidentTargetGoal（口径差修复）");
+        var magma = helper.spawn(EntityType.MAGMA_CUBE, new BlockPos(4, 1, 2));
+        magma.setNoAi(true);
+        c.isTrue(hasResidentTargetGoal(magma), "岩浆怪入图注入 ResidentTargetGoal");
+        // AI 自定义、塞 Goal 无效的非 Monster 敌对：不注入（战士索敌仍会打它们）
+        var phantom = helper.spawn(EntityType.PHANTOM, new BlockPos(6, 3, 2));
+        phantom.setNoAi(true);
+        c.isTrue(!hasResidentTargetGoal(phantom), "幻翼不注入（AI 自定义无效）");
+        c.throwIfAny(helper, "aggroInjectionSlimeFamily");
+    }
+
+    /** 史莱姆碰撞补刀（#107 追记）：原版 dealDamage 只认玩家/铁傀儡碰撞，居民需补路径。 */
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void slimeContactDamagesResident(GameTestHelper helper) {
+        Checks c = new Checks();
+        Resident r = spawnResident(helper, new BlockPos(2, 1, 2));
+        // size=2 史莱姆贴脸生成——tick 补刀路径应触发（size≤1 是 tiny：原版对玩家
+        // 也无碰撞伤害，补刀忠实复刻该守卫，对等设计）
+        var slime = (net.minecraft.world.entity.monster.Slime) helper.spawn(
+                EntityType.SLIME, new BlockPos(2, 1, 2));
+        slime.setSize(2, true);
+        helper.runAfterDelay(40, () -> {
+            c.isTrue(!r.isDeadOrDying(), "居民不应被一只史莱姆打死（2 伤害 × 无敌帧）");
+            c.isTrue(r.getHealth() < r.getMaxHealth(),
+                    "史莱姆碰撞应造成伤害（原版伤害路径只认玩家/铁傀儡）");
+            c.throwIfAny(helper, "slimeContactDamagesResident");
+        });
     }
 
     // ==========================================================

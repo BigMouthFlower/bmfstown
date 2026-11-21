@@ -825,7 +825,6 @@
   "zone.bmfstown.mode.town": "城镇",
   "zone.bmfstown.mode.tavern": "酒馆",
   "zone.bmfstown.mode.work": "图书馆",
-
   "block.bmfstown.bulletin_board": "镇公告栏",
   "bulletin.bmfstown.header": "—— 镇公告栏 ——",
   "bulletin.bmfstown.empty": "（最近没有异常的公告）",
@@ -849,5 +848,21 @@
   "book.bmfstown.horror.test.ch8": "（测试线占位）我在老墙根下挖出一枚生锈的铃铛，铃舌早就没了。",
   "book.bmfstown.horror.test.ch9": "（测试线占位）今夜万籁俱寂。这份安静比声音更让人心慌。",
   "book.bmfstown.horror.test.ch10": "（测试线占位）铃铛在我手心里自己响了一下。第十三个声音找到了它的铃舌。",
-  "tag.item.bmfstown.tavern_drinks": "酒馆饮品（奶/蜜/BAC 酒白名单）"
+  "tag.item.bmfstown.tavern_drinks": "酒馆饮品（奶/蜜/BAC 酒白名单）",
+  "block.bmfstown.tavern_menu_board": "酒吧菜单板",
+  "gui.bmfstown.menu_board.title": "酒吧菜单",
+  "gui.bmfstown.menu_board.empty": "未配置——酒保不自行酿造，有什么上什么",
+  "gui.bmfstown.menu_board.add": "添加酒品",
+  "gui.bmfstown.menu_board.clear": "清空",
+  "gui.bmfstown.menu_board.confirm_clear": "确认清空?",
+  "gui.bmfstown.menu_board.done": "完成",
+  "gui.bmfstown.menu_board.back": "返回",
+  "gui.bmfstown.menu_board.exempt": "豁免·按需",
+  "gui.bmfstown.menu_board.not_editable": "只读（非城镇成员）",
+  "gui.bmfstown.menu_board.no_drinks": "tag 里没有可选酒品",
+  "msg.bmfstown.menu_board.no_town": "这块菜单板不属于任何镇",
+  "msg.bmfstown.menu_board.header": "【%s】酒吧菜单：",
+  "msg.bmfstown.menu_board.empty": "菜单未配置——酒保不自行酿造，有什么上什么",
+  "msg.bmfstown.menu_board.entry": " · %s 目标×%s",
+  "msg.bmfstown.menu_board.outside_hint": "（区外板只读——放进酒馆区右键可编辑）"
 }

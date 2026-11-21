@@ -199,7 +199,7 @@ public class ScholarGoal extends Goal {
 
         if (this.resident.tickCount % 100 == 0) {
             ItemStack dbgWip = activeWip();
-            LOGGER.info("[BmfTown][学者] {} mode={} phase={} lectern={} input={} shelf={} wip={} progress={}",
+            LOGGER.debug("[BmfTown][学者] {} mode={} phase={} lectern={} input={} shelf={} wip={} progress={}",
                     this.resident.getName().getString(), this.resident.getWorkMode(),
                     this.phase, this.lecternPos, this.inputPos, this.shelfPos,
                     dbgWip.isEmpty() ? "无" : "有",
