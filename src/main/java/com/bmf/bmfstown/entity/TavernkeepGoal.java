@@ -1,7 +1,10 @@
 package com.bmf.bmfstown.entity;
 
 import com.bmf.bmfstown.config.Config;
+import com.bmf.bmfstown.entity.profile.EfficiencyMath;
+import com.bmf.bmfstown.entity.profile.PersonalityAxis;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
+import com.bmf.bmfstown.entity.profile.SkillType;
 import com.bmf.bmfstown.town.Town;
 import com.bmf.bmfstown.town.TownWandMode;
 import com.bmf.bmfstown.town.TownZone;
@@ -100,6 +103,9 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
     private BlockPos cellarPos;
     /** 当前操作的酒桶。 */
     private BlockPos kegPos;
+
+    /** 本轮酿造接单时刻（gameTime）——耗时日志与经验账的起算点（#112）。 */
+    private long brewStartedAtGameTime;
     /** 当前服务的点单客人。 */
     private Entity patron;
     /** 当前酿造配方。 */
@@ -241,6 +247,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         this.recipe = null;
         this.brewPlan = null;
         this.kegPos = null;
+        this.brewStartedAtGameTime = 0L;
         this.cellarPos = null;
         this.djMachinePos = null;
         this.djRetrieve = false;
@@ -327,6 +334,10 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                     .tavernRoll(level, secretTown.id(), this.resident.getRandom())) {
                 issueNauseaSecret(level);
             }
+            // ---- 发酵提速（#112 终版）：等级加速酿造时长本身（炼金同源口径）
+            boostOwnFerments(level);
+            // ---- 酿造完成侦测（#112 修订）：经验在"发酵完成"结算，与收割解耦
+            detectFermentedBrews(level);
         }
 
         // 1) 有人点单：上酒服务最高优先
@@ -582,6 +593,10 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 this.carried = ItemStack.EMPTY;
                 this.resident.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
                 TavernOrders.close(le);
+                // 上酒经验（#112 修订用户拍板 +10）：酒到客人手才算服务完成；
+                // 自我闭环分支（酒保自己就是客人）不算
+                int xp = Config.TAVERN_XP_PER_SERVE.get();
+                this.resident.addSkillXp(SkillType.COOKING, xp);
                 level.playSound(null, ppos, SoundEvents.ITEM_PICKUP,
                         SoundSource.NEUTRAL, 0.6F, 1.0F);
             } else {
@@ -1090,6 +1105,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         }
         this.recipe = plan.recipe();
         this.brewPlan = plan;
+        this.brewStartedAtGameTime = level.getGameTime(); // 耗时起算（接单即开工）
         this.kegPos = keg;
         this.cellarPos = cellar;
         this.kind = Kind.BREW;
@@ -1604,6 +1620,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 if (cargo().isEmpty() || this.cellarPos == null) {
                     backToScan();
                 } else {
+                    // 经验已在"发酵完成"侦测点结算（#112 修订），收割不发
                     carryVisible(cargo().remove(0)); // 端一瓶走给玩家看
                     this.phase = Phase.STORE;
                     navigateTo(this.cellarPos);
@@ -1640,7 +1657,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 } else {
                     this.phase = Phase.POUR;
                     this.pourIndex = 0;
-                    this.pourCooldown = POUR_STEP_TICKS;
+                    this.pourCooldown = brewStepTicks(POUR_STEP_TICKS, 3);
                 }
             }
             case TAKE_FOOD -> {
@@ -1651,6 +1668,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 } else {
                     diag("收货", BuiltInRegistries.ITEM.getKey(taken.getItem())
                             .getPath() + "×" + taken.getCount() + " 出料槽入窖");
+                    // 经验已在"发酵完成"侦测点结算（#112 修订），收货不发
                     cargo().add(taken);
                     carryVisible(cargo().remove(0));
                     this.cellarPos = findStock(level);
@@ -1720,7 +1738,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                     rem == null || rem.isEmpty() ? ItemStack.EMPTY : rem);
             this.resident.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
             this.pourIndex++;
-            this.pourCooldown = POUR_STEP_TICKS;
+            this.pourCooldown = brewStepTicks(POUR_STEP_TICKS, 3);
             return;
         }
         int ing = this.pourIndex - sources;
@@ -1744,7 +1762,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
             level.playSound(null, this.kegPos, net.minecraft.sounds.SoundEvents.ITEM_FRAME_ADD_ITEM,
                     net.minecraft.sounds.SoundSource.NEUTRAL, 0.6F, 0.9F);
             this.pourIndex++;
-            this.pourCooldown = INSERT_STEP_TICKS;
+            this.pourCooldown = brewStepTicks(INSERT_STEP_TICKS, 2);
             return;
         }
         // —— 全部落桶：配料已入桶（计划副本入槽，原物件必须销账防复制回窖），
@@ -1754,9 +1772,21 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         //    酒桶用例在 GameTest 环境自跳过（BAC 配置不加载），从未抓到 ——
         int keep = Math.min(sources, cargo().size());
         cargo().subList(keep, cargo().size()).clear();
-        LOGGER.debug("[BmfTown][酒保] {} 投料开酿 {}（补 {} 份基液+{} 配料）",
+        // 经验账本（#112 修订：完成才结算）：投料落桶记镇级账（桶 pos→投料
+        // 酒保+起止时刻），SCAN 周期侦测到发酵完成即按账发放——与收割解耦
+        // （酒没盛出也照发）。账不能写桶 NBT（BAC 的 load/save 丢自定义 key），
+        // 记镇级与菜单板同源；同桶新批次顶旧账，凿桶销账不发（防白嫖）。
+        Town xpTown = boundTown();
+        if (xpTown != null) {
+            xpTown.putBrewXpDebt(this.kegPos, this.resident.getUUID(),
+                    this.brewStartedAtGameTime, level.getGameTime());
+        }
+        long labor = level.getGameTime() - this.brewStartedAtGameTime;
+        LOGGER.info("[BmfTown][酒保] {} 投料开酿 {}（补 {} 份基液+{} 配料，"
+                        + "接单→落桶耗时 {}s）",
                 this.resident.getName().getString(), this.recipe.id(),
-                sources, this.brewPlan.extraIngredients().size());
+                sources, this.brewPlan.extraIngredients().size(),
+                String.format("%.1f", labor / 20.0D));
         this.phase = Phase.STORE;
         this.cellarPos = findStock(level);
         if (!cargo().isEmpty()) {
@@ -2207,6 +2237,7 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
         this.patron = null;
         this.recipe = null;
         this.brewPlan = null;
+        this.brewStartedAtGameTime = 0L;
         this.waterPlan = null;
         this.waterTarget = null;
         this.waterSpot = null;
@@ -2918,6 +2949,176 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 net.minecraft.core.component.DataComponents.POTION_CONTENTS,
                 net.minecraft.world.item.alchemy.PotionContents.EMPTY)
                 .is(net.minecraft.world.item.alchemy.Potions.WATER);
+    }
+
+    /**
+     * 投料步进时长（决策 #112，炼金 {@code AlchemyPace} 同构）：基础节拍 ÷
+     * 烹调效率乘区（烹调经验/心情/勤勉/专注轴）——等级高的酒保倒水投料
+     * 动作更快。下限防瞬间连倒（POUR 3t / INSERT 2t）。
+     *
+     * <p><b>纯函数，参数化</b>——GameTest 直测；实例走 {@link #brewStepTicks(int, int)}。
+     */
+    public static int brewStepTicks(int xp, double mood, int grit, int focus,
+            int base, int floor) {
+        double eff = EfficiencyMath.total(xp, mood, false, grit, focus);
+        if (eff <= 1.0001D) {
+            return base;
+        }
+        return Math.max(floor, (int) Math.round(base / eff));
+    }
+
+    /** 烹调线效率乘区（酒保劳动节奏与发酵提速共用一个口径，#112 终版）。 */
+    private static double cookEfficiencyOf(Resident r) {
+        return EfficiencyMath.total(
+                r.getGrowth().skillXp(SkillType.COOKING),
+                r.getStatus().mood(), false,
+                r.axisValue(PersonalityAxis.GRIT),
+                r.axisValue(PersonalityAxis.FOCUS));
+    }
+
+    /**
+     * 发酵提速推进量（<b>纯函数，GameTest 直测</b>，炼金 AlchemyPace 同源
+     * 口径——<b>等级加速的是酿造时长本身</b>）：效率 {@code eff} 下每个
+     * 扫描周期（{@code scanPeriod} 刻）应额外推进的发酵刻数 =
+     * (eff−1)×scanPeriod。生疏（eff&lt;1）不倒扣——只提速不减速，回 0；
+     * eff 1.4、周期 100t → 每周期白推 40 刻，发酵全程 ≈ 原时长 ÷1.4。
+     */
+    public static int fermentBoostPerScan(double eff, int scanPeriod) {
+        if (eff <= 1.0001D) {
+            return 0;
+        }
+        return (int) Math.round((eff - 1.0D) * scanPeriod);
+    }
+
+    /**
+     * 发酵提速（#112 终版，SCAN 周期跑）：遍历镇级经验账本里<b>自己</b>投料
+     * 的桶（账本即"谁在管这桶酒"，玩家自酿无账不提速），发酵进行中
+     * （{@link KegAccess#isActivelyFermenting}）则按自己烹调效率往前推
+     * 发酵进度（{@link KegAccess#advanceFermentProgress}，写 BAC 自己的
+     * 字段、完成判定仍归 BAC）。生疏不倒扣只提速。多酒保各推各的桶，
+     * 不叠加（同桶只归一个投料人）。
+     */
+    private void boostOwnFerments(ServerLevel level) {
+        Town town = boundTown();
+        if (town == null || town.brewXpDebts().isEmpty()) {
+            return;
+        }
+        double eff = cookEfficiencyOf(this.resident);
+        int extra = fermentBoostPerScan(eff, SCAN_PERIOD);
+        if (extra <= 0) {
+            return; // 生疏：原速（不倒扣）
+        }
+        java.util.UUID me = this.resident.getUUID();
+        for (java.util.Map.Entry<Long, Town.BrewXpDebt> e
+                : town.brewXpDebts().entrySet()) {
+            if (!me.equals(e.getValue().brewer())) {
+                continue; // 不是自己投的桶（含别的酒保的）
+            }
+            KegAccess.advanceFermentProgress(level, BlockPos.of(e.getKey()), extra);
+        }
+    }
+
+    /** 实例包装：取本酒保的烹调线效率（步进=劳动节奏）。 */
+    private int brewStepTicks(int base, int floor) {
+        return brewStepTicks(
+                this.resident.getGrowth().skillXp(SkillType.COOKING),
+                this.resident.getStatus().mood(),
+                this.resident.axisValue(PersonalityAxis.GRIT),
+                this.resident.axisValue(PersonalityAxis.FOCUS),
+                base, floor);
+    }
+
+    /**
+     * 酿造完成侦测（#112 修订，SCAN 周期跑）：遍历镇级经验账本，逐桶查
+     * 完成形态（{@link KegAccess#fermentDone}：BAC 完成瞬间把 fermentTime
+     * 重置为 0、total 保留——字节码实锤）+ 配料槽已清（防低温待命桶误判，
+     * 待命桶 time 也是 0 但槽有料）→ 发经验+销账；桶没了 → 销账不发；
+     * 还在酿 → 留账下轮。与收割解耦——酒盛没盛出、空杯够不够都不影响。
+     *
+     * <p>归属（多酒保）：经验归<b>投料落桶的酒保</b>（账本里的 UUID），
+     * 不归侦测到完成的那一拍正好在扫场的人；投料人找不到（转职/死亡/
+     * 卸载）时兜底给当前侦测酒保——活有人干、酒有人收，经验不悬空。
+     */
+    private void detectFermentedBrews(ServerLevel level) {
+        Town town = boundTown();
+        if (town == null || town.brewXpDebts().isEmpty()) {
+            return;
+        }
+        int xp = Config.TAVERN_XP_PER_HARVEST.get();
+        // 快照遍历（2026-11-21 22:07 崩溃实锤）：销账就在循环里改账本，
+        // 直接遍历原 map=ConcurrentModificationException。先拷快照，
+        // 改动落在真 map 上；多酒保同 tick 串行跑也各用各的快照，安全。
+        for (java.util.Map.Entry<Long, Town.BrewXpDebt> e
+                : new java.util.ArrayList<>(town.brewXpDebts().entrySet())) {
+            BlockPos pos = BlockPos.of(e.getKey());
+            net.minecraft.world.level.block.entity.BlockEntity be =
+                    level.getBlockEntity(pos);
+            if (be == null) {
+                town.takeBrewXpDebt(pos); // 桶没了：销账不发（凿桶防白嫖）
+                continue;
+            }
+            net.minecraft.nbt.CompoundTag root =
+                    be.saveWithFullMetadata(level.registryAccess());
+            if (!KegAccess.fermentDone(root)) {
+                continue; // 还在酿（time>0）：留账
+            }
+            // time==0 且有 total：完成重置形态 or 低温待命——用配料槽区分
+            KegAccess.KegSnap snap = KegAccess.read(level, pos);
+            boolean ingLoaded = false;
+            if (snap != null) {
+                for (int i = 0; i <= 3 && i < snap.slots().length; i++) {
+                    if (!snap.slots()[i].isEmpty()) {
+                        ingLoaded = true;
+                        break;
+                    }
+                }
+            }
+            if (ingLoaded) {
+                continue; // 配料还在：温度待命/投料后未开酿——留账
+            }
+            // 槽已清+计时归零：还须桶里有成品（成品流体或出料槽产物）——
+            // 批次被玩家舀净的桶（流体空+全槽空）销账不发，防白嫖
+            boolean hasProduct = snap != null && (snap.fluid() != null
+                    || (snap.slots().length > 5 && !snap.slots()[5].isEmpty()));
+            if (!hasProduct) {
+                town.takeBrewXpDebt(pos); // 批次糟蹋/被舀净：销账不发
+                continue;
+            }
+            Town.BrewXpDebt debt = town.takeBrewXpDebt(pos);
+            java.util.UUID owner = debt == null ? null : debt.brewer();
+            Resident earner = this.resident; // 兜底：侦测者
+            if (owner != null
+                    && level.getEntity(owner) instanceof Resident brewed) {
+                earner = brewed; // 归属投料人
+            }
+            earner.addSkillXp(SkillType.COOKING, xp);
+            // 耗时全账（#112 终版）：投料劳动段 + 发酵实际耗时 vs 原速对照
+            // （提速效果直接看两个数差；催熟会压短"实际"——对比效率请自然酿）。
+            // 全部先格式化成字符串再进占位符——%.1f 吃 long 会崩 tick
+            // （2026-11-21 22:00 实锤 crash，日志格式化包 try-catch 防再犯）。
+            long now = level.getGameTime();
+            long laborSec = debt == null ? -1
+                    : (debt.pouredAt() - debt.startedAt()) / 20L;
+            long fermSec = debt == null ? -1 : (now - debt.pouredAt()) / 20L;
+            int nominalSec = KegAccess.fermentTotalTicks(root) / 20;
+            try {
+                LOGGER.info("[BmfTown][酒保] {} 酿造完成（桶 {}，投料 {}s，"
+                                + "发酵实际 {}s/原速 {}s，本桶合计 {}s，烹调经验 +{}→{}）",
+                        this.resident.getName().getString(),
+                        pos.toShortString(),
+                        laborSec < 0 ? "?" : String.format("%.1f", (double) laborSec),
+                        fermSec < 0 ? "?" : String.valueOf(fermSec),
+                        nominalSec,
+                        laborSec < 0 || fermSec < 0 ? "?"
+                                : String.format("%.1f", (double) (now - debt.startedAt()) / 20.0D),
+                        xp, earner.getName().getString());
+            } catch (Exception ex) {
+                LOGGER.info("[BmfTown][酒保] {} 酿造完成（桶 {}，烹调经验 +{}→{}）"
+                                + "——耗时明细格式化失败：{}",
+                        this.resident.getName().getString(), pos.toShortString(),
+                        xp, earner.getName().getString(), ex.toString());
+            }
+        }
     }
 
     /**

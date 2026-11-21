@@ -125,7 +125,7 @@ public enum ProfessionType implements StringRepresentable {
             case SCHOLAR -> SkillType.SCHOLARSHIP;
             case ALCHEMIST -> SkillType.CRAFTING;
             case FIREWORKSMAN -> SkillType.CRAFTING;
-            case TAVERNKEEP -> SkillType.GATHERING;
+            case TAVERNKEEP -> SkillType.COOKING; // #112：酒+肉干都是饮食产出，原 GATHERING 是无来源占位
             default -> null;
         };
     }

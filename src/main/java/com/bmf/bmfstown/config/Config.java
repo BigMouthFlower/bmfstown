@@ -798,6 +798,21 @@ public final class Config {
                     "Max ticks a patron waits for table service; afterwards they fetch from the cellar themselves")
             .defineInRange("tavern.orderWaitTicks", 600, 100, 12000);
 
+    /** 酒保每收割一批成品（决策 #112 及修订 2026-11-21 用户拍板：酿造
+     *  <b>完成</b>才给——挂点=排空酿好的桶/收出料槽物品，一次收割=一批
+     *  =一次经验；二阶酒两批=2 倍；肉干/泡菜一批=1 倍；不乘瓶数不乘份数。
+     *  投料落桶不发（防投完就凿桶白嫖，也贴合"做完才算"）。 */
+    public static final ModConfigSpec.IntValue TAVERN_XP_PER_HARVEST = BUILDER
+            .comment("酒保每收割一批成品（排空酿好的桶/收出料槽物品一次）获得的烹调经验；二阶酒两批=2倍，不乘瓶数",
+                    "Tavernkeeper cooking xp per finished batch harvested (per draw/collect act; two-stage drinks = 2, not multiplied by bottle count)")
+            .defineInRange("tavern.xpPerHarvest", 50, 0, 1000);
+
+    /** 酒保每次把酒送到客人主手（上酒）涨的烹调经验（用户拍板 +10）。 */
+    public static final ModConfigSpec.IntValue TAVERN_XP_PER_SERVE = BUILDER
+            .comment("酒保每次成功给客人上酒获得的烹调经验",
+                    "Tavernkeeper cooking xp per successful drink delivered to a patron")
+            .defineInRange("tavern.xpPerServe", 10, 0, 1000);
+
     // #67：落座延迟（sitMin/sitMaxTicks）已删——用户拍板"坐下立即点单，到手即喝"。
 
     public static final ModConfigSpec.IntValue TAVERN_LINGER_MIN = BUILDER

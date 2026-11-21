@@ -810,6 +810,135 @@ public class TavernTests {
         helper.succeed();
     }
 
+    /** 投料步进效率（决策 #112）：效率>1 时步进缩短且不穿下限——
+     *  生疏（0.6）=原节拍原样；神话（1.4）=节拍÷效率；心情按 0~100 整数口径。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void brewStepTicksRespectsEfficiencyAndFloor(GameTestHelper helper) {
+        // 生疏 0 xp（效率 0.6）+ 心情良好：原节拍原样返回
+        int rookie = com.bmf.bmfstown.entity.TavernkeepGoal.brewStepTicks(
+                0, 80, 50, 50, 12, 3);
+        if (rookie != 12) {
+            helper.fail("生疏酒保应保持基础节拍 12t，实际 " + rookie);
+        }
+        // 神话 4500 xp（效率 1.4）+ 心情良好：步进应缩短且 ≥ floor
+        // （12 ÷ 1.4 ≈ 8.6 → 9）
+        int master = com.bmf.bmfstown.entity.TavernkeepGoal.brewStepTicks(
+                4500, 80, 50, 50, 12, 3);
+        if (master < 3 || master >= 12) {
+            helper.fail("高手步进应缩短且不低于下限 3t，实际 " + master);
+        }
+        // 心情低迷（0~100 口径低于阈值）：打折后再看，效率跌回 ≤1 → 原节拍
+        int grumpy = com.bmf.bmfstown.entity.TavernkeepGoal.brewStepTicks(
+                4500, 10, 50, 50, 12, 3);
+        if (grumpy != 12) {
+            helper.fail("心情低迷的神话酒保效率应跌回 ≤1（原节拍），实际 " + grumpy);
+        }
+        // 下限兜底：传奇 7500 xp+满专注，无论效率多高都不得低于 floor
+        int floored = com.bmf.bmfstown.entity.TavernkeepGoal.brewStepTicks(
+                7500, 80, 50, 100, 8, 2);
+        if (floored < 2) {
+            helper.fail("步进不得穿下限 2t，实际 " + floored);
+        }
+        helper.succeed();
+    }
+
+    /** 酿造完成形态判定（#112 修订，字节码实锤：BAC 完成瞬间 fermentTime
+     *  重置 0、total 保留）：归零+有 total → 发；半酿 → 不发；空桶 → 不发。
+     *  低温待命（time 也是 0 但槽有料）由侦测端结合槽内容区分，纯函数不管。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void fermentDoneForXpConditions(GameTestHelper helper) {
+        // ① 完成重置形态（time=0、total 保留）→ 发
+        var done = new net.minecraft.nbt.CompoundTag();
+        done.putInt("FermentTime", 0);
+        done.putInt("FermentTimeTotal", 24000);
+        if (!com.bmf.bmfstown.entity.KegAccess.fermentDone(done)) {
+            helper.fail("完成重置形态（0/total）应发经验");
+        }
+        // ② 还在酿（time>0）→ 不发
+        var brewing = new net.minecraft.nbt.CompoundTag();
+        brewing.putInt("FermentTime", 100);
+        brewing.putInt("FermentTimeTotal", 24000);
+        if (com.bmf.bmfstown.entity.KegAccess.fermentDone(brewing)) {
+            helper.fail("发酵中不应发经验");
+        }
+        // ③ 空桶（无 total）→ 不发
+        var empty = new net.minecraft.nbt.CompoundTag();
+        if (com.bmf.bmfstown.entity.KegAccess.fermentDone(empty)) {
+            helper.fail("空桶不应发经验");
+        }
+        helper.succeed();
+    }
+
+    /** 镇级经验账本（#112）：记账→销账闭环；同桶新批次顶旧账（覆盖语义）。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void brewXpDebtLedgerCoverAndTake(GameTestHelper helper) {
+        var town = new com.bmf.bmfstown.town.Town(
+                java.util.UUID.randomUUID(), "测试镇", "tester", "minecraft:overworld",
+                helper.absolutePos(new net.minecraft.core.BlockPos(0, 0, 0)),
+                helper.absolutePos(new net.minecraft.core.BlockPos(5, 5, 5)), 0L);
+        var keg = helper.absolutePos(new net.minecraft.core.BlockPos(1, 1, 1));
+        var a = java.util.UUID.randomUUID();
+        var b = java.util.UUID.randomUUID();
+        town.putBrewXpDebt(keg, a, 100L, 200L);
+        if (!town.brewXpDebts().containsKey(keg.asLong())) {
+            helper.fail("记账后应有账");
+        }
+        town.putBrewXpDebt(keg, b, 300L, 400L); // 同桶新批次顶旧账
+        var taken = town.takeBrewXpDebt(keg);
+        if (taken == null || !b.equals(taken.brewer())
+                || taken.startedAt() != 300L || taken.pouredAt() != 400L) {
+            helper.fail("同桶顶账应归新批次投料人且时间戳随之覆盖，实际 " + taken);
+        }
+        if (town.takeBrewXpDebt(keg) != null) {
+            helper.fail("销账后不应再有账");
+        }
+        helper.succeed();
+    }
+
+    /** 发酵提速推进量（#112 终版，纯函数口径）：效率>1 才推进（生疏不倒扣），
+     *  推进量=(eff−1)×扫描周期。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void fermentBoostPerScanScalesWithEfficiency(GameTestHelper helper) {
+        var g = com.bmf.bmfstown.entity.TavernkeepGoal.class;
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.fermentBoostPerScan(0.6D, 100) != 0) {
+            helper.fail("生疏（0.6）不倒扣，应回 0");
+        }
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.fermentBoostPerScan(1.0D, 100) != 0) {
+            helper.fail("基准效率应无提速");
+        }
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.fermentBoostPerScan(1.4D, 100) != 40) {
+            helper.fail("1.4 效率、100t 周期应每周期推 40 刻");
+        }
+        if (com.bmf.bmfstown.entity.TavernkeepGoal.fermentBoostPerScan(1.4D, 0) != 0) {
+            helper.fail("零周期应回 0（防除零类退化）");
+        }
+        helper.succeed();
+    }
+
+    /** 发酵进行中判定（纯 NBT 口径）：进行中 (0,total) 开区间=true；
+     *  未开酿（time=0）/已完成（time=0）/无 total（空桶）=false。 */
+    @GameTest(template = "empty3x3x3", timeoutTicks = 200)
+    public static void activelyFermentingShape(GameTestHelper helper) {
+        var K = com.bmf.bmfstown.entity.KegAccess.class;
+        var brewing = new net.minecraft.nbt.CompoundTag();
+        brewing.putInt("FermentTime", 100);
+        brewing.putInt("FermentTimeTotal", 24000);
+        if (!com.bmf.bmfstown.entity.KegAccess.isActivelyFermenting(brewing)) {
+            helper.fail("计时在 (0,total) 应判进行中");
+        }
+        var fresh = new net.minecraft.nbt.CompoundTag();
+        fresh.putInt("FermentTime", 0);
+        fresh.putInt("FermentTimeTotal", 24000);
+        if (com.bmf.bmfstown.entity.KegAccess.isActivelyFermenting(fresh)) {
+            helper.fail("time=0（未开酿/已完成/待命）不应判进行中");
+        }
+        var empty = new net.minecraft.nbt.CompoundTag();
+        if (com.bmf.bmfstown.entity.KegAccess.isActivelyFermenting(empty)) {
+            helper.fail("无 total（空桶/从没开酿）不应判进行中");
+        }
+        helper.succeed();
+    }
+
     /** 新批次计划 = 进度为零的续桶：假定桶全空、取足量基液+全部配料。 */
     @GameTest(template = "empty3x3x3", timeoutTicks = 200)
     public static void freshPlanAssumesEmptyKeg(GameTestHelper helper) {

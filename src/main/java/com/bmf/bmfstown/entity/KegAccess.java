@@ -278,8 +278,69 @@ public final class KegAccess {
                 ? null : "写回酒桶失败（看日志）";
     }
 
-    private static boolean write(ServerLevel level, BlockPos pos, CompoundTag root) {
+    // ---- 酿造完成判定（#112 修订：经验在"完成"结算，与收割解耦）----
+    // 注意：完成状态只从 BAC 自己的 NBT 字段读（FermentTime/FermentTimeTotal）；
+    // 不能往桶 NBT 写自定义标记——BAC 的 load/save 只认自己的字段，自定义 key
+    // 会被静默丢弃（2026-11-21 实测踩坑）。待结算账记镇级（Town.brewXpDebts）。
+
+    /**
+     * 酿造完成形态判定（<b>纯函数，GameTest 直测</b>；字节码实锤 2026-11-21）：
+     * BAC 的 {@code processFermenting} 完成瞬间把 {@code fermentTime}
+     * <b>重置为 0</b> 而 {@code fermentTimeTotal} 保留——所以"完成"形态=
+     * 计时归零且总时长仍在。投料后未开酿/低温待命的桶也是 0，但配料槽有料，
+     * 由调用方结合槽内容区分（{@code detectFermentedBrews}）。
+     */
+    public static boolean fermentDone(CompoundTag root) {
+        return root.contains(KEY_FERMENT_TOTAL, Tag.TAG_INT)
+                && root.getInt(KEY_FERMENT_TIME) == 0;
+    }
+
+    /** 桶上是否挂着发酵总时长（true=在酿或完成重置形态；false=空桶/从没开酿）。 */
+    public static boolean hasFermentTotal(CompoundTag root) {
+        return root.contains(KEY_FERMENT_TOTAL, Tag.TAG_INT);
+    }
+
+    /** 配方发酵总时长（刻；无 total 回 0——日志对照用）。 */
+    public static int fermentTotalTicks(CompoundTag root) {
+        return root.contains(KEY_FERMENT_TOTAL, Tag.TAG_INT)
+                ? root.getInt(KEY_FERMENT_TOTAL) : 0;
+    }
+
+    /** 发酵进行中判定（<b>纯函数，GameTest 直测</b>）：挂总时长且计时在
+     *  (0, total) 开区间——投料后未开酿/低温待命/已完成（time=0）都不算。 */
+    public static boolean isActivelyFermenting(CompoundTag root) {
+        return root.contains(KEY_FERMENT_TOTAL, Tag.TAG_INT)
+                && root.getInt(KEY_FERMENT_TIME) > 0
+                && root.getInt(KEY_FERMENT_TIME) < root.getInt(KEY_FERMENT_TOTAL);
+    }
+
+    /**
+     * 发酵提速（决策 #112 终版，炼金 AlchemyPace 同源口径——等级加速的是
+     * <b>酿造时长本身</b>）：把桶的 {@code FermentTime} 往前推 {@code extraTicks}
+     * 刻（写 BAC 自己的字段、走它自己的完成判定，非 mixin——BAC 非编译依赖）。
+     * 只对发酵进行中的桶生效（{@link #isActivelyFermenting}），封顶 total-1
+     * 让 BAC 在自己的条件下自然完成（不越权代为灌装）。推进成功=true。
+     */
+    public static boolean advanceFermentProgress(ServerLevel level, BlockPos pos,
+            int extraTicks) {
+        if (extraTicks <= 0) {
+            return false;
+        }
         BlockEntity be = level.getBlockEntity(pos);
+        if (be == null) {
+            return false;
+        }
+        CompoundTag root = be.saveWithFullMetadata(level.registryAccess());
+        if (!isActivelyFermenting(root)) {
+            return false;
+        }
+        int total = root.getInt(KEY_FERMENT_TOTAL);
+        int now = root.getInt(KEY_FERMENT_TIME);
+        root.putInt(KEY_FERMENT_TIME, Math.min(total - 1, now + extraTicks));
+        return write(level, pos, root);
+    }
+
+    private static boolean write(ServerLevel level, BlockPos pos, CompoundTag root) {        BlockEntity be = level.getBlockEntity(pos);
         if (be == null) {
             return false;
         }

@@ -234,6 +234,39 @@ public class Town {
         this.tavernMenu.clear();
     }
 
+    // ==========================================================
+    //  酿造经验账本（决策 #112 修订：完成才结算，与收割解耦）
+    // ==========================================================
+
+    /** 一笔待结算的酿造经验账。 */
+    public record BrewXpDebt(java.util.UUID brewer, long startedAt, long pouredAt) {
+    }
+
+    /**
+     * 待结算的酿造经验账：桶 pos（asLong）→ 账目。
+     * <b>不能写进桶 NBT</b>——BAC 方块实体的 load/save 只认自己的字段，
+     * 自定义 key 会被静默丢弃（2026-11-21 实测踩坑）；镇级账本与
+     * {@link #tavernMenu} 同源同持久化。同 pos 覆盖 = 新批次顶旧账。
+     */
+    private final java.util.Map<Long, BrewXpDebt> brewXpDebts =
+            new java.util.LinkedHashMap<>();
+
+    /** 记账/顶账（同桶新批次覆盖旧账）。调用方负责标脏。 */
+    public void putBrewXpDebt(BlockPos pos, java.util.UUID brewer,
+            long startedAt, long pouredAt) {
+        this.brewXpDebts.put(pos.asLong(), new BrewXpDebt(brewer, startedAt, pouredAt));
+    }
+
+    /** 销账（发了/桶没了/批次糟蹋了都走这里；返回账目，无账=null）。 */
+    public BrewXpDebt takeBrewXpDebt(BlockPos pos) {
+        return this.brewXpDebts.remove(pos.asLong());
+    }
+
+    /** 只读视图（侦测遍历用）。 */
+    public java.util.Map<Long, BrewXpDebt> brewXpDebts() {
+        return java.util.Collections.unmodifiableMap(this.brewXpDebts);
+    }
+
     public String dimension() {
         return dimension;
     }
@@ -440,6 +473,19 @@ public class Town {
             }
             tag.put("TavernMenu", menu);
         }
+        // 酿造经验账本（#112）：桶 posLong → 账目（投料人+起止时刻）
+        if (!this.brewXpDebts.isEmpty()) {
+            net.minecraft.nbt.ListTag debts = new net.minecraft.nbt.ListTag();
+            for (Map.Entry<Long, BrewXpDebt> e : this.brewXpDebts.entrySet()) {
+                CompoundTag d = new CompoundTag();
+                d.putLong("Keg", e.getKey());
+                d.putUUID("Brewer", e.getValue().brewer());
+                d.putLong("Start", e.getValue().startedAt());
+                d.putLong("Poured", e.getValue().pouredAt());
+                debts.add(d);
+            }
+            tag.put("BrewXpDebts", debts);
+        }
         return tag;
     }
 
@@ -496,6 +542,13 @@ public class Town {
         CompoundTag menu = tag.getCompound("TavernMenu");
         for (String key : menu.getAllKeys()) {
             town.tavernMenu.put(key, Math.max(1, menu.getInt(key)));
+        }
+        // 酿造经验账本（#112）
+        net.minecraft.nbt.ListTag debts = tag.getList("BrewXpDebts", net.minecraft.nbt.Tag.TAG_COMPOUND);
+        for (int i = 0; i < debts.size(); i++) {
+            CompoundTag d = debts.getCompound(i);
+            town.brewXpDebts.put(d.getLong("Keg"), new BrewXpDebt(
+                    d.getUUID("Brewer"), d.getLong("Start"), d.getLong("Poured")));
         }
         // 老档自动归块（v0.9.1）：归属为空（区块功能实装前画的功能区）且
         // 几何上完整落在某个追加区块内 → 自动归到那个区块。主外框内的保持主区块。
