@@ -48,5 +48,5 @@ AGENTS.md
 # ===== IDE 工作区配置（各人本地，不进仓库）=====
 .vscode/
 
-# 官方 Wiki 已迁到 GitHub Wiki（bmfstown.wiki），本文件废弃，仅留本地
-docs/bmfstown-wiki.md
+# docs/ 为纯本地资料（台账/实测清单/需求书，长期不更新、Wiki 已外迁），整目录不上传
+docs/
