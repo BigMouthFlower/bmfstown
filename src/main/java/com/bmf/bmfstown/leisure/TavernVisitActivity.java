@@ -491,7 +491,7 @@ public class TavernVisitActivity implements LeisureActivity {
                 && ItemStack.isSameItemSameComponents(resident.getMainHandItem(), this.cup)) {
             resident.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
         }
-        resident.getStatus().drankAtTavern(level,
+        resident.getStatus().drankAtTavern(resident, level,
                 Config.TAVERN_MOOD_BONUS.get(), Config.TAVERN_DRINK_FOOD.get());
         if (!(this.drink.getItem() instanceof net.minecraft.world.item.PotionItem)) {
             KegAccess.applyPotionContentsOnly(level, resident, this.drink);
@@ -565,7 +565,7 @@ public class TavernVisitActivity implements LeisureActivity {
                 }
             }
         }
-        resident.getStatus().drankAtTavern(level,
+        resident.getStatus().drankAtTavern(resident, level,
                 Config.TAVERN_MOOD_BONUS.get(), Config.TAVERN_DRINK_FOOD.get());
         KegAccess.applyConsumable(level, resident, this.drink);
         level.playSound(null, resident.blockPosition(), SoundEvents.GENERIC_DRINK,

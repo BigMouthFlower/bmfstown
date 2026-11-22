@@ -313,7 +313,7 @@ public class LibraryReadActivity implements LeisureActivity {
             if (resident.getKnowledge().progressSkillBook(this.skillBookId, gain)) {
                 if (resident.getKnowledge().onSkillBookFinished(
                         this.skillBookId, Config.LEISURE_LITERACY_COST.get())) {
-                    resident.getStatus().skillBookLearned(level, this.skillBookId);
+                    resident.getStatus().skillBookLearned(resident, level, this.skillBookId);
                     // 学会广播（每次都播）+ 发现兜底（管理员刷书等未走过的边缘）
                     com.bmf.bmfstown.book.BookBroadcast.discovered(
                             level, resident.getIdentity().townId(), this.skillBookId);
@@ -340,7 +340,7 @@ public class LibraryReadActivity implements LeisureActivity {
             if (content.annotated()) {
                 mood = Math.max(1, Math.round(mood * 1.5F)); // 批注本 1.5 倍（+5 → +8）
             }
-            resident.getStatus().readEnjoyed(level, idle.seed(), mood);
+            resident.getStatus().readEnjoyed(resident, level, idle.seed(), mood);
             resident.getKnowledge().onIdleBookFinished(idle.seed()); // 学识+1 + 总阅读数+1 + 记入"读过"
         }
         return finishReading(resident, level);

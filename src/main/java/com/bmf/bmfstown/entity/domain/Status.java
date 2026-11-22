@@ -107,58 +107,10 @@ public final class Status {
     public static final int TONE_MEMORY_BAD = 3;
     /** 色调：好记忆（淡青）——预留给将来的正面铭记（如纪念日）。 */
     public static final int TONE_MEMORY_GOOD = 4;
+    /** 色调：知识（亮金）——学成一门书等"不影响心情但影响知识"的事件（#116 追记）。 */
+    public static final int TONE_KNOWLEDGE = 5;
 
-    /** 心情事件类型。每个事件自带：色调（正/负/中性）、语言文件 key 前缀。 */
-    public enum EventType {
-        /** 吃到了爱吃的食物（即时，挂在 settleBite）。 */
-        ATE_FAVORED(TONE_POSITIVE),
-        /** 挨饿：找不到也拿不到食物（即时，幅度按连续天数递增）。 */
-        STARVING(TONE_NEGATIVE),
-        /** 每日结算：今天干的是喜欢的工作。 */
-        JOB_LIKED(TONE_POSITIVE),
-        /** 每日结算：住宅里有喜欢的建筑材质。 */
-        BLOCK_LIKED(TONE_POSITIVE),
-        /** 感知：喜欢的动物在身边出没（每天 1 次）。 */
-        ANIMAL_LIKED(TONE_POSITIVE),
-        /** 每日结算：住宅里有喜欢的颜色方块。 */
-        COLOR_LIKED(TONE_POSITIVE),
-        /** 感知：附近唱片机在放（每天 1 次）。 */
-        MUSIC_LIKED(TONE_POSITIVE),
-        /** 感知：遇到讨厌的天气（半天 1 次且天气变了）。 */
-        WEATHER_DISLIKED(TONE_NEGATIVE),
-        /** 感知：天气变化的中性记录（没有讨厌天气的人也记）。 */
-        WEATHER_NEUTRAL(TONE_NEUTRAL),
-        /** 感知：讨厌的生物在附近出没（5 分钟 1 次，无日上限）。 */
-        MOB_DISLIKED(TONE_NEGATIVE),
-        /** 好战：击杀生物（每天上限见配置）。 */
-        KILL(TONE_POSITIVE),
-        /** 好战：连续多天没击杀。 */
-        KILL_NONE(TONE_NEGATIVE),
-        /** 勇气：周围有敌对生物。 */
-        TIMID_SCARED(TONE_NEGATIVE),
-        /** 勇气：一整天平安无事（仅轴值<50 生效）。 */
-        TIMID_SAFE(TONE_POSITIVE),
-        /** 社交：身边有 2 个以上同伴（对冲型，色调随轴值）。 */
-        SOCIAL_CROWD(TONE_POSITIVE),
-        /** 社交：身边一个同伴都没有（对冲型，色调随轴值）。 */
-        SOCIAL_LONELY(TONE_NEGATIVE),
-        /** 暴力：附近有生物死亡（色调随轴值：嗜血+仁慈−）。 */
-        DEATH_NEARBY(TONE_NEGATIVE),
-        /** 暴力：附近发生爆炸（烟花除外；色调随轴值）。 */
-        EXPLOSION_NEARBY(TONE_POSITIVE),
-        /** 暴力：附近有生物繁殖（色调随轴值）。 */
-        BIRTH_NEARBY(TONE_POSITIVE),
-        /** 嫉妒：看到玩家的好装备（仅轴值>80 掉心情）。 */
-        GEAR_ENVY(TONE_NEGATIVE),
-        /** 没睡好：昨晚整夜没躺过床，每多一夜多扣一次。 */
-        NO_SLEEP(TONE_NEGATIVE);
-
-        final int tone;
-
-        EventType(int tone) {
-            this.tone = tone;
-        }
-    }
+    /** 事件类型已提为顶层类 {@link EventType}（决策 #116），20 个旧事件仍沿用其写死 tone。 */
 
     /**
      * 一条想法日志。只存翻译 key、发生日、色调、标记与可选参数——不存数值
@@ -844,14 +796,10 @@ public final class Status {
         com.bmf.bmfstown.unlock.JobHints.sense(resident, level);
     }
 
-    /** 喜欢的动物在 8 格内出没 → 正面（每天 1 次）。 */
+    /** 喜欢的动物在 8 格内出没 → 正面（每天 1 次，走声明表）。 */
     private void senseAnimal(Resident resident, ServerLevel level) {
         PrefAnimal likedAnimal = resident.getPrefs().likedAnimal();
         if (likedAnimal == null) {
-            return;
-        }
-        EventType type = EventType.ANIMAL_LIKED;
-        if (this.eventCountToday.getOrDefault(type, 0) >= 1) {
             return;
         }
         AABB box = resident.getBoundingBox().inflate(ANIMAL_RANGE);
@@ -863,9 +811,7 @@ public final class Status {
             }
         }
         if (nearby) {
-            this.eventCountToday.put(type, 1);
-            this.applyClamped(resident, Config.MOOD_ANIMAL_LIKED.get());
-            addThought(resident, level, type);
+            Events.happen(resident, level, EventType.ANIMAL_LIKED);
         }
     }
 
@@ -1054,6 +1000,44 @@ public final class Status {
         resident.syncClient();
     }
 
+    /**
+     * 事件系统的统一心情施加（决策 #116）：{@code cap} 由声明解析而来，
+     * {@code cap <= 0} = 不限幅、直加且不记账；否则走每日配额。返回<b>实际落账增量</b>
+     * （供契约测试断言 clamp 截断；想法色调看意图方向，不看此返回值）。
+     */
+    int applyEventMood(Resident resident, int delta, int cap) {
+        if (delta == 0) {
+            return 0;
+        }
+        if (cap <= 0) {
+            int before = this.mood;
+            applyRaw(resident, delta);
+            return this.mood - before;
+        }
+        int room = delta >= 0 ? cap - this.dailyDelta : -cap - this.dailyDelta;
+        int actual = delta >= 0 ? Math.min(delta, Math.max(0, room))
+                : Math.max(delta, Math.min(0, room));
+        if (actual == 0) {
+            return 0;
+        }
+        this.dailyDelta += actual;
+        applyRaw(resident, actual);
+        return actual;
+    }
+
+    /** 每日触发计数：{@code limit <= 0} = 不限，恒放行且不计数（"绕限制用参数 0 表达"）。 */
+    boolean consumeDaily(EventType type, int limit) {
+        if (limit <= 0) {
+            return true;
+        }
+        int count = this.eventCountToday.getOrDefault(type, 0);
+        if (count >= limit) {
+            return false;
+        }
+        this.eventCountToday.put(type, count + 1);
+        return true;
+    }
+
     /** 距 last 是否已过 interval（dayTime 口径；必须走这个 helper 防 long 溢出误判）。 */
     private static boolean elapsed(long now, long last, long interval) {
         // 回拨保护（v0.9.3）：/time set 把 dayTime 往回拨后，游标（last）会停在
@@ -1076,7 +1060,7 @@ public final class Status {
     }
 
     /** 心态滤镜标记：乐观端 "+"（正面想法）/ 悲观端 "−"（负面想法）。 */
-    private int hopeMarker(Resident resident, ServerLevel level, int tone) {
+    int hopeMarker(Resident resident, ServerLevel level, int tone) {
         int hope = this.axis(resident, level, PersonalityAxis.HOPE);
         if (tone == TONE_POSITIVE && hope >= 61) {
             return Thought.MARK_PLUS;
@@ -1113,6 +1097,11 @@ public final class Status {
             case BIRTH_NEARBY -> "birth_nearby";
             case GEAR_ENVY -> "gear_envy";
             case NO_SLEEP -> "no_sleep";
+            // 三个裸字符串升格（决策 #116）——旧 addThought(type) 路径不会走它们，
+            // 但 switch 穷尽性强制补全（这些就是 lang 里的真实键）。
+            case READING -> "reading";
+            case TAVERN -> "tavern";
+            case LEARNED -> "learned";
         };
     }
 
@@ -1120,12 +1109,10 @@ public final class Status {
      * 读闲书（v0.11 用户定稿）：心情 +5，想法唯一文案
      * "他读了《XX》，感觉很有意思"（书名走参数，客户端现译）。
      */
-    /** 读完闲书：心情加成由调用方按批注倍率折算，想法记书名（种子现译）。 */
-    public void readEnjoyed(ServerLevel level, long bookSeed, int moodGain) {
-        this.mood = Math.min(MAX_MOOD, this.mood + moodGain);
+    /** 读完闲书：心情加成由调用方按批注倍率折算（moodOverride），想法记书名（种子现译）。 */
+    public void readEnjoyed(Resident resident, ServerLevel level, long bookSeed, int moodGain) {
         // arg 协议："idle:<种子>"——客户端按种子现译书名（双语自动）
-        addThought(level, TONE_POSITIVE, "mood.bmfstown.thought.reading",
-                Thought.MARK_NONE, "idle:" + bookSeed);
+        Events.happen(resident, level, EventType.READING, moodGain, "idle:" + bookSeed);
     }
 
     /** 上次在酒馆喝到饮品是第几游戏日（每日一杯闸门读数）。 */
@@ -1143,19 +1130,17 @@ public final class Status {
      * 读书攒学识有价值，喝酒是纯消遣）+ 少量饥饿回复 + 想法留痕。
      * 药水效果（反胃）由活动侧另加——这里只管状态与心情。
      */
-    public void drankAtTavern(ServerLevel level, int moodGain, int foodGain) {
-        this.mood = Math.min(MAX_MOOD, this.mood + moodGain);
+    public void drankAtTavern(Resident resident, ServerLevel level, int moodGain, int foodGain) {
         if (foodGain > 0) {
             this.hunger = Math.min(MAX_HUNGER, this.hunger + foodGain);
         }
-        addThought(level, TONE_POSITIVE, "mood.bmfstown.thought.tavern", Thought.MARK_NONE);
+        Events.happen(resident, level, EventType.TAVERN, moodGain, null);
     }
 
     /** 学成一门特殊书（图书馆读完 learnTicks）：想法留名（无心情——收益是效果本身）。 */
-    public void skillBookLearned(ServerLevel level, String bookId) {
+    public void skillBookLearned(Resident resident, ServerLevel level, String bookId) {
         // arg 协议："book:<id>"——客户端按登记表 lang 键现译书名
-        addThought(level, TONE_POSITIVE, "mood.bmfstown.thought.learned",
-                Thought.MARK_NONE, "book:" + bookId);
+        Events.happen(resident, level, EventType.LEARNED, null, "book:" + bookId);
     }
 
     private void addThought(ServerLevel level, int tone, String key, int marker) {

@@ -1139,6 +1139,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 case 2 -> 0xFF5555;
                 case 3 -> 0xD087FF;
                 case 4 -> 0x7FDDFF;
+                case 5 -> 0xFFD966; // 知识（亮金）：学成一门书等"不影响心情但影响知识"（#116 追记）
                 default -> 0xB0B0B0;
             };
             gfx.drawString(this.font, line, TEXT_PAD, rowY, color, false);
