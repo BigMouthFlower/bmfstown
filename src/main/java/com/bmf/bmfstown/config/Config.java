@@ -337,6 +337,17 @@ public final class Config {
                     "Envy axis: town-wide cooldown for gear-judgement dialogue (dayTime ticks; 6000 = 5 min)")
             .defineInRange("personality.gearTownCooldown", 6000, 200, 24000);
 
+    /**
+     * 嫉妒轴：装备评判的每人每日上限（0 = 不限）。
+     *
+     * <p>与 {@link #AXIS_GEAR_TOWN_COOLDOWN} 是两把不同的闸门：这个是"每个人每天几次"，
+     * 那个是"整个镇多久才能再发生一次"。
+     */
+    public static final ModConfigSpec.IntValue AXIS_GEAR_PERSONAL_DAILY = BUILDER
+            .comment("嫉妒轴：每个居民每天最多评价玩家几次（0 = 不限）",
+                    "Envy axis: max gear-judgement events per resident per day (0 = unlimited)")
+            .defineInRange("personality.gearPersonalDaily", 1, 0, 100);
+
     /** 嫉妒轴：装备评判的心情惩罚每天最多几次。 */
     public static final ModConfigSpec.IntValue AXIS_GEAR_MOOD_DAILY_LIMIT = BUILDER
             .comment("嫉妒轴：看到玩家好装备的心情惩罚每天最多几次（仅轴值>80 生效）",
@@ -408,11 +419,17 @@ public final class Config {
                     "Day time when residents start going home to sleep (12000 = sunset)")
             .defineInRange("sleep.startTime", 12000, 0, 23999);
 
-    /** 一天的哪个 tick 起床（23000 是日出前）。 */
+    /**
+     * 一天的哪个 tick 起床。
+     *
+     * <p>默认 24000（= 0 点）：玩家睡床后时间被推到当天边界，镇民与玩家同时醒，
+     * 这样晨夜轴的"晚起"才看得见（夜猫子被推到次日 1000，玩家醒着能撞上）。
+     * 设成 23000 则是日出前 1000t，但玩家通常还在睡，差异观察不到。
+     */
     public static final ModConfigSpec.IntValue SLEEP_END_TIME = BUILDER
-            .comment("起床的时刻（0~24000，23000 是日出前）",
-                    "Day time when residents wake up (23000 = just before sunrise)")
-            .defineInRange("sleep.endTime", 23000, 1, 24000);
+            .comment("起床的时刻（0~24000；24000 与玩家睡醒对齐，23000 是日出前）",
+                    "Day time when residents wake up (24000 aligns with the player waking up; 23000 = just before sunrise)")
+            .defineInRange("sleep.endTime", 24000, 1, 24000);
 
     /** 回家睡觉的走路速度。 */
     public static final ModConfigSpec.DoubleValue SLEEP_WALK_SPEED = BUILDER

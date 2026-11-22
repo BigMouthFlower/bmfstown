@@ -1007,8 +1007,10 @@ public class Resident extends PathfinderMob {
     public boolean isNightForMe(net.minecraft.server.level.ServerLevel level) {
         int t = this.tickOfDay(level);
         int[] window = this.sleepWindow();
-        int start = window[0];
-        int end = window[1];
+        // 晨夜轴可能把窗口推过 24000（夜猫子 13000~25000），先折回一天内再比：
+        // 否则 end=25000 会让"同窗口"分支的 t<end 恒真，凌晨被误判成白天。
+        int start = Math.floorMod(window[0], 24_000);
+        int end = Math.floorMod(window[1], 24_000);
         return start <= end ? t >= start && t < end : t >= start || t < end;
     }
 

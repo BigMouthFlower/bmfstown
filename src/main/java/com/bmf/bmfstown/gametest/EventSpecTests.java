@@ -101,6 +101,27 @@ public class EventSpecTests {
         for (EventType t : EventSpecs.declaredTypes()) {
             EventSpec spec = EventSpecs.of(t);
             c.eq(t, spec.type(), "spec.type 回指");
+            // 城镇冷却挡的是整条 happen 路径（含心情/想法/记忆），不只是气泡。
+            // 所以它只允许出现在"纯表达"事件上：一旦挂了结算，别人说过话就会
+            // 把这次的结算整条吞掉（心情不涨、想法不记），玩家会觉得时灵时不灵。
+            if (spec.townCooldownTicks() > 0) {
+                c.isTrue(!spec.hasMood() && !spec.hasThought() && spec.memoryKind() == null,
+                        t + " 声明了城镇冷却但不是纯表达事件（心情/想法/记忆会被镇冷却吞掉）");
+            }
+            // "只开口"事件（如评价玩家）：没有想法，也就不查 thought key，
+            // 但必须有气泡，否则玩家什么都感知不到
+            if (!spec.hasThought()) {
+                c.isTrue(spec.hasBubble(), t + " 无想法的事件必须用气泡给出可见反馈");
+                if (t == EventType.GEAR_SEEN) {
+                    // 两把限流闸门都必须落在声明表里、且真的接到配置（#118 样板）：
+                    // 只断言 >0 的话，配置改了而声明没跟上（或写死常量）测不出来。
+                    c.eq(com.bmf.bmfstown.config.Config.AXIS_GEAR_TOWN_COOLDOWN.get(),
+                            spec.townCooldownTicks(), "GEAR_SEEN 城镇冷却必须取配置值");
+                    c.eq(com.bmf.bmfstown.config.Config.AXIS_GEAR_PERSONAL_DAILY.get(),
+                            spec.dailyLimit(), "GEAR_SEEN 个人每日上限必须取配置值");
+                }
+                continue;
+            }
             c.isTrue(spec.thoughtKey() != null && !spec.thoughtKey().isBlank(), t + " 想法 key 空");
 
             if (zh != null && en != null) {
@@ -135,6 +156,8 @@ public class EventSpecTests {
             }
             c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(t),
                     t + " 声明了 bubble 但台词表无对应行（topic=" + spec.bubbleTopic() + "）");
+            c.isTrue(com.bmf.bmfstown.social.DialogEngine.hasRule(t),
+                    t + " 声明了 bubble 但 RULES 无说话策略（永远不开口）");
         }
         // 迁移过来的三条必须有台词行
         c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(EventType.ATE_FAVORED),
@@ -150,6 +173,30 @@ public class EventSpecTests {
                         com.bmf.bmfstown.social.TownEventType.JOB_HINT),
                 "JOB_HINT 台词行存在");
         c.throwIfAny(helper, "bubbleDeclarationsHaveLines");
+    }
+
+    /**
+     * 纯表达触发键与台词表/策略表对齐（2026-11-22 装备评判归位）：每个
+     * {@code TownEventType} 都必须在 {@code RULES} 有说话策略、在 {@code LINES}
+     * 有台词行；台词表里的每个 lang key 必须在 zh/en 双文件存在。
+     *
+     * <p>防两类静默：注册了却永远不开口（漏 RULES）；改了 key 丢文案（坑49 同类）。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void pureExpressionTriggersRegistered(GameTestHelper helper) {
+        Checks c = new Checks();
+        for (com.bmf.bmfstown.social.TownEventType t
+                : com.bmf.bmfstown.social.TownEventType.values()) {
+            c.isTrue(com.bmf.bmfstown.social.DialogEngine.hasRule(t), t + " 未配说话策略（RULES）");
+            c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(t), t + " 无台词行（LINES）");
+        }
+        JsonObject zh = lang("zh_cn");
+        JsonObject en = lang("en_us");
+        for (String key : com.bmf.bmfstown.social.DialogRegistry.allKeys()) {
+            c.isTrue(zh != null && zh.has(key), "台词 key zh 缺失: " + key);
+            c.isTrue(en != null && en.has(key), "台词 key en 缺失: " + key);
+        }
+        c.throwIfAny(helper, "pureExpressionTriggersRegistered");
     }
 
     // ==========================================================

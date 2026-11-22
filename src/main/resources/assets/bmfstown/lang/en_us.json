@@ -105,6 +105,8 @@
   "dialog.bmfstown.gear_praise.1": "That %s is a fine piece. Really nice.",
   "dialog.bmfstown.gear_praise.2": "A %s like that — you can tell it's well made.",
   "dialog.bmfstown.gear_praise.3": "A %s... I'd love one of those.",
+  "dialog.bmfstown.knee_arrow": "I used to be an adventurer like you. Then I took an arrow in the knee.",
+  "dialog.bmfstown.woke_up": "Hey you. You're finally awake.",
   "dialog.bmfstown.eat_favored_love": "%s is my favorite.",
   "dialog.bmfstown.jobhint.redstone_ambient": "%s... You know, this can be refined into finer components for practical machines. Bring me some crafted redstone components sometime.",
   "dialog.bmfstown.jobhint.worker": "%s, %s, %s... If you're tired of crafting all these fiddly redstone components, I can make them for you.",

@@ -60,6 +60,9 @@ public final class EventSpec {
     private MemoryKind memoryKind;
     private String memoryKey;
 
+    /** 城镇级冷却（dayTime tick）；IntSupplier 延迟读 Config，null = 不限。 */
+    private IntSupplier townCooldown = null;
+
     private boolean sealed;
 
     public EventSpec(EventType type) {
@@ -173,6 +176,26 @@ public final class EventSpec {
     }
 
     /**
+     * <b>城镇级</b>冷却：镇内任何一人触发过，全镇静默这么久（dayTime tick）。
+     *
+     * <p>与 {@link #daily} 的分工：{@code daily} 是"每个人每天几次"，
+     * 本项是"这个镇多久才能再发生一次"——单位是镇，不是人。到点之前
+     * {@code Events} 直接整条 return，心情/想法/气泡一起不发生。
+     *
+     * <p>0 = 不限。IntSupplier 延迟读 Config 保持可调。
+     */
+    public EventSpec townCooldown(IntSupplier ticks) {
+        mutable();
+        this.townCooldown = ticks;
+        return this;
+    }
+
+    /** 城镇级冷却（写死值），0 = 不限。 */
+    public EventSpec townCooldown(int ticks) {
+        return townCooldown(() -> ticks);
+    }
+
+    /**
      * 记忆（铭记/印象）+ 记忆 key。
      *
      * <p>{@link MemoryKind#FIRM} 走铭记进度（积满固化并宣布想法）；
@@ -235,6 +258,16 @@ public final class EventSpec {
         return this.bubbleTopic != null;
     }
 
+    /** 是否声明了想法（没声明的就是纯气泡/纯心情事件）。 */
+    public boolean hasThought() {
+        return this.thoughtKey != null;
+    }
+
+    /** 城镇级冷却值（tick）；未声明 = 0（不限）。 */
+    public int townCooldownTicks() {
+        return this.townCooldown == null ? 0 : this.townCooldown.getAsInt();
+    }
+
     /** 气泡台词组 topic；未声明 = null。 */
     public String bubbleTopic() {
         return this.bubbleTopic;
@@ -271,8 +304,13 @@ public final class EventSpec {
     // ---- 冻结 ----
 
     void seal() {
-        if (this.thoughtKey == null || this.thoughtKey.isBlank()) {
-            throw new IllegalStateException("EventSpec " + this.type + " 缺 thought key");
+        // 至少有一个出口（心情/想法/记忆/气泡）——不强制必须有想法：
+        // "只开口"（观察类）与"只调心情"都是合法声明，只要不是空声明。
+        if (!hasMood() && !hasThought() && this.memoryKind == null && !hasBubble()) {
+            throw new IllegalStateException("EventSpec " + this.type + " 没有任何出口");
+        }
+        if (hasThought() && this.thoughtKey.isBlank()) {
+            throw new IllegalStateException("EventSpec " + this.type + " thought key 空白");
         }
         if (this.moodOverride && !hasMood()) {
             throw new IllegalStateException("EventSpec " + this.type + " moodOverride 但无 mood");

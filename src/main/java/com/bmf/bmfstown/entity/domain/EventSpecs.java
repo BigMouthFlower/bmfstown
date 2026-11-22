@@ -131,6 +131,26 @@ public final class EventSpecs {
                 .thought("gear_envy").negative()
                 .daily(Config.AXIS_GEAR_MOOD_DAILY_LIMIT::get));
 
+        // 评价玩家（通用事件）：看见好装备就说一句，与嫉妒轴无关。
+        // 只有 >80 才另走 GEAR_ENVY 扣心情、记想法——两条声明分开。
+        register(new EventSpec(EventType.GEAR_SEEN)
+                .bubble("gear")
+                .daily(Config.AXIS_GEAR_PERSONAL_DAILY::get)         // 每人每天 N 次（默认 1）
+                .townCooldown(Config.AXIS_GEAR_TOWN_COOLDOWN::get)); // 全镇 5 分钟一次
+
+        // 老滚 5 彩蛋：战士看见玩家就说"我以前也是个冒险家"。
+        // 不要求中箭、不带物品，只开口；限流与装备评价同口径（每人每日 1 + 全镇冷却）。
+        register(new EventSpec(EventType.KNEE_ARROW)
+                .bubble("knee")
+                .daily(Config.AXIS_GEAR_PERSONAL_DAILY::get)
+                .townCooldown(Config.AXIS_GEAR_TOWN_COOLDOWN::get));
+
+        // 老滚 5 开场：玩家睡醒、身边有比他早起的人 → "你终于醒了"。
+        // 全镇一天一次（24000t），不扣心情、不记想法。
+        register(new EventSpec(EventType.WOKE_UP)
+                .bubble("wake")
+                .townCooldown(24_000));
+
         register(new EventSpec(EventType.NO_SLEEP)
                 .mood(Config.MOOD_NO_SLEEP::get).moodOverride()
                 .thought("no_sleep").negative()

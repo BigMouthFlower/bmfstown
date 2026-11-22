@@ -13,12 +13,16 @@ import com.bmf.bmfstown.entity.profile.WeatherPref;
 import com.bmf.bmfstown.town.TownZone;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.level.block.Blocks;
@@ -82,6 +86,12 @@ public final class Status {
 
     /** 唱片机扫描距离（格）。 */
     private static final int JUKEBOX_RANGE = 8;
+
+    /**
+     * 生活化气泡的统一检测距离（格）：战士感慨、睡醒问候等"看见玩家/看见邻居"的场景。
+     * 与嫉妒轴装备评价同口径（5 格），用户 2026-11-22 定：不再按事件区分距离。
+     */
+    private static final double GREET_RANGE = 5.0D;
 
     /** 敌对生物扫描距离（格）：生物厌恶与胆小共用。 */
     private static final double HOSTILE_RANGE = 16.0D;
@@ -471,7 +481,7 @@ public final class Status {
     }
 
     /**
-     * 嫉妒轴：看到玩家的好装备（GearJudgeHandler 判定后回调）。
+     * 嫉妒轴：看到玩家的好装备（由 {@link #senseGear} 调用）。
      * 心情惩罚仅 v>80 生效（v=80→0，v=100→满扣 −base），每天上限见配置。
      */
     public void notePlayerGear(Resident resident, ServerLevel level) {
@@ -707,8 +717,10 @@ public final class Status {
         senseJukebox(resident, level);
         senseHostiles(resident, level);
         senseWeather(resident, level);
-        // 嫉妒轴（v0.14）：评判视野内玩家的随身装备 → 心情/台词
-        com.bmf.bmfstown.entity.GearJudgeHandler.sense(resident, level);
+        // 嫉妒轴（v0.14）：评判视野内玩家的随身装备 → 心情/台词（两条声明）
+        senseGear(resident, level);
+        // 老滚 5 彩蛋：战士看见玩家 → "我以前也是个冒险家"
+        senseKneeArrow(resident, level);
         // 职业线索（v0.10）：看见玩家携带特定物品 → 线索台词 → 解锁职业
         com.bmf.bmfstown.unlock.JobHints.sense(resident, level);
     }
@@ -812,6 +824,79 @@ public final class Status {
         } else {
             Events.happenWith(resident, level, EventType.WEATHER_NEUTRAL, null,
                     Events.Args.ofBubble(current.name(), null));
+        }
+    }
+
+    /**
+     * 嫉妒轴·感知：视野内玩家身上的好装备（钻石/下界合金材质或任一附魔）。
+     *
+     * <p>和其它 senseXxx 一样，本类只做"什么时候触发"的判断与输入采集；
+     * 触发之后改什么，全看声明表（{@code EventSpecs}）——心情走
+     * {@code GEAR_ENVY}（仅 v&gt;80），台词走 {@code GEAR_SEEN}
+     * （{@code .bubble} + {@code .daily} + {@code .townCooldown}）。
+     */
+    private void senseGear(Resident resident, ServerLevel level) {
+        double range = Config.AXIS_GEAR_RANGE.get();
+        ItemStack hit = ItemStack.EMPTY;
+        for (ServerPlayer player : level.getEntitiesOfClass(ServerPlayer.class,
+                resident.getBoundingBox().inflate(range))) {
+            if (!player.isAlive() || !resident.hasLineOfSight(player)) {
+                continue;
+            }
+            ItemStack found = firstGoodGear(player);
+            if (found != null) {
+                hit = found;
+                break;
+            }
+        }
+        if (hit.isEmpty()) {
+            return;
+        }
+        // 心情：阈值（>80）在 notePlayerGear 里判，不合适就提前 return，不烧心情配额
+        notePlayerGear(resident, level);
+        // 台词：走声明表，过闸后才轮到 DialogRegistry 选句、RULES 查投递策略
+        Events.happenWith(resident, level, EventType.GEAR_SEEN, null,
+                Events.Args.ofBubble(null, hit.getHoverName().getString()));
+    }
+
+    /** 6 个槽位里第一件"好装备"；没有 = null。 */
+    private static ItemStack firstGoodGear(ServerPlayer player) {
+        for (EquipmentSlot slot : new EquipmentSlot[]{
+                EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND,
+                EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
+            ItemStack stack = player.getItemBySlot(slot);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            String path = BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath();
+            if (path.contains("diamond") || path.contains("netherite")) {
+                return stack;
+            }
+            if (stack.isEnchanted()) {
+                return stack;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 老滚 5 彩蛋：战士看见 5 格内的玩家，就说"我以前也是个冒险家，直到膝盖中箭"。
+     *
+     * <p>不要求玩家中箭、也不看玩家装备——就是战士的常驻感慨。频次全在声明表
+     * （{@code KNEE_ARROW}：个人每日 1 次 + 城镇冷却），本方法只做触发判断。
+     * 台词本身带 {@code Resident::isWarrior} 条件，非战士即使误入也不会说。
+     */
+    private void senseKneeArrow(Resident resident, ServerLevel level) {
+        if (!resident.isWarrior()) {
+            return;
+        }
+        for (ServerPlayer player : level.getEntitiesOfClass(ServerPlayer.class,
+                resident.getBoundingBox().inflate(GREET_RANGE))) {
+            if (!player.isAlive() || !resident.hasLineOfSight(player)) {
+                continue;
+            }
+            Events.happen(resident, level, EventType.KNEE_ARROW);
+            return;
         }
     }
 

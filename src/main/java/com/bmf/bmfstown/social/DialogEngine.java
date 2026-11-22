@@ -76,7 +76,10 @@ public final class DialogEngine {
      *
      * @param oneInN       相位筛选：settleOffset % N == 0 的镇民才开口（1 = 不限）
      * @param staggerTicks 错峰窗口（tick）；0 = 立刻说
-     * @param cooldownTicks 该组说完后的禁言时长（tick）；0 = 不打冷却
+     * @param cooldownTicks 该组说完后的禁言时长（tick）；0 = 不打冷却（按镇民记账）
+     *
+     * <p>频次上限（个人每日/城镇级）属于<b>事件声明</b>（{@code EventSpec.daily} /
+     * {@code EventSpec.townCooldown}），不在这里重复一遍。
      */
     private record SayRule(IntSupplier oneInN, IntSupplier staggerTicks, IntSupplier cooldownTicks) {
     }
@@ -109,6 +112,15 @@ public final class DialogEngine {
                 new SayRule(() -> Math.max(1, Config.DIALOG_WEATHER_ONE_IN_N.get()),
                         Config.DIALOG_STAGGER_TICKS::get,
                         () -> Config.DIALOG_WEATHER_COOLDOWN.get() * 20));
+        // 装备评判（2026-11-22 归位）：选句按嫉妒轴分池（condition）；
+        // 频次（个人每日 + 城镇冷却）在 EventSpecs 的事件声明里，这里不再限。
+        RULES.put(EventType.GEAR_SEEN,
+                new SayRule(() -> 1, () -> 0, () -> 0));
+        // 老滚 5 彩蛋：频次全在事件声明里（个人每日 + 城镇冷却），这里不限
+        RULES.put(EventType.KNEE_ARROW,
+                new SayRule(() -> 1, () -> 0, () -> 0));
+        RULES.put(EventType.WOKE_UP,
+                new SayRule(() -> 1, () -> 0, () -> 0));
     }
 
     // ==========================================================
@@ -243,12 +255,12 @@ public final class DialogEngine {
                     requeue.add(say); // 还没到点：先暂存，遍历完统一放回
                     continue;
                 }
-                if (cooldownOk(resident, GROUP_BUSY, level.getGameTime())
-                        && cooldownOk(resident, say.line().group(), level.getGameTime())) {
+                long now = level.getGameTime();
+                if (cooldownOk(resident, GROUP_BUSY, now)
+                        && cooldownOk(resident, say.line().group(), now)) {
                     say(level, resident, say.line(), say.args());
                     if (say.cooldownTicks() > 0) {
-                        markCooldown(resident, say.line().group(), level.getGameTime(),
-                                say.cooldownTicks());
+                        markCooldown(resident, say.line().group(), now, say.cooldownTicks());
                     }
                 }
             }
@@ -360,5 +372,10 @@ public final class DialogEngine {
     private static void markCooldown(Resident resident, String group, long now, long ticks) {
         COOLDOWNS.computeIfAbsent(resident.getUUID(), k -> new HashMap<>())
                 .put(group, now + ticks);
+    }
+
+    /** 该触发键是否配了说话策略（契约测试用：防"声明了却永远不开口"）。 */
+    public static boolean hasRule(SpeakTrigger trigger) {
+        return RULES.containsKey(trigger);
     }
 }

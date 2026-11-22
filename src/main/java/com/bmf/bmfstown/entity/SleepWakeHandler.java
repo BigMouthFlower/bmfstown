@@ -1,7 +1,11 @@
 package com.bmf.bmfstown.entity;
 
 import com.bmf.bmfstown.BmfTown;
+import com.bmf.bmfstown.entity.domain.EventType;
+import com.bmf.bmfstown.entity.domain.Events;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.Level;
@@ -9,6 +13,7 @@ import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerWakeUpEvent;
 
 import java.util.List;
 
@@ -56,5 +61,47 @@ public final class SleepWakeHandler {
             resident.kickFromBed();
         }
         event.setCanceled(true);
+    }
+
+    /** 生活化气泡的检测距离（格）：用户 2026-11-22 定，与装备评价同口径。 */
+    private static final double GREET_RANGE = 5.0D;
+
+    /**
+     * 老滚 5 开场彩蛋：玩家睡醒时，5 格内若有"比他起得早"的居民，
+     * 由最近的一个说"你终于醒了"。
+     *
+     * <p>"起得早"判 {@link Resident#sleepWindow()} 的终点：严格小于 24000 才算
+     * （早鸟 23000 算；中性与玩家同为 24000 不算；夜猫子 25000→次日 1000 不算）。
+     * 时间跳跃让早起的人此刻已在外活动，玩家睁眼就能撞见。
+     *
+     * <p>全城一天一次由事件声明的 {@code townCooldown(24000)} 负责，
+     * 本方法只管"谁在附近、够不够早、谁最近"。
+     */
+    @SubscribeEvent
+    public static void onPlayerWakeUp(PlayerWakeUpEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)
+                || !(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        Resident best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (Resident resident : level.getEntitiesOfClass(Resident.class,
+                player.getBoundingBox().inflate(GREET_RANGE))) {
+            if (!resident.isAlive()) {
+                continue;
+            }
+            // 中性（24000）与夜猫子（>24000）都不算"起得比你早"
+            if (resident.sleepWindow()[1] >= 24_000) {
+                continue;
+            }
+            double dist = resident.distanceToSqr(player);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = resident;
+            }
+        }
+        if (best != null) {
+            Events.happen(best, level, EventType.WOKE_UP);
+        }
     }
 }

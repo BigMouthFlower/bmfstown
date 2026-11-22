@@ -3,7 +3,9 @@ package com.bmf.bmfstown.social;
 import com.bmf.bmfstown.entity.Resident;
 import com.bmf.bmfstown.entity.domain.EventType;
 import com.bmf.bmfstown.entity.domain.SpeakTrigger;
+import com.bmf.bmfstown.entity.profile.PersonalityAxis;
 import com.bmf.bmfstown.entity.profile.WeatherPref;
+import net.minecraft.server.level.ServerLevel;
 
 import java.util.List;
 import java.util.function.Predicate;
@@ -35,6 +37,20 @@ public final class DialogRegistry {
     public record DialogLine(SpeakTrigger trigger, WeatherPref weather, String group,
                              String key, boolean withItem,
                              Predicate<Resident> condition, int weight) {
+    }
+
+    /**
+     * 装备评判的台词分池阈值：台词用 60，心情惩罚另用 80（决策 #44 既有口径，别合并）。
+     */
+    private static final int GEAR_MOCK_AXIS = 60;
+
+    private static final Predicate<Resident> GEAR_MOCK = r -> envyAxis(r) >= GEAR_MOCK_AXIS;
+    private static final Predicate<Resident> GEAR_PRAISE = r -> envyAxis(r) < GEAR_MOCK_AXIS;
+
+    /** 读嫉妒轴；拿不到服务端 level 时按 0 处理（谓词只服务服务端说话路径）。 */
+    private static int envyAxis(Resident r) {
+        return r.level() instanceof ServerLevel level
+                ? r.getStatus().axis(r, level, PersonalityAxis.ENVY) : 0;
     }
 
     private static final List<DialogLine> LINES = List.of(
@@ -70,7 +86,27 @@ public final class DialogRegistry {
                     "dialog.bmfstown.jobhint.worker", true, null, 1),
             // 职业引导线（可重复，不解锁）：看见红石块/矿 → "这东西能加工哦"
             new DialogLine(TownEventType.REDSTONE_AMBIENT, null, "jobhint_ambient",
-                    "dialog.bmfstown.jobhint.redstone_ambient", true, null, 1)
+                    "dialog.bmfstown.jobhint.redstone_ambient", true, null, 1),
+            // 装备评判（2026-11-22 从 GearJudgeHandler 私有池搬回）：嗤/夸按嫉妒轴分池，
+            // 频次与选句策略见 DialogEngine.RULES（全镇共享 + 每人每日）
+            new DialogLine(EventType.GEAR_SEEN, null, "gear",
+                    "dialog.bmfstown.gear_mock.1", true, GEAR_MOCK, 1),
+            new DialogLine(EventType.GEAR_SEEN, null, "gear",
+                    "dialog.bmfstown.gear_mock.2", true, GEAR_MOCK, 1),
+            new DialogLine(EventType.GEAR_SEEN, null, "gear",
+                    "dialog.bmfstown.gear_mock.3", true, GEAR_MOCK, 1),
+            new DialogLine(EventType.GEAR_SEEN, null, "gear",
+                    "dialog.bmfstown.gear_praise.1", true, GEAR_PRAISE, 1),
+            new DialogLine(EventType.GEAR_SEEN, null, "gear",
+                    "dialog.bmfstown.gear_praise.2", true, GEAR_PRAISE, 1),
+            new DialogLine(EventType.GEAR_SEEN, null, "gear",
+                    "dialog.bmfstown.gear_praise.3", true, GEAR_PRAISE, 1),
+            // 老滚 5 彩蛋：战士看见玩家就说（不要求中箭，也不需要 %s）
+            new DialogLine(EventType.KNEE_ARROW, null, "knee",
+                    "dialog.bmfstown.knee_arrow", false, Resident::isWarrior, 1),
+            // 老滚 5 开场：睡醒时身边有比自己早起的人
+            new DialogLine(EventType.WOKE_UP, null, "wake",
+                    "dialog.bmfstown.woke_up", false, null, 1)
     );
 
     /**
@@ -114,6 +150,15 @@ public final class DialogRegistry {
             }
         }
         return lines.get(lines.size() - 1);
+    }
+
+    /** 全部台词 lang key（契约测试用：逐条断言 zh/en 都存在，防改名静默丢文案）。 */
+    public static java.util.Set<String> allKeys() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (DialogLine line : LINES) {
+            out.add(line.key());
+        }
+        return out;
     }
 
     /** 台词表的触发键集合（契约测试用：声明了 bubble 的事件必须能查到台词）。 */
