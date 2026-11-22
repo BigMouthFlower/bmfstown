@@ -565,8 +565,11 @@ public final class Status {
         // 想法文案必须按符号分 key（_pos/_neg）——共用一份 key 会让
         // 一半人口看到与结算符号错位的描述（2026-11-21 用户实测发现）。
         int tone = base > 0 ? TONE_POSITIVE : TONE_NEGATIVE;
+        // 注意：TONE_NEGATIVE = 2，用 `tone > 0` 判断会因为负数档位全是正数而恒真，
+        // _neg 永远打不出来（2026-11-22 实测：仁慈镇民仍显示"看得津津有味"）。
+        // 必须显式比较 TONE_POSITIVE。
         addThought(level, tone,
-                "mood.bmfstown.thought." + keyOf(type) + (tone > 0 ? "_pos" : "_neg"),
+                "mood.bmfstown.thought." + keyOf(type) + (tone == TONE_POSITIVE ? "_pos" : "_neg"),
                 hopeMarker(resident, level, tone));
     }
 
@@ -1088,7 +1091,9 @@ public final class Status {
     private static String keyOf(EventType type) {
         return switch (type) {
             case ATE_FAVORED -> "ate_favored";
-            case STARVING -> "starving";
+            // 挨饿有专用入口（starving_1/2/3 按连续天数选键），正常不走这里；
+            // 兜底给一个 lang 里确实存在的键，避免误用时显示裸 key。
+            case STARVING -> "starving_1";
             case JOB_LIKED -> "job_liked";
             case BLOCK_LIKED -> "block_liked";
             case ANIMAL_LIKED -> "animal_liked";

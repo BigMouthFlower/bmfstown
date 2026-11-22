@@ -44,3 +44,6 @@ generated-images/
 # ===== AI 协作知识库（本地，不同步）=====
 AGENTS.md
 .ai/
+
+# ===== IDE 工作区配置（各人本地，不进仓库）=====
+.vscode/

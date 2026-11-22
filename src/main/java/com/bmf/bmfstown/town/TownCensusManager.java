@@ -1,19 +1,16 @@
 package com.bmf.bmfstown.town;
 
-import com.bmf.bmfstown.BmfTown;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +21,8 @@ import java.util.UUID;
  *
  * <h2>成本设计（用户定稿：一天更新一次）</h2>
  * 扫描 = 遍历城镇外框内的所有方块找容器 + 读格子内容。全量扫很贵，
- * 所以：<b>每 tick 限量摊派</b>（{@link #BLOCKS_PER_TICK}，与建材扫描同款），
- * 中型镇几秒扫完，任何单 tick 开销毫秒级。统计结果缓存到第二天。
+ * 所以交给 {@link ScanScheduler} 每 tick 限量摊派，中型镇几秒扫完。
+ * 统计结果缓存到第二天。
  *
  * <h2>数据形状</h2>
  * <ul>
@@ -34,29 +31,18 @@ import java.util.UUID;
  * </ul>
  *
  * <h2>驱动</h2>
- * 与建材扫描同款：{@code Resident.customServerAiStep} 顺手调
- * {@link #tick(ServerLevel)}（内部按 gameTime 去重）。不持久化——
- * 加载后首次查询自动重扫（几秒的事，不值得写盘）。
+ * 与建材扫描共用 {@link ScanScheduler#tick}（内部按 gameTime 去重）。
+ * 不持久化——加载后首次查询自动重扫（几秒的事，不值得写盘）。
  */
 public final class TownCensusManager {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    /** 每 tick 全服扫描总量（格）。 */
-    private static final int BLOCKS_PER_TICK = 4096;
-
     /** 每个物品最多记录多少个容器位置（寻物用，防海量箱子撑爆内存）。 */
     private static final int MAX_POSITIONS_PER_ITEM = 32;
 
-    /** 进行中的扫描任务，按维度分桶。 */
-    private static final Map<String, List<Job>> JOBS = new HashMap<>();
-
     /** 已完成的统计：城镇 UUID → 结果。内存态，读档后首次查询重扫。 */
     private static final Map<UUID, Census> RESULTS = new HashMap<>();
-
-    /** tick 去重（与建材扫描同款）。 */
-    private static ServerLevel lastTickedLevel;
-    private static long lastTickedGameTime = Long.MIN_VALUE;
 
     private TownCensusManager() {
     }
@@ -75,18 +61,16 @@ public final class TownCensusManager {
             com.bmf.bmfstown.entity.Resident bookkeeper,
             net.minecraft.server.level.ServerPlayer requester) {
         Census fresh = RESULTS.get(town.id());
-        if (fresh != null && fresh.day() == currentDay(level)) {
+        if (fresh != null && fresh.day() == ScanScheduler.currentDay(level)) {
             return fresh;
         }
-        int day = currentDay(level);
-        List<Job> list = JOBS.computeIfAbsent(level.dimension().location().toString(),
-                k -> new ArrayList<>());
-        for (Job job : list) {
-            if (job.townId.equals(town.id())) {
-                return null; // 今天已经在扫了
-            }
+        CensusJob running = ScanScheduler.find(level, CensusJob.class,
+                j -> j.townId.equals(town.id()));
+        if (running != null) {
+            return null; // 今天已经在扫了
         }
-        list.add(new Job(town, day, bookkeeper, requester));
+        ScanScheduler.submit(level,
+                new CensusJob(town, ScanScheduler.currentDay(level), bookkeeper, requester));
         LOGGER.info("[BmfTown][簿记] 城镇 {} 委托物资统计（当日首次，完成后推送给 {}）",
                 town.name(), requester.getName().getString());
         return null;
@@ -102,45 +86,10 @@ public final class TownCensusManager {
         RESULTS.remove(town.id());
     }
 
-    /**
-     * 每 tick 推进扫描。由镇民 AI tick 顺手驱动（内部按 gameTime 去重）。
-     */
-    public static void tick(ServerLevel level) {
-        if (level == lastTickedLevel && level.getGameTime() == lastTickedGameTime) {
-            return;
-        }
-        lastTickedLevel = level;
-        lastTickedGameTime = level.getGameTime();
-
-        List<Job> list = JOBS.get(level.dimension().location().toString());
-        if (list == null || list.isEmpty()) {
-            return;
-        }
-        int budget = BLOCKS_PER_TICK;
-        Iterator<Job> it = list.iterator();
-        while (it.hasNext() && budget > 0) {
-            Job job = it.next();
-            budget -= scanBlocks(job, level, budget);
-            if (job.done) {
-                it.remove();
-                Census census = job.finish();
-                RESULTS.put(job.townId, census);
-                LOGGER.info("[BmfTown][簿记] 城镇 {} 统计完成：{} 种物品",
-                        job.townName, job.totals.size());
-                // 完成即推送：请求者在线就直接收到数据并弹出界面
-                if (job.requester != null && !job.requester.hasDisconnected()
-                        && job.bookkeeper != null && job.bookkeeper.isAlive()) {
-                    com.bmf.bmfstown.network.ModNetworking.playCensusSync(
-                            job.requester, job.bookkeeper, job.town, census);
-                }
-            }
-        }
-    }
-
     /** 推进一个任务至多 budget 格。 */
-    private static int scanBlocks(Job job, ServerLevel level, int budget) {
+    private static int scanBlocks(CensusJob job, ServerLevel level, int budget) {
         int used = 0;
-        while (used < budget && !job.done) {
+        while (used < budget && !job.finished) {
             BlockPos.MutableBlockPos pos = job.cursor;
             if (level.hasChunkAt(pos) && level.isLoaded(pos)) {
                 BlockEntity be = level.getBlockEntity(pos);
@@ -161,14 +110,14 @@ public final class TownCensusManager {
     }
 
     /** 读一个容器的全部格子，聚合进统计。 */
-    private static void recordContainer(Job job, BlockPos pos, Container container) {
+    private static void recordContainer(CensusJob job, BlockPos pos, Container container) {
         for (int i = 0; i < container.getContainerSize(); i++) {
             recordStack(job, pos, container.getItem(i));
         }
     }
 
     /** 聚合一个物品堆。 */
-    private static void recordStack(Job job, BlockPos pos, ItemStack stack) {
+    private static void recordStack(CensusJob job, BlockPos pos, ItemStack stack) {
         if (stack.isEmpty()) {
             return;
         }
@@ -180,8 +129,8 @@ public final class TownCensusManager {
         }
     }
 
-    /** 游标三重循环推进（与建材扫描同款：x 快 z 次 y 慢）；一块扫完接下一块。 */
-    private static void stepCursor(Job job) {
+    /** 游标三重循环推进（x 快 z 次 y 慢）；一块扫完接下一块。 */
+    private static void stepCursor(CensusJob job) {
         BlockPos.MutableBlockPos cursor = job.cursor;
         cursor.setX(cursor.getX() + 1);
         if (cursor.getX() > job.maxX) {
@@ -192,25 +141,17 @@ public final class TownCensusManager {
                 cursor.setY(cursor.getY() + 1);
                 if (cursor.getY() > job.maxY) {
                     if (job.boxIndex + 1 < job.boxes.size()) {
-                        enterBoxJob(job, job.boxIndex + 1);
+                        job.enterBox(job.boxIndex + 1);
                     } else {
-                        job.done = true;
+                        job.finished = true;
                     }
                 }
             }
         }
     }
 
-    private static void enterBoxJob(Job job, int index) {
-        job.enterBox(index);
-    }
-
-    private static int currentDay(ServerLevel level) {
-        return (int) (level.getDayTime() / 24000L);
-    }
-
     /** 单个扫描任务：扫一个城镇的**全部区块**（0 号外框 + 追加区块，v0.9.1）。 */
-    private static final class Job {
+    private static final class CensusJob implements ScanScheduler.Task {
         final UUID townId;
         final String townName;
         final int day;
@@ -224,9 +165,9 @@ public final class TownCensusManager {
         final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         final Map<Item, Integer> totals = new LinkedHashMap<>();
         final Map<Item, List<BlockPos>> where = new LinkedHashMap<>();
-        boolean done;
+        boolean finished;
 
-        Job(Town town, int day, com.bmf.bmfstown.entity.Resident bookkeeper,
+        CensusJob(Town town, int day, com.bmf.bmfstown.entity.Resident bookkeeper,
                 net.minecraft.server.level.ServerPlayer requester) {
             this.townId = town.id();
             this.townName = town.name();
@@ -259,6 +200,35 @@ public final class TownCensusManager {
 
         Census finish() {
             return new Census(day, Map.copyOf(totals), Map.copyOf(where));
+        }
+
+        @Override
+        public int day() {
+            return this.day;
+        }
+
+        @Override
+        public int advance(ServerLevel level, int budget) {
+            return scanBlocks(this, level, budget);
+        }
+
+        @Override
+        public boolean done() {
+            return this.finished;
+        }
+
+        @Override
+        public void onDone(ServerLevel level) {
+            Census census = finish();
+            RESULTS.put(this.townId, census);
+            LOGGER.info("[BmfTown][簿记] 城镇 {} 统计完成：{} 种物品",
+                    this.townName, this.totals.size());
+            // 完成即推送：请求者在线就直接收到数据并弹出界面
+            if (this.requester != null && !this.requester.hasDisconnected()
+                    && this.bookkeeper != null && this.bookkeeper.isAlive()) {
+                com.bmf.bmfstown.network.ModNetworking.playCensusSync(
+                        this.requester, this.bookkeeper, this.town, census);
+            }
         }
     }
 }

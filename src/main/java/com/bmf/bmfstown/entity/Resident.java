@@ -1739,10 +1739,8 @@ public class Resident extends PathfinderMob {
         if (this.level() instanceof net.minecraft.server.level.ServerLevel moodLevel) {
             this.status.tickDaily(this, moodLevel);
             this.status.tickSenses(this, moodLevel);
-            // 住宅区建材/颜色扫描的推进（内部按 gameTime 去重，一 tick 只跑一次）
-            HomeMaterialScanManager.tick(moodLevel);
-            // 簿记员城镇物资统计的推进（同为摊派式，一 tick 只跑一次）
-            com.bmf.bmfstown.town.TownCensusManager.tick(moodLevel);
+            // 摊派式扫描统一推进（住宅建材 / 城镇物资普查共用）；内部按 gameTime 去重
+            com.bmf.bmfstown.town.ScanScheduler.tick(moodLevel);
         }
 
         // ---- 3. 回血 ----
