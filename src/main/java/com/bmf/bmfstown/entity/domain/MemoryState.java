@@ -1,8 +1,5 @@
 package com.bmf.bmfstown.entity.domain;
 
-import com.bmf.bmfstown.social.TownEvent;
-import com.bmf.bmfstown.social.TownEventType;
-import com.bmf.bmfstown.social.TownEventBus;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -49,8 +46,8 @@ public class MemoryState {
     /** 印象池上限：满了淘汰最旧的（P3 铭记引入后此池只保留谈资职能）。 */
     private static final int MAX_IMPRESSIONS = 16;
 
-    /** 印象的初始强度（P1 常量；重要性表 P2 配置化）。 */
-    private static final int IMPRESSION_STRENGTH = 35;
+    /** 印象的初始强度（P1 常量；重要性表 P2 配置化）。由 {@code Events} 统一写入。 */
+    public static final int IMPRESSION_STRENGTH = 35;
     /** 印象每日衰减量。 */
     private static final int DAILY_DECAY = 5;
 
@@ -63,34 +60,15 @@ public class MemoryState {
     /** 铭记库（永久记忆）：固化后永不衰减。 */
     private final Map<String, FirmMemory> firm = new HashMap<>();
 
-    static {
-        // 静态注册一次（本类随 Resident 类加载）：构造器注册会每实例重复登记
-        TownEventBus.register(MemoryState::recordEvent);
-    }
-
     public MemoryState() {
     }
 
     // ------------------------------------------------------------
-    //  采集（事件总线订阅者）
+    //  写入入口
+    //  v0.16.8：印象采集已从事件总线订阅搬到声明表执行
+    //  （EventSpecs.memory(IMPRESSION, key) → Events.applyMemory）。
+    //  本类不再订阅任何总线，只提供 addProgress/addImpression 两个写入 API。
     // ------------------------------------------------------------
-
-    private static void recordEvent(TownEvent event) {
-        switch (event.type) {
-            case EAT_FAVORED -> {
-                String itemId = event.item.isEmpty() ? ""
-                        : net.minecraft.core.registries.BuiltInRegistries.ITEM
-                                .getKey(event.item.getItem()).toString();
-                // 记忆时间戳：世界绝对天数（镇民历显示时减纪元换算年月日，见 TownCalendar）
-                int day = (int) (event.subject.level().getDayTime() / 24000L);
-                event.subject.getMemoryState().addImpression(
-                        "eat_favored", day, IMPRESSION_STRENGTH, itemId);
-            }
-            default -> {
-                // P1 只采集进食；其他事件的记忆价值待重要性表（P2）定义
-            }
-        }
-    }
 
     /**
      * 记一条印象：同类型+同物品 → 强度取高、日期取新（"今天又吃到了，

@@ -13,8 +13,8 @@ package com.bmf.bmfstown.entity.domain;
  * <p>旧路径写死的 {@code tone} 已于第二批删除：色调改由 {@link EventSpecs} 声明表
  * （swing 型随意图方向摆动，其余用声明定性）+ {@link Events#happen} 动态结算得出。
  */
-public enum EventType {
-    /** 吃到了爱吃的食物（即时，挂在 settleBite）。 */
+public enum EventType implements SpeakTrigger {
+    /** 吃到了爱吃的食物（即时，挂在 settleBite）。气泡与印象记忆均在本声明表执行。 */
     ATE_FAVORED,
     /** 挨饿：找不到也拿不到食物（即时，幅度按连续天数递增）。 */
     STARVING,
@@ -63,5 +63,10 @@ public enum EventType {
     /** 酒馆喝一杯（原 "tavern"）：心情 + 少量饥饿回复。 */
     TAVERN,
     /** 学会一门特殊书（原 "learned"）：不影响心情 → 知识专属色。 */
-    LEARNED
+    LEARNED;
+
+    @Override
+    public String id() {
+        return name();
+    }
 }

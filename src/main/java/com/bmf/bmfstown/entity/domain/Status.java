@@ -364,11 +364,21 @@ public final class Status {
     // ==========================================================
 
     /**
-     * 吃到了爱吃的食物（记心情+想法+节流全走声明表 {@link Events}）。
-     * 挂在 Resident.settleBite()；印象记忆与台词气泡仍在调用方（带食物参数）。
+     * 吃到了爱吃的食物（心情/想法/节流/印象记忆/气泡全部走声明表 {@link Events}）。
+     * 挂在 Resident.settleBite()；食物本身是运行时参数，由这里转交给声明表执行器。
+     *
+     * @param eaten 吃下去的那一格食物（供气泡模板名与印象的 itemId 使用）
      */
-    public void ateFavored(Resident resident, ServerLevel level) {
-        Events.happen(resident, level, EventType.ATE_FAVORED);
+    public void ateFavored(Resident resident, ServerLevel level,
+                           net.minecraft.world.item.ItemStack eaten) {
+        if (eaten == null || eaten.isEmpty()) {
+            Events.happen(resident, level, EventType.ATE_FAVORED);
+            return;
+        }
+        String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                .getKey(eaten.getItem()).toString();
+        Events.happenWith(resident, level, EventType.ATE_FAVORED, null,
+                Events.Args.ofBubbleMemory(null, eaten.getHoverName().getString(), itemId));
     }
 
     /**
@@ -796,13 +806,12 @@ public final class Status {
         }
         this.lastWeatherAt = now;
         this.lastWeather = current;
-        // 天气变化 → 广播站喊一嗓子（台词引擎/记忆仓自行订阅；v0.9.1 表达层）
-        com.bmf.bmfstown.social.TownEventBus.dispatch(
-                com.bmf.bmfstown.social.TownEvent.weatherChanged(resident, current));
+        // v0.16.8：天气气泡随 WEATHER_NEUTRAL 声明执行，变体（晴/雨/雷）作为运行时参数传入
         if (resident.getPrefs().dislikedWeather() == current) {
             Events.happen(resident, level, EventType.WEATHER_DISLIKED);
         } else {
-            Events.happen(resident, level, EventType.WEATHER_NEUTRAL);
+            Events.happenWith(resident, level, EventType.WEATHER_NEUTRAL, null,
+                    Events.Args.ofBubble(current.name(), null));
         }
     }
 

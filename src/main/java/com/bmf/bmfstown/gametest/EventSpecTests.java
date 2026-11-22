@@ -118,6 +118,40 @@ public class EventSpecTests {
         c.throwIfAny(helper, "declaredSpecsAndLang");
     }
 
+    /**
+     * 气泡声明与台词表对齐（v0.16.8）：声明了 {@code .bubble(topic)} 的事件
+     * 必须能在台词表里查到至少一条台词，否则"声明了却不说话"会静默无感。
+     *
+     * <p>同时校验两套枚举（{@code EventType} / {@code TownEventType}）的引用隔离：
+     * 同名成员不会互相命中。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void bubbleDeclarationsHaveLines(GameTestHelper helper) {
+        Checks c = new Checks();
+        for (EventType t : EventSpecs.declaredTypes()) {
+            EventSpec spec = EventSpecs.of(t);
+            if (!spec.hasBubble()) {
+                continue;
+            }
+            c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(t),
+                    t + " 声明了 bubble 但台词表无对应行（topic=" + spec.bubbleTopic() + "）");
+        }
+        // 迁移过来的三条必须有台词行
+        c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(EventType.ATE_FAVORED),
+                "ATE_FAVORED 台词行存在");
+        c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(EventType.WEATHER_NEUTRAL),
+                "WEATHER_NEUTRAL 台词行存在");
+        c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(EventType.STARVING),
+                "STARVING 台词行存在");
+        c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(EventType.NO_SLEEP),
+                "NO_SLEEP 台词行存在");
+        // 引用隔离：EventType 的成员不应命中 TownEventType 的行，反之亦然
+        c.isTrue(com.bmf.bmfstown.social.DialogRegistry.hasLineFor(
+                        com.bmf.bmfstown.social.TownEventType.JOB_HINT),
+                "JOB_HINT 台词行存在");
+        c.throwIfAny(helper, "bubbleDeclarationsHaveLines");
+    }
+
     // ==========================================================
     //  二、样本事件真走 Events + 颜色动态计算
     // ==========================================================

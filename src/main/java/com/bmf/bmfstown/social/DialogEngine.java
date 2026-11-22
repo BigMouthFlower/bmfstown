@@ -3,21 +3,23 @@ package com.bmf.bmfstown.social;
 import com.bmf.bmfstown.BmfTown;
 import com.bmf.bmfstown.config.Config;
 import com.bmf.bmfstown.entity.Resident;
+import com.bmf.bmfstown.entity.domain.EventType;
+import com.bmf.bmfstown.entity.domain.SpeakTrigger;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.entity.Display;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.IntSupplier;
 
 /**
  * 台词引擎（v0.9.1 表达层）：决定"谁、在什么时候、说哪句"。
@@ -27,13 +29,16 @@ import java.util.UUID;
  * 生成时打上 {@link #DISPLAY_TAG} 标记，到期 discard；重进世界若有孤儿
  * （服务重启没来得及回收的）由定期清扫按标记 + 年龄回收。
  *
- * <p>两条触发路径：
+ * <p><b>两个入口（v0.16.8）</b>：
  * <ul>
- *   <li>**事件即时**：吃到爱吃的——结算瞬间说（错过时刻就没意义）；</li>
- *   <li>**事件 + 个人相位错峰**：天气变化——只有 settleOffset % N == 0 的
- *       镇民开口，生成时刻 = 变化时刻 + (settleOffset % 错峰窗口)，
- *       复用每日结算的负载均衡偏离值（用户定稿：全镇个人节拍全局一致）。</li>
+ *   <li>{@link #speak} —— 心情事件的气泡（由 {@code Events.happen} 按声明表的
+ *       {@code .bubble(topic)} 直调）。这里是唯一的"选句 + 策略"实现；</li>
+ *   <li>{@link #handle} —— 纯表达世界事件（职业线索），仍走
+ *       {@link TownEventBus}，内部同样委托 {@link #speak}。</li>
  * </ul>
+ *
+ * <p><b>策略集中在 {@link #RULES}</b>（相位筛选 / 错峰 / 冷却），不在结算层。
+ * 嘴忙锁只影响表现不影响结算——心情照加、想法照记，只是话没说出口。
  *
  * <p>冷却记账：镇民 × 冷却组（P1 无定向型台词，多人分账 P2 引入）。
  * 运行态不落档。
@@ -55,13 +60,25 @@ public final class DialogEngine {
     /** "嘴忙锁"冷却组：镇民头顶还有字没消完时，其他台词全部跳过，防止两条字叠同人。 */
     private static final String GROUP_BUSY = "busy";
 
-    /** 错峰队列：到点才生成展示实体。 */
+    /** 错峰队列：到点才生成展示实体（带模板参数与到点冷却，延迟期间参数不丢）。 */
     private record ScheduledSay(Resident resident, DialogRegistry.DialogLine line,
-                                ItemStack item, long dueTick) {
+                                String[] args, long cooldownTicks, long dueTick) {
     }
 
     /** 回收队列：到点 discard 展示实体（附带镇民引用，存活期内每 tick 跟随头顶）。 */
     private record PendingDiscard(Resident resident, DialogDisplay display, long dueTick) {
+    }
+
+    /**
+     * 单条触发键的说话策略（v0.16.8 从 switch 分支收成表）。
+     *
+     * <p>全部走 IntSupplier 延迟读 Config，保持游戏内可调不断电。
+     *
+     * @param oneInN       相位筛选：settleOffset % N == 0 的镇民才开口（1 = 不限）
+     * @param staggerTicks 错峰窗口（tick）；0 = 立刻说
+     * @param cooldownTicks 该组说完后的禁言时长（tick）；0 = 不打冷却
+     */
+    private record SayRule(IntSupplier oneInN, IntSupplier staggerTicks, IntSupplier cooldownTicks) {
     }
 
     private static final List<ScheduledSay> SCHEDULED = new ArrayList<>();
@@ -69,11 +86,29 @@ public final class DialogEngine {
     /** 冷却记账：镇民 UUID → (冷却组 → 禁言到 gameTime)。 */
     private static final Map<UUID, Map<String, Long>> COOLDOWNS = new HashMap<>();
 
+    /** 触发键 → 说话策略。未登记的触发键一律不开口（防新事件忘配策略静默乱说）。 */
+    private static final Map<SpeakTrigger, SayRule> RULES = new HashMap<>();
+
     private static int sweepCooldown = 0;
 
     static {
-        // 静态注册一次（本类随 mod 构造加载）
+        // 纯表达世界事件（职业线索）仍走总线；心情事件已由 Events 直调 speak
         TownEventBus.register(DialogEngine::handle);
+
+        RULES.put(TownEventType.JOB_HINT,
+                new SayRule(() -> 1, () -> 0, () -> 0));
+        RULES.put(TownEventType.REDSTONE_AMBIENT,
+                new SayRule(() -> 1, () -> 0, () -> 0));
+        RULES.put(EventType.ATE_FAVORED,
+                new SayRule(() -> 1, () -> 0, () -> Config.DIALOG_EAT_COOLDOWN.get() * 20));
+        RULES.put(EventType.STARVING,
+                new SayRule(() -> 1, () -> 0, () -> Config.DIALOG_SUFFER_COOLDOWN.get() * 20));
+        RULES.put(EventType.NO_SLEEP,
+                new SayRule(() -> 1, () -> 0, () -> Config.DIALOG_SUFFER_COOLDOWN.get() * 20));
+        RULES.put(EventType.WEATHER_NEUTRAL,
+                new SayRule(() -> Math.max(1, Config.DIALOG_WEATHER_ONE_IN_N.get()),
+                        Config.DIALOG_STAGGER_TICKS::get,
+                        () -> Config.DIALOG_WEATHER_COOLDOWN.get() * 20));
     }
 
     // ==========================================================
@@ -108,77 +143,76 @@ public final class DialogEngine {
         return true;
     }
 
+    /**
+     * 心情事件的气泡入口（v0.16.8）：按 触发键 + 变体 选台词，走 {@link #RULES} 策略。
+     *
+     * <p>调用方（{@code Events.happen}）只表达"该说话"，其余全部在这里决定。
+     *
+     * @param subject 说话人
+     * @param trigger 事件键（{@code EventType}）
+     * @param variant 变体（天气 = {@code WeatherPref.name()}，如 {@code "CLEAR"}）；null = 不限
+     * @param args    模板参数（物品名等），可空
+     */
+    public static void speak(Resident subject, SpeakTrigger trigger, String variant, String... args) {
+        if (!(subject.level() instanceof ServerLevel level)) {
+            return;
+        }
+        SayRule rule = RULES.get(trigger);
+        if (rule == null) {
+            BmfTown.LOGGER.warn("[BmfTown][台词] 触发键未配策略，已静默：{}", trigger.id());
+            return;
+        }
+        List<DialogRegistry.DialogLine> lines = DialogRegistry.matching(trigger, variant, subject);
+        if (lines.isEmpty()) {
+            return; // 这个变体没有台词（如雨天/雷暴）——正常静默
+        }
+        long now = level.getGameTime();
+
+        // 1. 相位筛选：稳定身份（settleOffset），让同一批镇民长期"爱聊这类事"
+        int oneIn = Math.max(1, rule.oneInN().getAsInt());
+        if (oneIn > 1 && subject.getStatus().phaseOffset() % oneIn != 0) {
+            return;
+        }
+        // 2. 嘴忙锁：头顶有字就不开口（只影响表现，不影响已完成的结算）
+        if (!cooldownOk(subject, GROUP_BUSY, now)) {
+            return;
+        }
+
+        DialogRegistry.DialogLine line = DialogRegistry.pick(lines, level.getRandom());
+        // 3. 组冷却（"eat"/"weather"/"starving"…同组共享）
+        if (!cooldownOk(subject, line.group(), now)) {
+            return;
+        }
+
+        String[] clean = args == null ? new String[0]
+                : Arrays.stream(args).filter(Objects::nonNull).toArray(String[]::new);
+        long cooldown = rule.cooldownTicks().getAsInt();
+
+        // 4. 错峰：全城同时感知到的事情（天气）按个人相位延迟开口
+        long stagger = rule.staggerTicks().getAsInt();
+        if (stagger > 0) {
+            long delay = subject.getStatus().phaseOffset() % stagger;
+            SCHEDULED.add(new ScheduledSay(subject, line, clean, cooldown, now + delay));
+            return;
+        }
+        say(level, subject, line, clean);
+        if (cooldown > 0) {
+            markCooldown(subject, line.group(), now, cooldown);
+        }
+    }
+
     // ==========================================================
-    //  事件入口
+    //  纯表达世界事件入口（职业线索）
     // ==========================================================
 
     private static void handle(TownEvent event) {
-        if (!(event.subject.level() instanceof ServerLevel level)) {
-            return;
-        }
-        List<DialogRegistry.DialogLine> lines = DialogRegistry.matching(event);
-        if (lines.isEmpty()) {
-            return;
-        }
-        DialogRegistry.DialogLine line = DialogRegistry.pick(lines, level.getRandom());
-
         switch (event.type) {
-            case EAT_FAVORED -> {
-                // 即时：吃到爱吃的，冷却内或正在说话（嘴忙）直接跳过
-                if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())
-                        && cooldownOk(event.subject, line.group(), level.getGameTime())) {
-                    say(level, event.subject, line, event.item.getHoverName());
-                    markCooldown(event.subject, line.group(), level.getGameTime(),
-                            Config.DIALOG_EAT_COOLDOWN.get() * 20L);
-                }
-            }
-            case STARVING, SLEEPLESS -> {
-                // 即时：受苦线（挨饿/没睡——与记忆无关谁都喊，变体由 condition 区分）
-                if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())
-                        && cooldownOk(event.subject, line.group(), level.getGameTime())) {
-                    say(level, event.subject, line, event.item.getHoverName());
-                    markCooldown(event.subject, line.group(), level.getGameTime(),
-                            Config.DIALOG_SUFFER_COOLDOWN.get() * 20L);
-                }
-            }
-            case JOB_HINT -> {
-                // 即时：职业解锁线——**一次性事件（每镇一次），无 CD**：
-                // 频率由"解锁即静默 + 调试 lock 才能重来"天然保证；
-                // 嘴忙联动在 JobHints 层已查（这里 GROUP_BUSY 再查一次是防御）。
-                // 占位符 = 看到的元件种类名（门槛保证恰好 3 种，台词三占位）。
-                // ⚠ 此分支曾残留受苦线的 600 秒组冷却（共用 case 时代的遗产），
-                //   导致 lock→unlock 密集测试时气泡被静默——已删，勿加回。
-                if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())) {
-                    say(level, event.subject, line,
-                            event.items.stream()
-                                    .map(ItemStack::getHoverName)
-                                    .toArray(net.minecraft.network.chat.Component[]::new));
-                }
-            }
-            case REDSTONE_AMBIENT -> {
-                // 即时：职业引导线（可重复不解锁——引导玩家往元件方向凑）。
-                // 占位符 = 看到的红石块/矿名字。频率由 JobHints 的
-                // 城镇×玩家游标（5 分钟）主控，这里只受嘴忙锁兜底。
-                if (cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())) {
-                    say(level, event.subject, line, event.item.getHoverName());
-                }
-            }
-            case WEATHER_CHANGED -> {
-                // 相位筛选：只有 1/N 的镇民开口（N 可配，默认 3）
-                int oneIn = Math.max(1, Config.DIALOG_WEATHER_ONE_IN_N.get());
-                if (event.subject.getStatus().phaseOffset() % oneIn != 0) {
-                    return;
-                }
-                if (!cooldownOk(event.subject, GROUP_BUSY, level.getGameTime())
-                        || !cooldownOk(event.subject, line.group(), level.getGameTime())) {
-                    return;
-                }
-                // 个人相位错峰：生成时刻 = 现在 + settleOffset % 错峰窗口
-                long delay = event.subject.getStatus().phaseOffset()
-                        % Config.DIALOG_STAGGER_TICKS.get();
-                SCHEDULED.add(new ScheduledSay(event.subject, line,
-                        event.item, level.getGameTime() + delay));
-            }
+            case JOB_HINT -> speak(event.subject, event.type, null,
+                    event.items.stream()
+                            .map(s -> s.getHoverName().getString())
+                            .toArray(String[]::new));
+            case REDSTONE_AMBIENT -> speak(event.subject, event.type, null,
+                    event.item.getHoverName().getString());
         }
     }
 
@@ -211,9 +245,11 @@ public final class DialogEngine {
                 }
                 if (cooldownOk(resident, GROUP_BUSY, level.getGameTime())
                         && cooldownOk(resident, say.line().group(), level.getGameTime())) {
-                    say(level, resident, say.line(), say.item().getHoverName());
-                    markCooldown(resident, say.line().group(), level.getGameTime(),
-                            Config.DIALOG_WEATHER_COOLDOWN.get() * 20L);
+                    say(level, resident, say.line(), say.args());
+                    if (say.cooldownTicks() > 0) {
+                        markCooldown(resident, say.line().group(), level.getGameTime(),
+                                say.cooldownTicks());
+                    }
                 }
             }
             if (requeue != null) {
@@ -276,10 +312,17 @@ public final class DialogEngine {
     // ==========================================================
 
     private static void say(ServerLevel level, Resident resident,
-                            DialogRegistry.DialogLine line, Component... args) {
-        Component text = (line.withItem() && args.length > 0)
-                ? Component.translatable(line.key(), (Object[]) args)
-                : Component.translatable(line.key());
+                            DialogRegistry.DialogLine line, String... args) {
+        Component text;
+        if (line.withItem() && args.length > 0) {
+            Component[] filled = new Component[args.length];
+            for (int i = 0; i < args.length; i++) {
+                filled[i] = Component.literal(args[i]);
+            }
+            text = Component.translatable(line.key(), (Object[]) filled);
+        } else {
+            text = Component.translatable(line.key());
+        }
         spawnDisplay(level, resident, text);
         BmfTown.LOGGER.debug("[BmfTown][台词] {} →「{}」",
                 resident.getName().getString(), text.getString());

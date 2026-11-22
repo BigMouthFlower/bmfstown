@@ -55,7 +55,8 @@ public final class EventSpec {
     private IntSupplier interval = null;
     private ClampPolicy clamp = ClampPolicy.DAILY;
 
-    private boolean bubble;
+    /** 气泡台词组 topic；null = 不冒泡。 */
+    private String bubbleTopic;
     private MemoryKind memoryKind;
     private String memoryKey;
 
@@ -155,14 +156,29 @@ public final class EventSpec {
 
     // ---- 第一批暂不执行的扩展 ----
 
-    /** 触发台词气泡。第一批执行器尚未接。 */
-    public EventSpec bubble() {
+    /**
+     * 触发台词气泡，并绑定台词组 topic。
+     *
+     * <p>topic 是"选哪一组台词"的键；具体说哪一句仍由台词表按
+     * <b>变体 + 条件 + 权重</b>决定，声明表只管"这件事值得开口"。
+     * 变体（天气种类、物品名）在 {@code Events.happen} 运行时传入，不写死在声明里。
+     */
+    public EventSpec bubble(String topic) {
         mutable();
-        this.bubble = true;
+        if (topic == null || topic.isBlank()) {
+            throw new IllegalStateException("EventSpec " + this.type + " bubble topic 不能为空");
+        }
+        this.bubbleTopic = topic;
         return this;
     }
 
-    /** 记忆（铭记/印象）+ 记忆 key。第一批执行器尚未接。 */
+    /**
+     * 记忆（铭记/印象）+ 记忆 key。
+     *
+     * <p>{@link MemoryKind#FIRM} 走铭记进度（积满固化并宣布想法）；
+     * {@link MemoryKind#IMPRESSION} 走印象池（v0.16.8 从 {@code MemoryState} 订阅搬回），
+     * 印象的物品 id 由 {@code Events.Args.memoryArg} 运行时传入。
+     */
     public EventSpec memory(MemoryKind kind, String key) {
         mutable();
         this.memoryKind = kind;
@@ -216,7 +232,12 @@ public final class EventSpec {
     }
 
     public boolean hasBubble() {
-        return this.bubble;
+        return this.bubbleTopic != null;
+    }
+
+    /** 气泡台词组 topic；未声明 = null。 */
+    public String bubbleTopic() {
+        return this.bubbleTopic;
     }
 
     public MemoryKind memoryKind() {

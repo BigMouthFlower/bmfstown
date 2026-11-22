@@ -4123,10 +4123,8 @@ public class Resident extends PathfinderMob {
             this.status.noteFed(this, moodLevel);
             if (com.bmf.bmfstown.entity.profile.FoodTraits.matches(
                     this.prefs.hobbyFood(), eaten)) {
-                this.status.ateFavored(this, moodLevel);
-                // 广播站喊一嗓子（v0.9.1 表达层）：台词引擎/记忆仓订阅
-                com.bmf.bmfstown.social.TownEventBus.dispatch(
-                        com.bmf.bmfstown.social.TownEvent.eatFavored(this, eaten));
+                // v0.16.8：气泡与印象记忆随声明表一起执行（带食物参数），不再走广播层
+                this.status.ateFavored(this, moodLevel, eaten);
             }
             // 图鉴纪律（用户两次定稿）：图鉴只登记 mod 自有的隐藏内容
             // （职业/种族/perk/特性/性格），绝不收录"吃过什么/见过什么"的

@@ -29,7 +29,10 @@ public final class EventSpecs {
         register(new EventSpec(EventType.ATE_FAVORED)
                 .mood(Config.MOOD_EAT_FAVORED::get)
                 .thought("ate_favored").positive()
-                .daily(Config.MOOD_EAT_FAVORED_DAILY_LIMIT::get));
+                .daily(Config.MOOD_EAT_FAVORED_DAILY_LIMIT::get)
+                // v0.16.8：气泡与印象记忆从广播层搬回本表（原来分居 DialogEngine / MemoryState）
+                .bubble("eat_favored")
+                .memory(MemoryKind.IMPRESSION, "eat_favored"));
 
         register(new EventSpec(EventType.STARVING)
                 .mood(Config.MOOD_STARVING::get).moodOverride()
@@ -38,7 +41,7 @@ public final class EventSpecs {
                 .interval(Config.MOOD_STARVING_INTERVAL::get)
                 .clamp(ClampPolicy.NONE)
                 .memory(MemoryKind.FIRM, "starving")
-                .bubble());
+                .bubble("starving"));
 
         register(new EventSpec(EventType.JOB_LIKED)
                 .mood(Config.MOOD_JOB_LIKED::get)
@@ -68,7 +71,9 @@ public final class EventSpecs {
                 .thought("weather_disliked").negative());
 
         register(new EventSpec(EventType.WEATHER_NEUTRAL)
-                .thought("weather_neutral").neutral());
+                .thought("weather_neutral").neutral()
+                // v0.16.8：天气台词搬回本表；变体（晴/雨/雷）由调用方运行时传入
+                .bubble("weather"));
 
         register(new EventSpec(EventType.MOB_DISLIKED)
                 // 负面事件：Config 存的是幅度（正数），声明取负
@@ -131,7 +136,7 @@ public final class EventSpecs {
                 .thought("no_sleep").negative()
                 .clamp(ClampPolicy.NONE)
                 .memory(MemoryKind.FIRM, "sleepless")
-                .bubble());
+                .bubble("sleepless"));
 
         // ---- 休闲 / 知识（第一批升格）----
 

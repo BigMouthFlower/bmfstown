@@ -1,6 +1,8 @@
 package com.bmf.bmfstown.social;
 
 import com.bmf.bmfstown.entity.Resident;
+import com.bmf.bmfstown.entity.domain.EventType;
+import com.bmf.bmfstown.entity.domain.SpeakTrigger;
 import com.bmf.bmfstown.entity.profile.WeatherPref;
 
 import java.util.List;
@@ -11,6 +13,10 @@ import java.util.function.Predicate;
  *
  * <p>文本走 lang key（支持 {物品} 模板槽），台词本身保持"一句话"纪律
  * （≤20 字，平淡口吻，不喊不叹）。以后条目多了再数据包化。
+ *
+ * <p>v0.16.8：{@code trigger} 由 {@code TownEventType} 泛化为 {@link SpeakTrigger}，
+ * 心情事件（{@link EventType}）与纯表达世界事件共用本表。
+ * <b>匹配用引用相等</b>，两套枚举的同名成员不会串号。
  */
 public final class DialogRegistry {
 
@@ -18,44 +24,44 @@ public final class DialogRegistry {
     }
 
     /**
-     * @param trigger   触发的事件类型
-     * @param weather   天气类台词限定的新天气（null = 不限定）
+     * @param trigger   触发的事件键（心情事件或纯表达世界事件）
+     * @param weather   变体限定（天气类台词限定具体天气；null = 不限）
      * @param group     冷却组（同组共享冷却，"eat"/"weather"/…）
      * @param key       lang key；带 %s 的会把物品名填进去
      * @param withItem  true = 把物品显示名作为第一个模板参数
      * @param condition 额外条件（如"不讨厌当前天气"），null = 无
      * @param weight    同组多条时加权抽取
      */
-    public record DialogLine(TownEventType trigger, WeatherPref weather, String group,
+    public record DialogLine(SpeakTrigger trigger, WeatherPref weather, String group,
                              String key, boolean withItem,
                              Predicate<Resident> condition, int weight) {
     }
 
     private static final List<DialogLine> LINES = List.of(
             // 吃到爱吃的：平淡口吻，带物品名
-            new DialogLine(TownEventType.EAT_FAVORED, null, "eat",
+            new DialogLine(EventType.ATE_FAVORED, null, "eat",
                     "dialog.bmfstown.eat_favored", true, null, 3),
-            new DialogLine(TownEventType.EAT_FAVORED, null, "eat",
+            new DialogLine(EventType.ATE_FAVORED, null, "eat",
                     "dialog.bmfstown.eat_favored_love", true, null, 2),
             // 天气转晴：不讨厌晴天的镇民
-            new DialogLine(TownEventType.WEATHER_CHANGED, WeatherPref.CLEAR, "weather",
+            new DialogLine(EventType.WEATHER_NEUTRAL, WeatherPref.CLEAR, "weather",
                     "dialog.bmfstown.weather_clear", false,
                     r -> r.getPrefs().dislikedWeather() != WeatherPref.CLEAR, 1),
             // 受苦即时线：挨饿（有"挨饿"永久记忆的镇民说带旧事语气的变体——condition 区分）
-            new DialogLine(TownEventType.STARVING, null, "starving",
+            new DialogLine(EventType.STARVING, null, "starving",
                     "dialog.bmfstown.starving", false,
                     r -> !r.getMemoryState().hasFirmMemory(
                             com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING), 1),
-            new DialogLine(TownEventType.STARVING, null, "starving",
+            new DialogLine(EventType.STARVING, null, "starving",
                     "dialog.bmfstown.starving_memory", false,
                     r -> r.getMemoryState().hasFirmMemory(
                             com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING), 1),
             // 受苦即时线：没睡好
-            new DialogLine(TownEventType.SLEEPLESS, null, "sleepless",
+            new DialogLine(EventType.NO_SLEEP, null, "sleepless",
                     "dialog.bmfstown.sleepless", false,
                     r -> !r.getMemoryState().hasFirmMemory(
                             com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS), 1),
-            new DialogLine(TownEventType.SLEEPLESS, null, "sleepless",
+            new DialogLine(EventType.NO_SLEEP, null, "sleepless",
                     "dialog.bmfstown.sleepless_memory", false,
                     r -> r.getMemoryState().hasFirmMemory(
                             com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS), 1),
@@ -67,17 +73,26 @@ public final class DialogRegistry {
                     "dialog.bmfstown.jobhint.redstone_ambient", true, null, 1)
     );
 
-    /** 某事件可用的全部台词（触发类型匹配 + 天气匹配 + 附加条件通过）。 */
-    public static List<DialogLine> matching(TownEvent event) {
+    /**
+     * 某事件可用的全部台词：触发键匹配（引用相等）+ 变体匹配 + 附加条件通过。
+     *
+     * @param trigger 事件键；null 视作不匹配
+     * @param variant 变体（天气 = {@link WeatherPref#name()}，如 {@code "CLEAR"}）；null = 无变体
+     * @param subject 说话人（{@code condition} 谓词的输入）
+     */
+    public static List<DialogLine> matching(SpeakTrigger trigger, String variant, Resident subject) {
         List<DialogLine> result = new java.util.ArrayList<>();
+        if (trigger == null) {
+            return result;
+        }
         for (DialogLine line : LINES) {
-            if (line.trigger() != event.type) {
+            if (line.trigger() != trigger) {
+                continue; // 引用相等：不同枚举的同名成员天然不相交
+            }
+            if (line.weather() != null && !line.weather().name().equals(variant)) {
                 continue;
             }
-            if (line.weather() != null && line.weather() != event.weather) {
-                continue;
-            }
-            if (line.condition() != null && !line.condition().test(event.subject)) {
+            if (line.condition() != null && !line.condition().test(subject)) {
                 continue;
             }
             result.add(line);
@@ -99,5 +114,15 @@ public final class DialogRegistry {
             }
         }
         return lines.get(lines.size() - 1);
+    }
+
+    /** 台词表的触发键集合（契约测试用：声明了 bubble 的事件必须能查到台词）。 */
+    public static boolean hasLineFor(SpeakTrigger trigger) {
+        for (DialogLine line : LINES) {
+            if (line.trigger() == trigger) {
+                return true;
+            }
+        }
+        return false;
     }
 }

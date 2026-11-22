@@ -1,23 +1,27 @@
 package com.bmf.bmfstown.social;
 
+import com.bmf.bmfstown.entity.domain.SpeakTrigger;
+
 /**
- * 世界事件类型（v0.9.1 表达层）。
+ * 世界事件类型（v0.9.1 表达层；v0.16.8 收缩为"纯表达"）。
  *
- * <p>**刻意不与心情系统的 {@code EventType} 复用**：那边是"这件事对心情的
- * 影响"，这边是"世界上发生了这件事"——同一个触发在两边的语义和订阅者
- * 完全不同。心情结算产生事件后由映射关系各自处理。
+ * <p>v0.16.8 起，<b>带结算的气泡</b>（吃到爱吃的、天气变化、挨饿、失眠）已全部
+ * 搬进心情事件声明表（{@code EventType} + {@code EventSpecs.bubble}），由
+ * {@code Events.happen} 直接驱动台词引擎。本枚举只剩<b>纯表达</b>成员——
+ * 它们不产生任何心情/想法/记忆，只为"说一句话"而存在。
+ *
+ * <p>与 {@code EventType} 通过 {@link SpeakTrigger} 共用台词表，匹配用引用相等，
+ * 不会串号（见接口注释）。
  */
-public enum TownEventType {
-    /** 吃到了爱吃的食物（subject = 吃的镇民，item = 吃到的东西）。 */
-    EAT_FAVORED,
-    /** 天气发生变化（subject = 观察到变化的镇民，weather = 新天气）。 */
-    WEATHER_CHANGED,
-    /** 镇民正在挨饿（subject = 挨饿的镇民；挨饿心情事件同拍，半日至多一次）。 */
-    STARVING,
-    /** 镇民昨晚没睡好（subject = 没睡的镇民；晨间结算同拍，一晚至多一次）。 */
-    SLEEPLESS,
+public enum TownEventType implements SpeakTrigger {
+
     /** 职业解锁线索（subject = 线索镇民；items = 看到的元件种类，已去重）。 */
     JOB_HINT,
     /** 职业引导线（可重复，不解锁；subject = 说话的镇民，item = 看到的红石块/矿）。 */
-    REDSTONE_AMBIENT
+    REDSTONE_AMBIENT;
+
+    @Override
+    public String id() {
+        return name();
+    }
 }
