@@ -131,6 +131,15 @@ public final class Config {
                     "Max mood change per day from daily settlement; 0 = uncapped")
             .defineInRange("mood.dailyClamp", 0, 0, 100);
 
+    /**
+     * 心态乘区（HOPE）总开关（决策 #116 第二批）：默认开 = 所有带心情的事件都按心态轴
+     * 放大/缩小（乐观好事最多 +50%、悲观坏事最多放大 50%）；关 = 事件按声明基准直加。
+     */
+    public static final ModConfigSpec.BooleanValue MOOD_HOPE_APPLY = BUILDER
+            .comment("心态轴（HOPE）是否对所有心情事件生效；关=按声明基准直加，不再乘心态系数",
+                    "Whether the HOPE axis applies to all mood events; off = use raw declared values")
+            .define("mood.hopeApply", true);
+
     /** 吃到爱吃的食物的心情增量。 */
     public static final ModConfigSpec.IntValue MOOD_EAT_FAVORED = BUILDER
             .comment("吃到爱吃的食物的心情增量", "Mood gain from eating a favored food")

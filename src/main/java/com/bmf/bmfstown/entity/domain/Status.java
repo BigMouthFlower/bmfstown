@@ -8,7 +8,6 @@ import com.bmf.bmfstown.entity.profile.PersonalityFormulas;
 import com.bmf.bmfstown.entity.profile.MobPref;
 import com.bmf.bmfstown.entity.profile.PrefAnimal;
 import com.bmf.bmfstown.entity.profile.ProfessionType;
-import com.bmf.bmfstown.entity.profile.ResidentInventory;
 import com.bmf.bmfstown.entity.profile.SkillTiers;
 import com.bmf.bmfstown.entity.profile.WeatherPref;
 import com.bmf.bmfstown.town.TownZone;
@@ -19,11 +18,9 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Enemy;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.JukeboxBlock;
 import net.minecraft.world.phys.AABB;
@@ -193,6 +190,9 @@ public final class Status {
     /** 各事件今天的已触发次数（限流计数器）。随每日结算清零。 */
     private final Map<EventType, Integer> eventCountToday = new EnumMap<>(EventType.class);
 
+    /** 各事件上次触发的 dayTime（interval 限流游标，随事件触发覆写）。 */
+    private final Map<EventType, Long> lastIntervalAt = new EnumMap<>(EventType.class);
+
     /** 今天已经累计的心情变动（每日 clamp 配额）。 */
     private int dailyDelta = 0;
 
@@ -207,9 +207,6 @@ public final class Status {
 
     /** 上次在酒馆喝到饮品是第几游戏日——每日一杯闸门（决策 #64）。 */
     private long lastTavernDay = -1;
-
-    /** 上次触发挨饿事件的 dayTime 绝对值——挨饿按间隔限流用。 */
-    private long lastStarvingAt = Long.MIN_VALUE;
 
     /** 昨晚结算是否罚了缺觉分（供 tickDaily 的记忆进度衰减判定，每日重置）。 */
     private boolean sleptBadToday = false;
@@ -233,12 +230,6 @@ public final class Status {
 
     /** 上次天气事件记录的天气（变了才允许再触发）。 */
     private WeatherPref lastWeather = null;
-
-    /** 上次生物厌恶事件的 dayTime。 */
-    private long lastMobAt = Long.MIN_VALUE;
-
-    /** 上次胆小受惊的 dayTime。 */
-    private long lastTimidAt = Long.MIN_VALUE;
 
     /** 睡眠结算：最后一次睡觉所处的夜序号。 */
     private int lastSleptNightK = Integer.MIN_VALUE;
@@ -373,20 +364,11 @@ public final class Status {
     // ==========================================================
 
     /**
-     * 吃到了爱吃的食物。挂在 Resident.settleBite()。
-     * 限流：每天前 MOOD_EAT_FAVORED_DAILY_LIMIT 次有效。
+     * 吃到了爱吃的食物（记心情+想法+节流全走声明表 {@link Events}）。
+     * 挂在 Resident.settleBite()；印象记忆与台词气泡仍在调用方（带食物参数）。
      */
     public void ateFavored(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
-        EventType type = EventType.ATE_FAVORED;
-        int limit = Config.MOOD_EAT_FAVORED_DAILY_LIMIT.get();
-        if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
-            return;
-        }
-        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
-        int delta = Config.MOOD_EAT_FAVORED.get();
-        this.applyClamped(resident, delta);
-        addThought(resident, level, type);
+        Events.happen(resident, level, EventType.ATE_FAVORED);
     }
 
     /**
@@ -399,18 +381,11 @@ public final class Status {
     }
 
     /**
-     * 挨饿：找不到可用的食物来源。间隔限流；幅度按连续挨饿天数递增；
-     * 3 天起不受每日 clamp 限制（绝食必须真的难受）。
+     * 挨饿：找不到可用的食物来源。间隔限流、记忆累计、气泡、紫色宣布
+     * 全走声明表 {@link Events}；这里只算"挨饿天数递增 + 铭记罚分"的意图基准
+     * 与三档文案 key（负值 = 受苦）。
      */
     public void starving(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
-        long now = level.getDayTime();
-        long interval = Config.MOOD_STARVING_INTERVAL.get();
-        if (!elapsed(now, this.lastStarvingAt, interval)) {
-            return;
-        }
-        this.lastStarvingAt = now;
-
         int today = currentDay(level);
         int daysHungry = this.lastFedDay < 0 ? 1 : Math.max(1, today - this.lastFedDay);
         int base = Config.MOOD_STARVING.get();
@@ -418,53 +393,33 @@ public final class Status {
         String key;
         if (daysHungry >= 3) {
             delta = base + 5;
-            key = "mood.bmfstown.thought.starving_3";
+            key = "starving_3";
         } else if (daysHungry == 2) {
             delta = base + 2;
-            key = "mood.bmfstown.thought.starving_2";
+            key = "starving_2";
         } else {
             delta = base;
-            key = "mood.bmfstown.thought.starving_1";
+            key = "starving_1";
         }
         // 铭记修正：身上有"挨饿"的永久记忆，旧病复发额外更痛（用户定稿 +10）
-        if (resident.getMemoryState().hasFirmMemory(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING)) {
+        if (resident.getMemoryState().hasFirmMemory(MemoryState.TYPE_STARVING)) {
             delta += Config.MOOD_MEMORY_PENALTY.get();
         }
-        this.applyRaw(resident, -delta); // 例外：绕过每日 clamp
-        addThought(level, EventType.STARVING.tone, key, Thought.MARK_NONE);
-        // 记忆累计：每挨饿事件 +15（事件 = 饱食度归零且不在觅食/进食中，
-        // 半日节流）；积满固化 → 想法日志宣布（紫色，不说话——用户定稿）
-        if (resident.getMemoryState().addProgress(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING,
-                (int) (level.getDayTime() / 24000L),
-                Config.MEMORY_GAIN.get(), Config.MEMORY_THRESHOLD.get())) {
-            addThought(level, TONE_MEMORY_BAD,
-                    "mood.bmfstown.thought.memory_starving", Thought.MARK_NONE);
-        }
-        // 台词：挨饿即时线（有没有记忆都喊饿，变体由台词注册表的 condition 区分）
-        com.bmf.bmfstown.social.TownEventBus.dispatch(
-                com.bmf.bmfstown.social.TownEvent.starving(resident));
+        Events.happen(resident, level, EventType.STARVING, (double) (-delta), key, null);
     }
 
     /**
-     * 好战轴：击杀生物。基准 = base·(v−50)/50（仅 v>50 生效），再过心态乘区。
-     * 每天上限见配置；配额用完也刷新 lastKillDay（防连杀意外续上无杀计时）。
+     * 好战轴：击杀生物。基准 = base·(v−50)/50（仅 v>50 生效），HOPE 乘区与
+     * 每日上限走声明表；配额用完也刷新 lastKillDay（防连杀意外续上无杀计时）。
      */
     public void noteKill(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
         this.lastKillDay = currentDay(level);
         double base = PersonalityFormulas.killBase(
                 this.axis(resident, level, PersonalityAxis.WARLIKE), Config.MOOD_TRAIT_VALUE.get());
         if (base == 0) {
             return; // 中位以下杀怪无感
         }
-        EventType type = EventType.KILL;
-        int limit = Config.MOOD_TRAIT_KILL_DAILY_LIMIT.get();
-        if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
-            return;
-        }
-        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
-        this.applyClamped(resident, resolveHope(resident, level, base));
-        addThought(resident, level, type);
+        Events.happen(resident, level, EventType.KILL, base);
     }
 
     /**
@@ -473,56 +428,36 @@ public final class Status {
      * 任何死亡都算（自己杀的也算），死者本人除外。
      */
     public void noteDeathNearby(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
         double base = PersonalityFormulas.violenceBase(
                 this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
-        publishViolenceEvent(resident, level, EventType.DEATH_NEARBY, base,
-                Config.AXIS_DEATH_DAILY_LIMIT.get());
+        if (base == 0) {
+            return; // 中位镇民对生死无感
+        }
+        Events.happen(resident, level, EventType.DEATH_NEARBY, base);
     }
 
     /**
      * 暴力轴：附近发生爆炸（烟花不算爆炸源）。与死亡同一条线性过零曲线。
      */
     public void noteExplosionNearby(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
         double base = PersonalityFormulas.violenceBase(
                 this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
-        publishViolenceEvent(resident, level, EventType.EXPLOSION_NEARBY, base,
-                Config.AXIS_EXPLOSION_DAILY_LIMIT.get());
+        if (base == 0) {
+            return;
+        }
+        Events.happen(resident, level, EventType.EXPLOSION_NEARBY, base);
     }
 
     /**
      * 暴力轴：附近有生物繁殖（新生命诞生）。与死亡镜像：仁慈欣喜、嗜血嫌吵。
      */
     public void noteBirthNearby(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
         double base = PersonalityFormulas.birthBase(
                 this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
-        publishViolenceEvent(resident, level, EventType.BIRTH_NEARBY, base,
-                Config.AXIS_BIRTH_DAILY_LIMIT.get());
-    }
-
-    /** 暴力轴三类事件的公共体：节流 → 心态乘区 → 动态色调想法（正负随轴值）。 */
-    private void publishViolenceEvent(Resident resident, ServerLevel level,
-                                      EventType type, double base, int dailyLimit) {
         if (base == 0) {
-            return; // 中位镇民对生死无感
-        }
-        if (this.eventCountToday.getOrDefault(type, 0) >= dailyLimit) {
             return;
         }
-        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
-        this.applyClamped(resident, resolveHope(resident, level, base));
-        // 对冲型事件：同一件事两极感受相反（仁慈难受/嗜血亢奋），
-        // 想法文案必须按符号分 key（_pos/_neg）——共用一份 key 会让
-        // 一半人口看到与结算符号错位的描述（2026-11-21 用户实测发现）。
-        int tone = base > 0 ? TONE_POSITIVE : TONE_NEGATIVE;
-        // 注意：TONE_NEGATIVE = 2，用 `tone > 0` 判断会因为负数档位全是正数而恒真，
-        // _neg 永远打不出来（2026-11-22 实测：仁慈镇民仍显示"看得津津有味"）。
-        // 必须显式比较 TONE_POSITIVE。
-        addThought(level, tone,
-                "mood.bmfstown.thought." + keyOf(type) + (tone == TONE_POSITIVE ? "_pos" : "_neg"),
-                hopeMarker(resident, level, tone));
+        Events.happen(resident, level, EventType.BIRTH_NEARBY, base);
     }
 
     /**
@@ -530,25 +465,12 @@ public final class Status {
      * 心情惩罚仅 v>80 生效（v=80→0，v=100→满扣 −base），每天上限见配置。
      */
     public void notePlayerGear(Resident resident, ServerLevel level) {
-        ensureGenerated(resident, level);
         double base = PersonalityFormulas.gearMoodBase(
                 this.axis(resident, level, PersonalityAxis.ENVY), Config.MOOD_TRAIT_VALUE.get());
         if (base == 0) {
             return;
         }
-        EventType type = EventType.GEAR_ENVY;
-        int limit = Config.AXIS_GEAR_MOOD_DAILY_LIMIT.get();
-        if (this.eventCountToday.getOrDefault(type, 0) >= limit) {
-            return;
-        }
-        this.eventCountToday.put(type, this.eventCountToday.getOrDefault(type, 0) + 1);
-        this.applyClamped(resident, resolveHope(resident, level, base));
-        addThought(resident, level, type);
-    }
-
-    /** 心态乘区便捷封装：基准 → HOPE 轴修正 → 取整。 */
-    private int resolveHope(Resident resident, ServerLevel level, double base) {
-        return PersonalityFormulas.resolve(this.axis(resident, level, PersonalityAxis.HOPE), base);
+        Events.happen(resident, level, EventType.GEAR_ENVY, base);
     }
 
     // ==========================================================
@@ -586,8 +508,7 @@ public final class Status {
             return;
         }
         if (current == resident.getPrefs().likedProfession()) {
-            this.applyClamped(resident, Config.MOOD_JOB_LIKED.get());
-            addThought(resident, level, EventType.JOB_LIKED);
+            Events.happen(resident, level, EventType.JOB_LIKED);
         }
     }
 
@@ -601,8 +522,7 @@ public final class Status {
         int need = Config.MOOD_TRAIT_WARLIKE_NO_KILL_DAYS.get();
         int since = this.lastKillDay < 0 ? Integer.MAX_VALUE : currentDay(level) - this.lastKillDay;
         if (since >= need) {
-            this.applyClamped(resident, resolveHope(resident, level, base));
-            addThought(resident, level, EventType.KILL_NONE);
+            Events.happen(resident, level, EventType.KILL_NONE, base);
         }
     }
 
@@ -616,8 +536,7 @@ public final class Status {
         int since = this.lastTimidScareDay < 0
                 ? Integer.MAX_VALUE : currentDay(level) - this.lastTimidScareDay;
         if (since >= 1) {
-            this.applyClamped(resident, resolveHope(resident, level, base));
-            addThought(resident, level, EventType.TIMID_SAFE);
+            Events.happen(resident, level, EventType.TIMID_SAFE, base);
         }
     }
 
@@ -634,14 +553,12 @@ public final class Status {
         if (others >= 2) {
             double base = PersonalityFormulas.crowdBase(social, Config.MOOD_TRAIT_VALUE.get());
             if (base != 0) {
-                this.applyClamped(resident, resolveHope(resident, level, base));
-                addThought(resident, level, EventType.SOCIAL_CROWD);
+                Events.happen(resident, level, EventType.SOCIAL_CROWD, base);
             }
         } else if (others == 0) {
             double base = PersonalityFormulas.lonelyBase(social, Config.MOOD_TRAIT_VALUE.get());
             if (base != 0) {
-                this.applyClamped(resident, resolveHope(resident, level, base));
-                addThought(resident, level, EventType.SOCIAL_LONELY);
+                Events.happen(resident, level, EventType.SOCIAL_LONELY, base);
             }
         }
     }
@@ -661,12 +578,10 @@ public final class Status {
     public void applyHomeMaterialResult(Resident resident, ServerLevel level,
                                         boolean blockHit, boolean colorHit) {
         if (blockHit) {
-            this.applyClamped(resident, Config.MOOD_BLOCK_LIKED.get());
-            addThought(resident, level, EventType.BLOCK_LIKED);
+            Events.happen(resident, level, EventType.BLOCK_LIKED);
         }
         if (colorHit) {
-            this.applyClamped(resident, Config.MOOD_COLOR_LIKED.get());
-            addThought(resident, level, EventType.COLOR_LIKED);
+            Events.happen(resident, level, EventType.COLOR_LIKED);
         }
     }
 
@@ -731,18 +646,9 @@ public final class Status {
         int memoryPenalty = resident.getMemoryState()
                 .hasFirmMemory(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS)
                 ? Config.MOOD_MEMORY_PENALTY.get() : 0;
-        this.applyRaw(resident, -missed * noSleep - memoryPenalty);
-        addThought(resident, level, EventType.NO_SLEEP);
-        // 记忆累计：一夜没睡 +15；积满固化 → 想法日志宣布（紫色，不说话——用户定稿）
-        if (resident.getMemoryState().addProgress(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_SLEEPLESS,
-                (int) (level.getDayTime() / 24000L),
-                Config.MEMORY_GAIN.get(), Config.MEMORY_THRESHOLD.get())) {
-            addThought(level, TONE_MEMORY_BAD,
-                    "mood.bmfstown.thought.memory_sleepless", Thought.MARK_NONE);
-        }
-        // 台词：缺觉即时线（变体由台词注册表的 condition 区分）
-        com.bmf.bmfstown.social.TownEventBus.dispatch(
-                com.bmf.bmfstown.social.TownEvent.sleepless(resident));
+        // 缺觉心情/想法/记忆累计/气泡全走声明表（绕过每日 clamp，见 NO_SLEEP 声明）
+        Events.happen(resident, level, EventType.NO_SLEEP,
+                (double) (-missed * noSleep - memoryPenalty));
         this.sleptBadToday = true; // 供 tickDaily 的记忆进度衰减判定用
     }
 
@@ -754,8 +660,9 @@ public final class Status {
     private void settleMemory(Resident resident, ServerLevel level) {
         com.bmf.bmfstown.entity.domain.MemoryState memory = resident.getMemoryState();
         // 挨饿：过去一天内有过挨饿事件（事件点已累计过）就不衰减
-        if (this.lastStarvingAt == Long.MIN_VALUE
-                || level.getDayTime() - this.lastStarvingAt >= 24000L) {
+        long lastStarvingAt = this.lastIntervalAt.getOrDefault(EventType.STARVING, Long.MIN_VALUE);
+        if (lastStarvingAt == Long.MIN_VALUE
+                || level.getDayTime() - lastStarvingAt >= 24000L) {
             memory.decayProgress(com.bmf.bmfstown.entity.domain.MemoryState.TYPE_STARVING,
                     Config.MEMORY_DECAY.get());
         }
@@ -820,10 +727,6 @@ public final class Status {
         if (!resident.getPrefs().likesMusic()) {
             return;
         }
-        EventType type = EventType.MUSIC_LIKED;
-        if (this.eventCountToday.getOrDefault(type, 0) >= 1) {
-            return;
-        }
         BlockPos center = resident.blockPosition();
         boolean playing = false;
         for (BlockPos pos : BlockPos.betweenClosed(
@@ -836,9 +739,7 @@ public final class Status {
             }
         }
         if (playing) {
-            this.eventCountToday.put(type, 1);
-            this.applyClamped(resident, Config.MOOD_MUSIC_LIKED.get());
-            addThought(resident, level, type);
+            Events.happen(resident, level, EventType.MUSIC_LIKED);
         }
     }
 
@@ -867,24 +768,19 @@ public final class Status {
         if (!anyAlive) {
             return;
         }
-        long now = level.getDayTime();
 
-        if (match && elapsed(now, this.lastMobAt, Config.MOOD_MOB_DISLIKED_INTERVAL.get())) {
-            this.lastMobAt = now;
-            this.applyClamped(resident, -Config.MOOD_MOB_DISLIKED.get());
-            addThought(resident, level, EventType.MOB_DISLIKED);
+        if (match) {
+            Events.happen(resident, level, EventType.MOB_DISLIKED);
         }
 
         // 勇气轴·遇敌（用户定稿）：仅胆小（<35）才怕怪——基准 = −base·(35−v)/35，
-        // v=0 封顶恐慌、v≥35 无感（中位以上也怕会吓到太多人）。
+        // v=0 封顶恐慌、v≥35 无感（中位以上也怕会吓到太多人）。间隔走声明表。
         double scareBase = PersonalityFormulas.scareBase(
                 this.axis(resident, level, PersonalityAxis.COURAGE), Config.MOOD_TRAIT_VALUE.get());
-        if (scareBase != 0
-                && elapsed(now, this.lastTimidAt, Config.MOOD_TRAIT_TIMID_INTERVAL.get())) {
-            this.lastTimidAt = now;
-            this.lastTimidScareDay = currentDay(level);
-            this.applyClamped(resident, resolveHope(resident, level, scareBase));
-            addThought(resident, level, EventType.TIMID_SCARED);
+        if (scareBase != 0) {
+            if (Events.happen(resident, level, EventType.TIMID_SCARED, scareBase)) {
+                this.lastTimidScareDay = currentDay(level);
+            }
         }
     }
 
@@ -904,10 +800,9 @@ public final class Status {
         com.bmf.bmfstown.social.TownEventBus.dispatch(
                 com.bmf.bmfstown.social.TownEvent.weatherChanged(resident, current));
         if (resident.getPrefs().dislikedWeather() == current) {
-            this.applyClamped(resident, -Config.MOOD_WEATHER_DISLIKED.get());
-            addThought(resident, level, EventType.WEATHER_DISLIKED);
+            Events.happen(resident, level, EventType.WEATHER_DISLIKED);
         } else {
-            addThought(resident, level, EventType.WEATHER_NEUTRAL);
+            Events.happen(resident, level, EventType.WEATHER_NEUTRAL);
         }
     }
 
@@ -969,27 +864,10 @@ public final class Status {
     }
 
     // ==========================================================
-    //  心情施加（clamp 逻辑集中在这两个方法里）
+    //  心情施加（事件统一走 applyEventMood；applyRaw 是其底层直写）
     // ==========================================================
 
-    /** 带每日 clamp 的施加：常规事件与慢变量共用每天 ±MOOD_DAILY_CLAMP 的配额。 */
-    private void applyClamped(Resident resident, int delta) {
-        int clamp = Config.MOOD_DAILY_CLAMP.get();
-        if (clamp <= 0) {
-            applyRaw(resident, delta);
-            return;
-        }
-        int room = delta >= 0 ? clamp - this.dailyDelta : -clamp - this.dailyDelta;
-        int actual = delta >= 0 ? Math.min(delta, Math.max(0, room))
-                : Math.max(delta, Math.min(0, room));
-        if (actual == 0) {
-            return;
-        }
-        this.dailyDelta += actual;
-        applyRaw(resident, actual);
-    }
-
-    /** 不带 clamp 的直接施加（挨饿递增例外用）。 */
+    /** 不带 clamp 的直接施加（applyEventMood 的底层）。 */
     private void applyRaw(Resident resident, int delta) {
         int oldMood = this.mood;
         int newMood = Math.max(0, Math.min(MAX_MOOD, oldMood + delta));
@@ -1038,6 +916,22 @@ public final class Status {
         return true;
     }
 
+    /**
+     * dayTime 间隔限流：距该事件上次触发是否已过 {@code intervalTicks}；
+     * {@code <= 0} = 不限恒放行；放行时覆写游标（统一收编挨饿/生物/勇气遇敌的旧独立字段）。
+     */
+    boolean consumeInterval(EventType type, int intervalTicks, long dayTime) {
+        if (intervalTicks <= 0) {
+            return true;
+        }
+        long last = this.lastIntervalAt.getOrDefault(type, Long.MIN_VALUE);
+        if (!elapsed(dayTime, last, intervalTicks)) {
+            return false;
+        }
+        this.lastIntervalAt.put(type, dayTime);
+        return true;
+    }
+
     /** 距 last 是否已过 interval（dayTime 口径；必须走这个 helper 防 long 溢出误判）。 */
     private static boolean elapsed(long now, long last, long interval) {
         // 回拨保护（v0.9.3）：/time set 把 dayTime 往回拨后，游标（last）会停在
@@ -1047,16 +941,6 @@ public final class Status {
             return true;
         }
         return now - last >= interval;
-    }
-
-    /**
-     * 记一条想法。30 条封顶，队满挤掉最老的。
-     * 标记规则（v0.14 轴化）：心态轴值 ≥61 的正面想法打 "+"，≤39 的负面想法打 "−"。
-     */
-    private void addThought(Resident resident, ServerLevel level, EventType type) {
-        int tone = type.tone;
-        addThought(level, tone, "mood.bmfstown.thought." + keyOf(type),
-                hopeMarker(resident, level, tone));
     }
 
     /** 心态滤镜标记：乐观端 "+"（正面想法）/ 悲观端 "−"（负面想法）。 */
@@ -1071,39 +955,7 @@ public final class Status {
         return Thought.MARK_NONE;
     }
 
-    /** EventType → 语言 key 后缀（显式映射，防止 enum 改名静默丢文案）。 */
-    private static String keyOf(EventType type) {
-        return switch (type) {
-            case ATE_FAVORED -> "ate_favored";
-            // 挨饿有专用入口（starving_1/2/3 按连续天数选键），正常不走这里；
-            // 兜底给一个 lang 里确实存在的键，避免误用时显示裸 key。
-            case STARVING -> "starving_1";
-            case JOB_LIKED -> "job_liked";
-            case BLOCK_LIKED -> "block_liked";
-            case ANIMAL_LIKED -> "animal_liked";
-            case COLOR_LIKED -> "color_liked";
-            case MUSIC_LIKED -> "music_liked";
-            case WEATHER_DISLIKED -> "weather_disliked";
-            case WEATHER_NEUTRAL -> "weather_neutral";
-            case MOB_DISLIKED -> "mob_disliked";
-            case KILL -> "kill";
-            case KILL_NONE -> "kill_none";
-            case TIMID_SCARED -> "timid_scared";
-            case TIMID_SAFE -> "timid_safe";
-            case SOCIAL_CROWD -> "social_crowd";
-            case SOCIAL_LONELY -> "social_lonely";
-            case DEATH_NEARBY -> "death_nearby";
-            case EXPLOSION_NEARBY -> "explosion_nearby";
-            case BIRTH_NEARBY -> "birth_nearby";
-            case GEAR_ENVY -> "gear_envy";
-            case NO_SLEEP -> "no_sleep";
-            // 三个裸字符串升格（决策 #116）——旧 addThought(type) 路径不会走它们，
-            // 但 switch 穷尽性强制补全（这些就是 lang 里的真实键）。
-            case READING -> "reading";
-            case TAVERN -> "tavern";
-            case LEARNED -> "learned";
-        };
-    }
+    
 
     /**
      * 读闲书（v0.11 用户定稿）：心情 +5，想法唯一文案
@@ -1112,7 +964,7 @@ public final class Status {
     /** 读完闲书：心情加成由调用方按批注倍率折算（moodOverride），想法记书名（种子现译）。 */
     public void readEnjoyed(Resident resident, ServerLevel level, long bookSeed, int moodGain) {
         // arg 协议："idle:<种子>"——客户端按种子现译书名（双语自动）
-        Events.happen(resident, level, EventType.READING, moodGain, "idle:" + bookSeed);
+        Events.happen(resident, level, EventType.READING, (double) moodGain, "idle:" + bookSeed);
     }
 
     /** 上次在酒馆喝到饮品是第几游戏日（每日一杯闸门读数）。 */
@@ -1134,17 +986,13 @@ public final class Status {
         if (foodGain > 0) {
             this.hunger = Math.min(MAX_HUNGER, this.hunger + foodGain);
         }
-        Events.happen(resident, level, EventType.TAVERN, moodGain, null);
+        Events.happen(resident, level, EventType.TAVERN, (double) moodGain, null);
     }
 
     /** 学成一门特殊书（图书馆读完 learnTicks）：想法留名（无心情——收益是效果本身）。 */
     public void skillBookLearned(Resident resident, ServerLevel level, String bookId) {
         // arg 协议："book:<id>"——客户端按登记表 lang 键现译书名
         Events.happen(resident, level, EventType.LEARNED, null, "book:" + bookId);
-    }
-
-    private void addThought(ServerLevel level, int tone, String key, int marker) {
-        addThought(level, tone, key, marker, null);
     }
 
     /** 带参数的想法（如读书的种子）：客户端渲染时按协议现场生成书名填 %s。 */
@@ -1170,7 +1018,6 @@ public final class Status {
         tag.putInt("LastSettledDay", this.lastSettledDay);
         tag.putInt("SettleOffset", this.settleOffset);
         tag.putInt("LastFedDay", this.lastFedDay);
-        tag.putLong("LastStarvingAt", this.lastStarvingAt);
         tag.putInt("DailyDelta", this.dailyDelta);
         // 限流计数也要落档：不落的话读档即重置，"存读档刷心情"就成立了
         CompoundTag counterTag = new CompoundTag();
@@ -1179,6 +1026,14 @@ public final class Status {
         }
         if (!counterTag.isEmpty()) {
             tag.put("EventCounters", counterTag);
+        }
+        // interval 限流游标也落档（统一表；不落则读档即重置，"存读档刷限流"就成立）
+        CompoundTag intervalTag = new CompoundTag();
+        for (Map.Entry<EventType, Long> e : this.lastIntervalAt.entrySet()) {
+            intervalTag.putLong(e.getKey().name(), e.getValue());
+        }
+        if (!intervalTag.isEmpty()) {
+            tag.put("EventIntervals", intervalTag);
         }
         if (!this.thoughts.isEmpty()) {
             ListTag list = new ListTag();
@@ -1202,8 +1057,6 @@ public final class Status {
         if (this.lastWeather != null) {
             tag.putString("LastWeather", this.lastWeather.name());
         }
-        tag.putLong("LastMobAt", this.lastMobAt);
-        tag.putLong("LastTimidAt", this.lastTimidAt);
         tag.putInt("LastSleptNightK", this.lastSleptNightK);
         tag.putInt("SleepChargedNightK", this.lastChargedNightK);
         // 性格轴（v0.14）：不落档的话读档即重抽，"存读档洗性格"就成立了
@@ -1238,7 +1091,6 @@ public final class Status {
         s.lastFedDay = tag.contains("LastFedDay") ? tag.getInt("LastFedDay") : -1;
         // 每日一杯闸门也要落档：不落的话读档即重置，"存读档多喝一杯"就成立了
         s.lastTavernDay = tag.contains("LastTavernDay") ? tag.getLong("LastTavernDay") : -1;
-        s.lastStarvingAt = tag.contains("LastStarvingAt") ? tag.getLong("LastStarvingAt") : Long.MIN_VALUE;
         s.dailyDelta = tag.contains("DailyDelta") ? tag.getInt("DailyDelta") : 0;
         s.eventCountToday.clear();
         if (tag.contains("EventCounters")) {
@@ -1247,6 +1099,26 @@ public final class Status {
                 if (counterTag.contains(type.name())) {
                     s.eventCountToday.put(type, Math.max(0, counterTag.getInt(type.name())));
                 }
+            }
+        }
+        s.lastIntervalAt.clear();
+        if (tag.contains("EventIntervals")) {
+            CompoundTag intervalTag = tag.getCompound("EventIntervals");
+            for (EventType type : EventType.values()) {
+                if (intervalTag.contains(type.name())) {
+                    s.lastIntervalAt.put(type, intervalTag.getLong(type.name()));
+                }
+            }
+        } else {
+            // 老档迁移：v0.16.6 前挨饿/生物/遇敌游标是三个独立键
+            if (tag.contains("LastStarvingAt")) {
+                s.lastIntervalAt.put(EventType.STARVING, tag.getLong("LastStarvingAt"));
+            }
+            if (tag.contains("LastMobAt")) {
+                s.lastIntervalAt.put(EventType.MOB_DISLIKED, tag.getLong("LastMobAt"));
+            }
+            if (tag.contains("LastTimidAt")) {
+                s.lastIntervalAt.put(EventType.TIMID_SCARED, tag.getLong("LastTimidAt"));
             }
         }
         s.thoughts.clear();
@@ -1269,8 +1141,6 @@ public final class Status {
         s.lastTimidScareDay = tag.contains("LastTimidScareDay") ? tag.getInt("LastTimidScareDay") : -1;
         s.lastWeatherAt = tag.contains("LastWeatherAt") ? tag.getLong("LastWeatherAt") : Long.MIN_VALUE;
         s.lastWeather = getEnum(tag, "LastWeather", WeatherPref.class, null);
-        s.lastMobAt = tag.contains("LastMobAt") ? tag.getLong("LastMobAt") : Long.MIN_VALUE;
-        s.lastTimidAt = tag.contains("LastTimidAt") ? tag.getLong("LastTimidAt") : Long.MIN_VALUE;
         s.lastSleptNightK = tag.contains("LastSleptNightK") ? tag.getInt("LastSleptNightK") : Integer.MIN_VALUE;
         s.lastChargedNightK = tag.contains("SleepChargedNightK") ? tag.getInt("SleepChargedNightK") : Integer.MIN_VALUE;
         // 性格轴（v0.14）：新档读回；旧档无此键 → 保持 null，首个事件入口懒生成
@@ -1305,18 +1175,17 @@ public final class Status {
         this.settleOffset = other.settleOffset;
         this.lastFedDay = other.lastFedDay;
         this.lastTavernDay = other.lastTavernDay;
-        this.lastStarvingAt = other.lastStarvingAt;
         this.dailyDelta = other.dailyDelta;
         this.eventCountToday.clear();
         this.eventCountToday.putAll(other.eventCountToday);
+        this.lastIntervalAt.clear();
+        this.lastIntervalAt.putAll(other.lastIntervalAt);
         this.thoughts.clear();
         this.thoughts.addAll(other.thoughts);
         this.lastKillDay = other.lastKillDay;
         this.lastTimidScareDay = other.lastTimidScareDay;
         this.lastWeatherAt = other.lastWeatherAt;
         this.lastWeather = other.lastWeather;
-        this.lastMobAt = other.lastMobAt;
-        this.lastTimidAt = other.lastTimidAt;
         this.lastSleptNightK = other.lastSleptNightK;
         this.lastChargedNightK = other.lastChargedNightK;
         this.axes = other.axes == null ? null : other.axes.clone();

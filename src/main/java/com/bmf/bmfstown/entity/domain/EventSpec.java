@@ -30,8 +30,8 @@ import java.util.function.IntSupplier;
  * 执行层仍是同一条路径，绝不 "if (NONE) 跳过"。
  *
  * <h2>字段状态</h2>
- * {@code interval/memory/bubble} 第一批只落地字段、执行器未接（设计稿 §6 中间状态）；
- * 声明到它们会立刻 {@link #seal()} 校验或在 {@link Events} 里抛异常防静默。
+ * {@code interval/memory/bubble} 第二批起由 {@link Events} 统一执行；
+ * {@code swing} 型事件色调随意图方向摆动，其余用声明定性。
  */
 public final class EventSpec {
 
@@ -49,8 +49,10 @@ public final class EventSpec {
     /** 对冲型事件：色调随轴值的负面清单；null = 非对冲。 */
     private PersonalityAxis swingAxis;
 
-    private int dailyLimit = 0;
-    private long intervalTicks = 0;
+    /** 每日触发上限；IntSupplier 延迟读 Config，null = 不限。 */
+    private IntSupplier dailyLimit = null;
+    /** interval 节流（dayTime tick）；IntSupplier 延迟读 Config，null = 不限。 */
+    private IntSupplier interval = null;
     private ClampPolicy clamp = ClampPolicy.DAILY;
 
     private boolean bubble;
@@ -126,17 +128,22 @@ public final class EventSpec {
 
     // ---- 节流 / 限幅 ----
 
-    /** 每日触发上限，0 = 不限。 */
+    /** 每日触发上限（写死值），0 = 不限。 */
     public EventSpec daily(int limit) {
+        return daily(() -> limit);
+    }
+
+    /** 每日触发上限（延迟读 Config 保持可调），null/0 = 不限。 */
+    public EventSpec daily(IntSupplier limit) {
         mutable();
         this.dailyLimit = limit;
         return this;
     }
 
-    /** dayTime 间隔限流（tick），0 = 不限。第一批执行器尚未接。 */
-    public EventSpec interval(long ticks) {
+    /** dayTime 间隔限流（tick）；0 = 不限。IntSupplier 延迟读 Config 保持游戏内可调。 */
+    public EventSpec interval(IntSupplier ticks) {
         mutable();
-        this.intervalTicks = ticks;
+        this.interval = ticks;
         return this;
     }
 
@@ -185,12 +192,14 @@ public final class EventSpec {
         return this.moodOverride;
     }
 
+    /** 每日触发上限值；未声明 = 0（不限）。 */
     public int dailyLimit() {
-        return this.dailyLimit;
+        return this.dailyLimit == null ? 0 : this.dailyLimit.getAsInt();
     }
 
-    public long intervalTicks() {
-        return this.intervalTicks;
+    /** interval 节流值（tick）；未声明 = 0（不限）。 */
+    public int intervalTicks() {
+        return this.interval == null ? 0 : this.interval.getAsInt();
     }
 
     public boolean isSwing() {
@@ -226,10 +235,11 @@ public final class EventSpec {
     /**
      * 由<b>意图增量</b>求想法色调（clamp/限幅之前的意图方向，非实算落账值）。
      * 心情满了/日限截断都不会改变事件的定性——喝酒即使 +0 到账也仍是绿。
-     * 带 mood 的事件按意图符号；不带 mood 的用声明专属色。
+     * 只有 swing（对冲型）事件按意图符号摆动；其余用声明定性
+     * （positive/negative/neutral/knowledge），SOCIAL 等遗留事件由此保留现状写死色调。
      */
-    public int toneFor(int intended) {
-        if (this.swingAxis != null || hasMood()) {
+    public int toneFor(double intended) {
+        if (this.swingAxis != null) {
             return intended > 0 ? Status.TONE_POSITIVE
                     : intended < 0 ? Status.TONE_NEGATIVE
                     : Status.TONE_NEUTRAL;

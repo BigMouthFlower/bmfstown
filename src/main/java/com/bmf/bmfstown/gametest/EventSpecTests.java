@@ -8,6 +8,7 @@ import com.bmf.bmfstown.entity.domain.EventSpecs;
 import com.bmf.bmfstown.entity.domain.Events;
 import com.bmf.bmfstown.entity.domain.EventType;
 import com.bmf.bmfstown.entity.domain.Status;
+import com.bmf.bmfstown.entity.profile.PersonalityAxis;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.minecraft.core.BlockPos;
@@ -23,11 +24,11 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 事件系统·声明表契约测试（决策 #116，第一批）。
+ * 事件系统·声明表契约测试（决策 #116，第二批全量）。
  *
- * <p>测"声明 vs 实际"，不测数值合理性：声明完整性、lang key 存在（坑49 防线）、
- * 日限生效（同日第二次无效果）、四个样板事件真正走 {@link Events} 入口、
- * 以及"颜色=实算符号"（心情封顶时想法为灰、知识想法的专属金色）。
+ * <p>测"声明 vs 实际"，不测数值合理性：24 条声明完整性 + lang key 存在（坑49 防线）、
+ * 日限/间隔限流、样板事件真正走 {@link Events} 入口、"颜色=意图方向"（封顶不改定性、
+ * 知识金色）、swing 文案分 _pos/_neg、HOPE 乘区覆盖到固定事件。
  */
 @GameTestHolder(BmfTown.MOD_ID)
 @PrefixGameTestTemplate(false)
@@ -67,6 +68,8 @@ public class EventSpecTests {
         Resident r = helper.spawn(ModEntities.RESIDENT.get(), rel);
         r.setNoAi(true);
         r.getStatus().setMood(50); // 基准：初始 mood 50（Config.INITIAL_MOOD 默认），显式定死
+        // 心态轴固定中性 50：HOPE 乘区 = ×1.0，心情增量即声明基准值（HOPE 全覆盖后仍可精确断言）
+        r.getStatus().setAxis(PersonalityAxis.HOPE, 50);
         return r;
     }
 
@@ -110,8 +113,8 @@ public class EventSpecTests {
                 }
             }
         }
-        // 第一批应恰好 4 条（防误把第二批 20 条提前接了一半）
-        c.eq(4, EventSpecs.declaredTypes().size(), "第一批声明条数");
+        // 全量登记（第二批）：每个 EventType 成员都必须有声明，防漏接
+        c.eq(EventType.values().length, EventSpecs.declaredTypes().size(), "EventType 全量有声明");
         c.throwIfAny(helper, "declaredSpecsAndLang");
     }
 
@@ -203,5 +206,72 @@ public class EventSpecTests {
         c.eq(Status.TONE_POSITIVE, thought.tone(), "封顶不改定性：读书仍是绿");
 
         c.throwIfAny(helper, "cappedMoodKeepsPositiveTone");
+    }
+
+    // ==========================================================
+    //  三、第二批执行器契约：swing 文案 / HOPE 乘区 / interval 闸
+    // ==========================================================
+
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void swingThoughtSplitByAxis(GameTestHelper helper) {
+        Checks c = new Checks();
+        ServerLevel level = helper.getLevel();
+
+        // 嗜血（CRUELTY=80）：暴力基准为正 → 想法绿 + _pos 文案
+        Resident cruel = spawnResident(helper, new BlockPos(2, 1, 2));
+        cruel.getStatus().setAxis(PersonalityAxis.CRUELTY, 80);
+        cruel.getStatus().noteDeathNearby(cruel, level);
+        var pos = cruel.getStatus().thoughts().getLast();
+        c.eq(Status.TONE_POSITIVE, pos.tone(), "嗜血者死亡想法=绿");
+        c.eq("mood.bmfstown.thought.death_nearby_pos", pos.key(), "嗜血者用 _pos 文案");
+
+        // 仁慈（CRUELTY=20）：暴力基准为负 → 想法红 + _neg 文案
+        Resident kind = spawnResident(helper, new BlockPos(6, 1, 2));
+        kind.getStatus().setAxis(PersonalityAxis.CRUELTY, 20);
+        kind.getStatus().noteDeathNearby(kind, level);
+        var neg = kind.getStatus().thoughts().getLast();
+        c.eq(Status.TONE_NEGATIVE, neg.tone(), "仁慈者死亡想法=红");
+        c.eq("mood.bmfstown.thought.death_nearby_neg", neg.key(), "仁慈者用 _neg 文案");
+
+        c.throwIfAny(helper, "swingThoughtSplitByAxis");
+    }
+
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void hopeScalesFixedEvents(GameTestHelper helper) {
+        Checks c = new Checks();
+        ServerLevel level = helper.getLevel();
+
+        // 乐观（HOPE=100）：吃爱吃 base +3 → ×1.5 → +5（HOPE 覆盖到固定偏好事件）
+        Resident optimist = spawnResident(helper, new BlockPos(2, 1, 2));
+        optimist.getStatus().setAxis(PersonalityAxis.HOPE, 100);
+        int m0 = optimist.getStatus().mood();
+        Events.happen(optimist, level, EventType.ATE_FAVORED);
+        c.eq(m0 + 5, optimist.getStatus().mood(), "乐观者吃爱吃 +5（×1.5）");
+
+        // 悲观（HOPE=0）：遇怪 base -3 → ×1.5 → -5
+        Resident pessimist = spawnResident(helper, new BlockPos(6, 1, 2));
+        pessimist.getStatus().setAxis(PersonalityAxis.HOPE, 0);
+        int m1 = pessimist.getStatus().mood();
+        Events.happen(pessimist, level, EventType.MOB_DISLIKED);
+        c.eq(m1 - 5, pessimist.getStatus().mood(), "悲观者遇怪 -5（×1.5）");
+
+        c.throwIfAny(helper, "hopeScalesFixedEvents");
+    }
+
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void intervalGatesSecondHit(GameTestHelper helper) {
+        Checks c = new Checks();
+        ServerLevel level = helper.getLevel();
+        Resident r = spawnResident(helper, new BlockPos(2, 1, 2));
+        Status s = r.getStatus();
+        s.setMood(50);
+
+        Events.happen(r, level, EventType.MOB_DISLIKED);
+        c.eq(47, s.mood(), "遇怪第一次 -3");
+
+        Events.happen(r, level, EventType.MOB_DISLIKED);
+        c.eq(47, s.mood(), "间隔未过第二次无效果（interval 闸）");
+
+        c.throwIfAny(helper, "intervalGatesSecondHit");
     }
 }
