@@ -74,12 +74,17 @@ public final class DialogEngine {
      *
      * <p>全部走 IntSupplier 延迟读 Config，保持游戏内可调不断电。
      *
+     * <h2>本表只放"表达层"参数（决策 #120）</h2>
+     * 事件层管"该不该发生"（{@code EventSpecs} 的 {@code interval} / {@code daily} /
+     * {@code townCooldown}，读 dayTime，挡下=整条事件不发生）；
+     * 本表只放"该不该说出口"（读 gameTime，挡下=只有话没说，心情/想法/记忆已写完）。
+     * <b>同一个频率约束只许放一处</b>：事件层已有 {@code interval} 时，这里必须填 0，
+     * 否则两层时钟不同会产出"心情扣了、话没说"（坑54）。契约测试
+     * {@code EventSpecTests.rateLimitLayering} 自动守这条。
+     *
      * @param oneInN       相位筛选：settleOffset % N == 0 的镇民才开口（1 = 不限）
      * @param staggerTicks 错峰窗口（tick）；0 = 立刻说
      * @param cooldownTicks 该组说完后的禁言时长（tick）；0 = 不打冷却（按镇民记账）
-     *
-     * <p>频次上限（个人每日/城镇级）属于<b>事件声明</b>（{@code EventSpec.daily} /
-     * {@code EventSpec.townCooldown}），不在这里重复一遍。
      */
     private record SayRule(IntSupplier oneInN, IntSupplier staggerTicks, IntSupplier cooldownTicks) {
     }
@@ -104,10 +109,15 @@ public final class DialogEngine {
                 new SayRule(() -> 1, () -> 0, () -> 0));
         RULES.put(EventType.ATE_FAVORED,
                 new SayRule(() -> 1, () -> 0, () -> Config.DIALOG_EAT_COOLDOWN.get() * 20));
+        // 挨饿：频率全权交给事件层（EventSpecs 的 interval，落档口径），这里放行。
+        // 曾经两边都填 12000 —— 同一约束写两遍，且两层时钟不同（dayTime 会随入睡跳变，
+        // gameTime 不会），会出现"心情扣了、话没说"的半截状态。一个约束只放一处。
         RULES.put(EventType.STARVING,
-                new SayRule(() -> 1, () -> 0, () -> Config.DIALOG_SUFFER_COOLDOWN.get() * 20));
+                new SayRule(() -> 1, () -> 0, () -> 0));
+        // 没睡好：频率同样全权交给事件层（EventSpecs 的 daily(1)，落档口径 + 调用点
+        // settleSleep 每天结算一次双重保证）。这里放行，表现层只剩嘴忙锁。
         RULES.put(EventType.NO_SLEEP,
-                new SayRule(() -> 1, () -> 0, () -> Config.DIALOG_SUFFER_COOLDOWN.get() * 20));
+                new SayRule(() -> 1, () -> 0, () -> 0));
         RULES.put(EventType.WEATHER_NEUTRAL,
                 new SayRule(() -> Math.max(1, Config.DIALOG_WEATHER_ONE_IN_N.get()),
                         Config.DIALOG_STAGGER_TICKS::get,
@@ -377,5 +387,17 @@ public final class DialogEngine {
     /** 该触发键是否配了说话策略（契约测试用：防"声明了却永远不开口"）。 */
     public static boolean hasRule(SpeakTrigger trigger) {
         return RULES.containsKey(trigger);
+    }
+
+    /**
+     * 该触发键在表达层配置的组冷却 tick（契约测试用，-1 = 未配策略）。
+     *
+     * <p>存在的唯一目的是让契约测试能查"同一约束写两遍"（坑54）：事件层已有
+     * {@code interval} 时，表达层再填冷却就是重复，且两层时钟不同会产出
+     * "心情扣了、话没说"的半截状态。规矩见 architecture.md「事件层与表达层分工」。
+     */
+    public static long cooldownTicksOf(SpeakTrigger trigger) {
+        SayRule rule = RULES.get(trigger);
+        return rule == null ? -1L : Math.max(0, rule.cooldownTicks().getAsInt());
     }
 }

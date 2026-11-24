@@ -723,10 +723,10 @@ public final class Config {
                     "Only 1 in N villagers speak on a weather change")
             .defineInRange("dialog.weatherOneInN", 3, 1, 20);
 
-    public static final ModConfigSpec.IntValue DIALOG_SUFFER_COOLDOWN = BUILDER
-            .comment("受苦台词（挨饿/没睡）的冷却（秒），按人按类各记各的",
-                    "Cooldown of suffering lines (starving/sleepless, per resident per type, seconds)")
-            .defineInRange("dialog.sufferCooldownSeconds", 600, 30, 7200);
+    // 已删：dialog.sufferCooldownSeconds（原受苦台词冷却，600 秒）。它给 STARVING/NO_SLEEP
+    // 填的是 12000 tick，而这两条事件的真实周期分别是"饱食度轮询节流"和"每天一次结算"，
+    // 表现层这道冷却要么与事件层重复、要么永远不生效（两层时钟还不同：dayTime 随入睡跳变，
+    // gameTime 不跳）。频率一律回事件层：STARVING 用 interval，NO_SLEEP 用 daily(1)。
 
     // ---- 学者（v0.11 写书）----
 

@@ -199,6 +199,54 @@ public class EventSpecTests {
         c.throwIfAny(helper, "pureExpressionTriggersRegistered");
     }
 
+    /**
+     * 分层限流契约（决策 #120，architecture.md「事件层与表达层分工」）：
+     * <b>同一个频率约束只许放一处，优先事件层。</b>
+     *
+     * <p>查两类错，都是"平时看不出、玩家睡一觉就暴露"的：
+     * <ol>
+     *   <li><b>重复限流</b>：事件层已有 {@code interval}，表达层还填组冷却。
+     *       两层填同一个数 → 事件频率与说话频率脱钩；两层填不同数 → 事件层放行、
+     *       表达层拦下，变成"心情扣了、话没说"。更糟的是两层时钟不同
+     *       （事件层 dayTime 会随入睡跳变，表达层 gameTime 不跳）。</li>
+     *   <li><b>纯气泡事件无任何限流</b>：只有 {@code .bubble()} 一个出口的事件，
+     *       它的"发生"和"表现"是同一件事——不设限流就会变成每次感知都开口，
+     *       或者被表达层的偶发拦截整条吞掉（玩家眼里等于没发生）。</li>
+     * </ol>
+     *
+     * <p>不测数值合理性（多长算合适是设计参数），只测"约束有没有写在正确的那一层"。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void rateLimitLayering(GameTestHelper helper) {
+        Checks c = new Checks();
+        for (EventType t : EventSpecs.declaredTypes()) {
+            EventSpec spec = EventSpecs.of(t);
+            if (!spec.hasBubble()) {
+                continue; // 不开口的事件不涉及表达层，只查事件层（声明由其他用例覆盖）
+            }
+            long rlCooldown = com.bmf.bmfstown.social.DialogEngine.cooldownTicksOf(t);
+            c.isTrue(rlCooldown >= 0, t + " 有气泡但 RULES 无策略");
+
+            // ① 重复限流：事件层 interval + 表达层组冷却 = 同一约束写两遍（坑54）
+            if (spec.intervalTicks() > 0) {
+                c.eq(0L, rlCooldown,
+                        t + " 事件层已有 interval 却在 RULES 又填组冷却（同一约束写两遍，"
+                                + "两层时钟不同会导致'心情扣了话没说'）");
+            }
+
+            // ② 纯气泡事件（无心情/无想法/无记忆）必须至少有一层限流。
+            //    这类事件的可见频率 ≈ 事件频率 × 说话成功率，不设限就会刷屏。
+            boolean pureExpression = !spec.hasMood() && !spec.hasThought()
+                    && spec.memoryKind() == null;
+            if (pureExpression) {
+                boolean limited = spec.intervalTicks() > 0 || spec.dailyLimit() > 0
+                        || spec.townCooldownTicks() > 0 || rlCooldown > 0;
+                c.isTrue(limited, t + " 是纯气泡事件却没有任何限流（会每次感知都开口）");
+            }
+        }
+        c.throwIfAny(helper, "rateLimitLayering");
+    }
+
     // ==========================================================
     //  二、样本事件真走 Events + 颜色动态计算
     // ==========================================================

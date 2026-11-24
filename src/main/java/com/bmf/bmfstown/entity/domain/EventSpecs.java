@@ -101,15 +101,17 @@ public final class EventSpecs {
                 .mood(Config.MOOD_TRAIT_VALUE::get).moodOverride()
                 .thought("timid_safe").positive());
 
-        // 社交对冲（决策 #116 第二批备忘：轴向具体影响待做）——本批保持现状写死色调，
-        // 不做 swing 文案（不补 _pos/_neg）。
+        // 社交（2026-11-24 用户拍板：按性格分派事件，不做双向对冲）。
+        // 「身边有人」只对爱扎堆的人（社交 >60）构成事件，「身边没人」只对爱清静的人
+        // （社交 <40）构成事件；中间的人两种都不触发。所以两条都是单向正面，
+        // 不需要 swing 分正负文案——说这句话的人必然是这个性格的人。
         register(new EventSpec(EventType.SOCIAL_CROWD)
                 .mood(Config.MOOD_TRAIT_VALUE::get).moodOverride()
                 .thought("social_crowd").positive());
 
         register(new EventSpec(EventType.SOCIAL_LONELY)
                 .mood(Config.MOOD_TRAIT_VALUE::get).moodOverride()
-                .thought("social_lonely").negative());
+                .thought("social_lonely").positive());
 
         register(new EventSpec(EventType.DEATH_NEARBY)
                 .mood(Config.MOOD_TRAIT_VALUE::get).moodOverride()
@@ -154,6 +156,10 @@ public final class EventSpecs {
         register(new EventSpec(EventType.NO_SLEEP)
                 .mood(Config.MOOD_NO_SLEEP::get).moodOverride()
                 .thought("no_sleep").negative()
+                // 频率契约显式化：真实节流由 settleSleep 的夜账本保证（每天结算一次），
+                // 但声明层仍写上 daily(1)——读声明即知上限，不靠调用点结构暗含；
+                // 将来若加午睡等其他调用点，这里会真正挡住重复扣心情。
+                .daily(1)
                 .clamp(ClampPolicy.NONE)
                 .memory(MemoryKind.FIRM, "sleepless")
                 .bubble("sleepless"));

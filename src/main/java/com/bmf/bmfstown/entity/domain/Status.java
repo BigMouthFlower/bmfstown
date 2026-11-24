@@ -436,33 +436,50 @@ public final class Status {
         this.lastKillDay = currentDay(level);
         double base = PersonalityFormulas.killBase(
                 this.axis(resident, level, PersonalityAxis.WARLIKE), Config.MOOD_TRAIT_VALUE.get());
-        if (base == 0) {
-            return; // 中位以下杀怪无感
+        if (!moodMatters(resident, level, base)) {
+            return; // 中性区及以下杀怪无感（事件不成立，但上面的计时已刷新）
         }
         Events.happen(resident, level, EventType.KILL, base);
     }
 
     /**
-     * 暴力轴：附近有生物死亡。基准 = base·(v−50)/50 线性过零——
-     * 仁慈（v<50）难受、嗜血（v>50）亢奋、中位无感（2026-11-08 定稿）。
+     * 对冲型事件的"值得发生"判定（用户 2026-11-24 定）：<b>心情实得为 0 就整条事件不发生</b>。
+     *
+     * <p>只判 {@code base == 0} 不够：中性死区边缘（如暴力 61）算出来的基准是 0.075，
+     * 四舍五入后实得 0，却仍会记一条"附近有生物倒下了"的空想法——正是用户抱怨的
+     * "太频繁"。所以这里按<b>含心态乘区的最终整数</b>判定，与 {@link Events} 同一算式。
+     */
+    private boolean moodMatters(Resident resident, ServerLevel level, double base) {
+        if (base == 0) {
+            return false;
+        }
+        int hope = Config.MOOD_HOPE_APPLY.get()
+                ? this.axis(resident, level, PersonalityAxis.HOPE)
+                : PersonalityAxis.NEUTRAL;
+        return PersonalityFormulas.resolve(hope, base) != 0;
+    }
+
+    /**
+     * 暴力轴：附近有生物死亡。中性死区（40–60）内无感、事件不发生；
+     * 死区外线性升到 ±base（仁慈难受、嗜血亢奋）。
      * 任何死亡都算（自己杀的也算），死者本人除外。
      */
     public void noteDeathNearby(Resident resident, ServerLevel level) {
         double base = PersonalityFormulas.violenceBase(
                 this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
-        if (base == 0) {
-            return; // 中位镇民对生死无感
+        if (!moodMatters(resident, level, base)) {
+            return; // 中性区镇民对生死无感（事件不成立）
         }
         Events.happen(resident, level, EventType.DEATH_NEARBY, base);
     }
 
     /**
-     * 暴力轴：附近发生爆炸（烟花不算爆炸源）。与死亡同一条线性过零曲线。
+     * 暴力轴：附近发生爆炸（烟花不算爆炸源）。与死亡同一条死区曲线。
      */
     public void noteExplosionNearby(Resident resident, ServerLevel level) {
         double base = PersonalityFormulas.violenceBase(
                 this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
-        if (base == 0) {
+        if (!moodMatters(resident, level, base)) {
             return;
         }
         Events.happen(resident, level, EventType.EXPLOSION_NEARBY, base);
@@ -474,7 +491,7 @@ public final class Status {
     public void noteBirthNearby(Resident resident, ServerLevel level) {
         double base = PersonalityFormulas.birthBase(
                 this.axis(resident, level, PersonalityAxis.CRUELTY), Config.MOOD_TRAIT_VALUE.get());
-        if (base == 0) {
+        if (!moodMatters(resident, level, base)) {
             return;
         }
         Events.happen(resident, level, EventType.BIRTH_NEARBY, base);
@@ -487,8 +504,8 @@ public final class Status {
     public void notePlayerGear(Resident resident, ServerLevel level) {
         double base = PersonalityFormulas.gearMoodBase(
                 this.axis(resident, level, PersonalityAxis.ENVY), Config.MOOD_TRAIT_VALUE.get());
-        if (base == 0) {
-            return;
+        if (!moodMatters(resident, level, base)) {
+            return; // 81 的 −0.15 舍成 0：不值得记一条"盯着装备不是滋味"
         }
         Events.happen(resident, level, EventType.GEAR_ENVY, base);
     }
@@ -532,12 +549,12 @@ public final class Status {
         }
     }
 
-    /** 结算 2：好战轴——连续 N 天没击杀生物 → 负面（仅轴值>50 生效）。天数口径用绝对天。 */
+    /** 结算 2：好战轴——连续 N 天没击杀生物 → 负面（仅轴值>60 生效）。天数口径用绝对天。 */
     private void settleWarlike(Resident resident, ServerLevel level) {
         double base = PersonalityFormulas.noKillBase(
                 this.axis(resident, level, PersonalityAxis.WARLIKE), Config.MOOD_TRAIT_VALUE.get());
-        if (base == 0) {
-            return;
+        if (!moodMatters(resident, level, base)) {
+            return; // 死区及以下：不憋也不记想法
         }
         int need = Config.MOOD_TRAIT_WARLIKE_NO_KILL_DAYS.get();
         int since = this.lastKillDay < 0 ? Integer.MAX_VALUE : currentDay(level) - this.lastKillDay;
@@ -550,8 +567,8 @@ public final class Status {
     private void settleCourageSafe(Resident resident, ServerLevel level) {
         double base = PersonalityFormulas.safeBase(
                 this.axis(resident, level, PersonalityAxis.COURAGE), Config.MOOD_TRAIT_VALUE.get());
-        if (base == 0) {
-            return;
+        if (!moodMatters(resident, level, base)) {
+            return; // 34 的 +0.086 舍成 0：不记一条"松了一大口气"
         }
         int since = this.lastTimidScareDay < 0
                 ? Integer.MAX_VALUE : currentDay(level) - this.lastTimidScareDay;
@@ -560,7 +577,14 @@ public final class Status {
         }
     }
 
-    /** 结算 4：社交轴——扎堆/独处的对冲感受（对冲型，两极各有感受）。 */
+    /**
+     * 结算 4：社交轴——<b>按性格分派事件</b>（用户 2026-11-24 拍板）。
+     *
+     * <p>不是"同一个场景两极对冲"，而是各人只遇到自己在意的那种场景：
+     * 爱扎堆的人（v&gt;60）在人多时才知道高兴；爱清静的人（v&lt;40）在独处时才知道自在。
+     * 中间 40–60 的人两种都不触发。<b>两个方向都只给正面反馈</b>——
+     * 旧版让爱清静的人在人多时扣心情，等于性格决定的长期惩罚，玩家无法干预。
+     */
     private void settleSocial(Resident resident, ServerLevel level) {
         int social = this.axis(resident, level, PersonalityAxis.SOCIAL);
         AABB box = resident.getBoundingBox().inflate(CROWD_RANGE);
@@ -571,13 +595,13 @@ public final class Status {
             }
         }
         if (others >= 2) {
-            double base = PersonalityFormulas.crowdBase(social, Config.MOOD_TRAIT_VALUE.get());
-            if (base != 0) {
+            double base = PersonalityFormulas.crowdJoyBase(social, Config.MOOD_TRAIT_VALUE.get());
+            if (moodMatters(resident, level, base)) {
                 Events.happen(resident, level, EventType.SOCIAL_CROWD, base);
             }
         } else if (others == 0) {
-            double base = PersonalityFormulas.lonelyBase(social, Config.MOOD_TRAIT_VALUE.get());
-            if (base != 0) {
+            double base = PersonalityFormulas.lonelyJoyBase(social, Config.MOOD_TRAIT_VALUE.get());
+            if (moodMatters(resident, level, base)) {
                 Events.happen(resident, level, EventType.SOCIAL_LONELY, base);
             }
         }

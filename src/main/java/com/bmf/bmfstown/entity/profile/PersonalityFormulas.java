@@ -48,21 +48,42 @@ public final class PersonalityFormulas {
         return x < 0 ? -r : r;
     }
 
-    /** 线性过零滑动：base × (v−50)/50，中位为 0，两端 ±base。 */
+    /**
+     * 线性过零滑动（带<b>中性死区</b>，用户 2026-11-24 拍板）：
+     * 轴值落在 {@link PersonalityAxis#NEUTRAL_MIN}~{@link PersonalityAxis#NEUTRAL_MAX}
+     * （40–60，与面板"中性区"同口径）内<b>恒为 0</b>——中间的人对这条事件完全没有反应，
+     * 事件根本不发生（不是"发生但加减 0"）。死区外侧线性升到 ±base：
+     * v=100 → +base、v=0 → −base。
+     *
+     * <p>为什么不用原来的 base×(v−50)/50 全幅线性：中位附近每差一个点都会产生
+     * 微小非零值，一次附近死亡就让半镇人记一条"附近有生物倒下了"的想法——
+     * 用户实测反馈"太频繁"。死区把"无感"从数值概念变成<b>事件层的存在性</b>。
+     */
     private static double throughZero(int v, int base) {
-        return base * (v - PersonalityAxis.NEUTRAL) / 50.0;
+        if (v >= PersonalityAxis.NEUTRAL_MIN && v <= PersonalityAxis.NEUTRAL_MAX) {
+            return 0;
+        }
+        if (v > PersonalityAxis.NEUTRAL_MAX) {
+            return base * (v - PersonalityAxis.NEUTRAL_MAX)
+                    / (100.0 - PersonalityAxis.NEUTRAL_MAX);
+        }
+        return -base * (PersonalityAxis.NEUTRAL_MIN - v) / (double) PersonalityAxis.NEUTRAL_MIN;
     }
 
     // ==========================================================
     //  心情事件基准值（每条返回"未经心态修正的基准"，0 = 该轴对此事件无反应）
     // ==========================================================
 
-    /** 好战·击杀：仅 v>50 生效，v=100 → +base。 */
+    /**
+     * 好战·击杀：仅 v&gt;60 生效（中性区无感），v=100 → +base。
+     *
+     * <p>中性死区见 {@link #throughZero}：51–60 也算"没什么感觉"，不再有微量加分。
+     */
     public static double killBase(int warlike, int base) {
         return warlike > PersonalityAxis.NEUTRAL ? throughZero(warlike, base) : 0;
     }
 
-    /** 好战·久无击杀：仅 v>50 生效（温和者杀不杀无所谓）。 */
+    /** 好战·久无击杀：与击杀镜像（同样只对 v&gt;60 生效）。 */
     public static double noKillBase(int warlike, int base) {
         return warlike > PersonalityAxis.NEUTRAL ? -throughZero(warlike, base) : 0;
     }
@@ -87,22 +108,48 @@ public final class PersonalityFormulas {
         return base * (COURAGE_SPLIT_LINE - courage) / COURAGE_SPLIT_LINE;
     }
 
-    /** 社交·同伴扎堆：对冲型，v=100 → +base，v=0 → −base（人堆让独处者烦躁）。 */
-    public static double crowdBase(int social, int base) {
-        return throughZero(social, base);
+    /**
+     * 社交·人堆里的开心（用户 2026-11-24 拍板：按性格分派事件，不做双向对冲）。
+     *
+     * <p><b>只有爱扎堆的人（v&gt;60）在人堆里才会得到正面反馈</b>，
+     * v=100 → +base、v=61 → +0.075·base（微量）。中性区与喜独处端恒为 0——
+     * 也就是说"身边人多"这件事对爱清静的人<b>不构成事件</b>，既不奖也不罚。
+     *
+     * <p>旧版是全幅线性对冲（爱清静的人在人堆里 −base），用户实测认为那是
+     * "性格决定他天天难受、玩家又管不了"，改成只保留各取所需的那一半。
+     */
+    public static double crowdJoyBase(int social, int base) {
+        if (social <= PersonalityAxis.NEUTRAL_MAX) {
+            return 0;
+        }
+        return base * (social - PersonalityAxis.NEUTRAL_MAX)
+                / (100.0 - PersonalityAxis.NEUTRAL_MAX);
     }
 
-    /** 社交·孤身一人：与扎堆镜像，v=100 → −base，v=0 → +base（独处者自在）。 */
-    public static double lonelyBase(int social, int base) {
-        return -throughZero(social, base);
+    /**
+     * 社交·独处的开心：{@link #crowdJoyBase} 的镜像，只有喜独处的人（v&lt;40）
+     * 在四下无人时才自在，v=0 → +base。
+     */
+    public static double lonelyJoyBase(int social, int base) {
+        if (social >= PersonalityAxis.NEUTRAL_MIN) {
+            return 0;
+        }
+        return base * (PersonalityAxis.NEUTRAL_MIN - social)
+                / (double) PersonalityAxis.NEUTRAL_MIN;
     }
 
-    /** 暴力·生物死亡 / 爆炸（烟花除外）：线性过零，嗜血 v=100 → +base，仁慈 v=0 → −base。 */
+    /**
+     * 暴力·生物死亡 / 爆炸（烟花除外）：中性死区 + 两端线性，
+     * 嗜血 v=100 → +base，仁慈 v=0 → −base，<b>40–60 的中间人完全无感</b>。
+     *
+     * <p>死区是用户 2026-11-24 拍板补的：原来全幅线性过零，中位附近每点都有微小值，
+     * 一场附近死亡能让半镇居民各记一条想法。现在"中间的人不发表意见"。
+     */
     public static double violenceBase(int cruelty, int base) {
         return throughZero(cruelty, base);
     }
 
-    /** 暴力·生物繁殖：与死亡镜像（嗜血嫌吵闹，仁慈欣喜）。 */
+    /** 暴力·生物繁殖：与死亡镜像（嗜血嫌吵闹，仁慈欣喜），同样带中性死区。 */
     public static double birthBase(int cruelty, int base) {
         return -throughZero(cruelty, base);
     }

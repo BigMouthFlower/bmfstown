@@ -123,23 +123,30 @@ public class PersonalityAxisTests {
     @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
     public static void formulaWarlikeViolenceBases(GameTestHelper helper) {
         Checks c = new Checks();
-        // 暴力轴：死亡/爆炸线性过零
+        // 暴力轴：中性死区 40–60（用户 2026-11-24 拍板），区外线性到 ±base
         c.eq(3.0, PersonalityFormulas.violenceBase(100, 3), 1e-9, "嗜血满格死亡 +3");
         c.eq(-3.0, PersonalityFormulas.violenceBase(0, 3), 1e-9, "仁慈满格死亡 −3");
         c.eq(0.0, PersonalityFormulas.violenceBase(50, 3), 1e-9, "中位死亡无感");
-        c.eq(1.5, PersonalityFormulas.violenceBase(75, 3), 1e-9, "75 半额");
-        c.eq(-1.5, PersonalityFormulas.violenceBase(25, 3), 1e-9, "25 半额负");
+        c.eq(0.0, PersonalityFormulas.violenceBase(60, 3), 1e-9, "死区上界 60 无感");
+        c.eq(0.0, PersonalityFormulas.violenceBase(40, 3), 1e-9, "死区下界 40 无感");
+        c.eq(3.0 * 20 / 40, PersonalityFormulas.violenceBase(80, 3), 1e-9, "80 = 3×20/40");
+        c.eq(-3.0 * 20 / 40, PersonalityFormulas.violenceBase(20, 3), 1e-9, "20 = −3×20/40");
+        c.eq(3.0 * 1 / 40, PersonalityFormulas.violenceBase(61, 3), 1e-9, "61 刚出死区微量");
+        c.eq(-3.0 * 1 / 40, PersonalityFormulas.violenceBase(39, 3), 1e-9, "39 刚出死区微量");
         // 繁殖镜像
         c.eq(-3.0, PersonalityFormulas.birthBase(100, 3), 1e-9, "嗜血嫌吵 −3");
         c.eq(3.0, PersonalityFormulas.birthBase(0, 3), 1e-9, "仁慈欣喜 +3");
         c.eq(0.0, PersonalityFormulas.birthBase(50, 3), 1e-9, "中位繁殖无感");
-        // 好战·击杀：仅 v>50 生效（单向门）
+        c.eq(0.0, PersonalityFormulas.birthBase(55, 3), 1e-9, "死区内繁殖无感");
+        // 好战·击杀：仅 v>60 生效（死区外单向门）
         c.eq(3.0, PersonalityFormulas.killBase(100, 3), 1e-9, "好战满格击杀 +3");
-        c.eq(1.5, PersonalityFormulas.killBase(75, 3), 1e-9, "好战 75 半额");
+        c.eq(3.0 * 20 / 40, PersonalityFormulas.killBase(80, 3), 1e-9, "好战 80 = 3×20/40");
+        c.eq(0.0, PersonalityFormulas.killBase(60, 3), 1e-9, "好战死区上界 60 无感");
         c.eq(0.0, PersonalityFormulas.killBase(50, 3), 1e-9, "好战中位无感");
         c.eq(0.0, PersonalityFormulas.killBase(0, 3), 1e-9, "温和者击杀无感（不扣分）");
         // 好战·久无击杀：镜像
         c.eq(-3.0, PersonalityFormulas.noKillBase(100, 3), 1e-9, "好战满格久无杀 −3");
+        c.eq(0.0, PersonalityFormulas.noKillBase(60, 3), 1e-9, "死区上界久无杀无感");
         c.eq(0.0, PersonalityFormulas.noKillBase(50, 3), 1e-9, "中位久无杀无感");
         c.eq(0.0, PersonalityFormulas.noKillBase(0, 3), 1e-9, "温和者久无杀无感");
         c.throwIfAny(helper, "formulaWarlikeViolenceBases");
@@ -166,12 +173,16 @@ public class PersonalityAxisTests {
         c.eq(0.0, PersonalityFormulas.safeBase(35, 3), 1e-9, "分界线平安无感");
         c.eq(0.0, PersonalityFormulas.safeBase(49, 3), 1e-9, "49 平安无感");
         c.eq(0.0, PersonalityFormulas.safeBase(100, 3), 1e-9, "勇者平安无感");
-        // 社交·扎堆对冲 / 孤身镜像
-        c.eq(3.0, PersonalityFormulas.crowdBase(100, 3), 1e-9, "爱扎堆扎堆 +3");
-        c.eq(-3.0, PersonalityFormulas.crowdBase(0, 3), 1e-9, "喜独处扎堆 −3");
-        c.eq(0.0, PersonalityFormulas.crowdBase(50, 3), 1e-9, "中位扎堆无感");
-        c.eq(-3.0, PersonalityFormulas.lonelyBase(100, 3), 1e-9, "爱扎堆孤身 −3");
-        c.eq(3.0, PersonalityFormulas.lonelyBase(0, 3), 1e-9, "喜独处孤身 +3");
+        // 社交·按性格分派（用户 2026-11-24 拍板：不再双向对冲，两向都只给正面）
+        c.eq(3.0, PersonalityFormulas.crowdJoyBase(100, 3), 1e-9, "爱扎堆在人群 +3");
+        c.eq(3.0 * 20 / 40, PersonalityFormulas.crowdJoyBase(80, 3), 1e-9, "社交 80 人堆 +1.5");
+        c.eq(0.0, PersonalityFormulas.crowdJoyBase(60, 3), 1e-9, "中性区上界人堆无感");
+        c.eq(0.0, PersonalityFormulas.crowdJoyBase(50, 3), 1e-9, "中位人堆无感");
+        c.eq(0.0, PersonalityFormulas.crowdJoyBase(0, 3), 1e-9, "喜独处在人群<b>不扣</b>（不再对冲）");
+        c.eq(3.0, PersonalityFormulas.lonelyJoyBase(0, 3), 1e-9, "喜独处独处 +3");
+        c.eq(3.0 * 20 / 40, PersonalityFormulas.lonelyJoyBase(20, 3), 1e-9, "社交 20 独处 +1.5");
+        c.eq(0.0, PersonalityFormulas.lonelyJoyBase(40, 3), 1e-9, "中性区下界独处无感");
+        c.eq(0.0, PersonalityFormulas.lonelyJoyBase(100, 3), 1e-9, "爱扎堆孤身<b>不扣</b>（不再对冲）");
         // 嫉妒·装备心情惩罚：仅 v>80（2026-11-08 定稿阈值）
         c.eq(-3.0, PersonalityFormulas.gearMoodBase(100, 3), 1e-9, "攀比满格 −3");
         c.eq(-1.5, PersonalityFormulas.gearMoodBase(90, 3), 1e-9, "攀比 90 半额");
@@ -510,7 +521,7 @@ public class PersonalityAxisTests {
         s.setAxis(PersonalityAxis.HOPE, 50); // 心态中位：去掉乘区干扰，基准即实得
         int m0 = s.mood();
 
-        // 暴力轴·死亡线性过零
+        // 暴力轴·中性死区（用户 2026-11-24）：40–60 的人被杀也毫无反应
         s.setAxis(PersonalityAxis.CRUELTY, 100);
         s.noteDeathNearby(r, level);
         c.eq(m0 + 3, s.mood(), "嗜血见死亡 +3");
@@ -518,8 +529,13 @@ public class PersonalityAxisTests {
         s.noteDeathNearby(r, level);
         c.eq(m0, s.mood(), "仁慈见死亡 −3（回到原位）");
         s.setAxis(PersonalityAxis.CRUELTY, 50);
+        int thoughtsMid = s.thoughts().size();
         s.noteDeathNearby(r, level);
         c.eq(m0, s.mood(), "中位见死亡无感");
+        c.eq(thoughtsMid, s.thoughts().size(), "中位见死亡<b>不记想法</b>（事件不成立）");
+        s.setAxis(PersonalityAxis.CRUELTY, 60);
+        s.noteDeathNearby(r, level);
+        c.eq(thoughtsMid, s.thoughts().size(), "死区上界 60 也不记想法");
 
         // 暴力轴·繁殖镜像
         s.setAxis(PersonalityAxis.CRUELTY, 0);
@@ -537,10 +553,15 @@ public class PersonalityAxisTests {
         s.noteKill(r, level);
         c.eq(m0 + 3, s.mood(), "好战满格击杀 +3");
 
-        // 嫉妒·装备：仅 v>80 扣
+        // 嫉妒·装备：仅 v>80 扣，且扣到 0（实得舍成 0）时不记想法
         s.setAxis(PersonalityAxis.ENVY, 80);
+        int thoughtsBeforeGear = s.thoughts().size();
         s.notePlayerGear(r, level);
         c.eq(m0 + 3, s.mood(), "v=80 看装备无感");
+        c.eq(thoughtsBeforeGear, s.thoughts().size(), "v=80 看装备不记想法");
+        s.setAxis(PersonalityAxis.ENVY, 81);
+        s.notePlayerGear(r, level); // −0.15 → 舍成 0
+        c.eq(thoughtsBeforeGear, s.thoughts().size(), "v=81 扣到 0 也不记想法（坑56）");
         s.setAxis(PersonalityAxis.ENVY, 100);
         s.notePlayerGear(r, level);
         c.eq(m0, s.mood(), "攀比满格看装备 −3（回到原位）");
