@@ -167,6 +167,15 @@ public class TavernTests {
                 .thenSucceed();
     }
 
+    /** @hidden 用例内判定：客人是否在测试划定的酒馆区（相对 1..5 × 1..9）内。 */
+    private static boolean isInsideTestZone(Resident patron, GameTestHelper helper) {
+        BlockPos min = helper.absolutePos(new BlockPos(1, 1, 1));
+        BlockPos max = helper.absolutePos(new BlockPos(5, 1, 9));
+        BlockPos p = patron.blockPosition();
+        return p.getX() >= min.getX() && p.getX() <= max.getX()
+                && p.getZ() >= min.getZ() && p.getZ() <= max.getZ();
+    }
+
     /** 喝下结算会落"酒馆想法"——日数无关的"已喝"标记。 */
     private static boolean hasTavernThought(Resident patron) {
         for (var t : patron.getStatus().thoughts()) {
@@ -701,6 +710,89 @@ public class TavernTests {
             helper.fail("对账基线（流体量/id）不正确：" + p.assumedDroplets() + " " + p.assumedFluidId());
         }
         helper.succeed();
+    }
+
+    /**
+     * 进馆计时口径（2026-11-25 用户拍板）：<b>走过去的路上不扣预算，踏进酒馆区才开始</b>。
+     *
+     * <p>守的是"酒馆和图书馆统一口径"这条：图书馆是"走到书架拿到书才开始计
+     * 1200~2400t"，酒馆原先却是"喝完再额外逗留"，总时长随走位/等酒浮动
+     * （40~90 秒不定）。现在两边都是"到了才开始算、预算含全过程"。
+     *
+     * <p><b>反向验证</b>：把 {@code startVisitClock} 的调用从 tickGoSeat 挪回
+     * tick 开头（即"一出发就计时"），这条会红——报"还没进区就开始扣预算"。
+     */
+    @GameTest(template = "room11x4x11", timeoutTicks = 4000)
+    public static void tavernClockStartsOnlyAfterArrival(GameTestHelper helper) {
+        AlchemyScaffold.Setup s = AlchemyScaffold.prepareTown(
+                helper, new BlockPos(1, 1, 1), new BlockPos(11, 1, 9), 0);
+        // 酒馆区只划结构的左半（x 1..5）——客人从右半（x 10）起步，
+        // 必须先走进区，才能验证"走位时间不计入预算"。
+        s.town().addZone(TownWandMode.TAVERN, new TownZone(UUID.randomUUID(), "测试酒馆",
+                helper.absolutePos(new BlockPos(1, 1, 1)),
+                helper.absolutePos(new BlockPos(5, 1, 9))));
+        Resident patron = helper.spawn(ModEntities.RESIDENT.get(), new BlockPos(10, 1, 5));
+        patron.getIdentity().setTownId(s.town().id());
+        patron.syncClient();
+        s.residents().add(patron);
+        var chest = s.chest(helper);
+        chest.setItem(0, new ItemStack(Items.MILK_BUCKET));
+        chest.setChanged();
+
+        com.bmf.bmfstown.leisure.TavernVisitActivity activity =
+                new com.bmf.bmfstown.leisure.TavernVisitActivity();
+        helper.startSequence()
+                .thenExecute(() -> {
+                    if (!activity.start(patron, helper.getLevel())) {
+                        helper.fail("酒窖有奶，start 应成功");
+                    }
+                    if (activity.visitStartedForTest()) {
+                        helper.fail("start 只是出发：还没到馆，预算不该开始倒计时");
+                    }
+                })
+                // 走位途中：任何时刻"已开始计时"都必须意味着"人已经在区内"。
+                // （不能只断言"前 N tick 不许起算"——居民两秒就走完 5 格，
+                //  那样断言会因为走得快而误红。）
+                // 注意：blockPosition 是绝对坐标，区边界也必须用 absolutePos 换算。
+                .thenExecuteFor(200, () -> {
+                    // 顺序很关键：先记录 tick 前的状态，再推进。
+                    // 若在 tick 之后再判位置，居民可能已在这一拍跨过边界，
+                    // 会把"刚进区就起算"误判成"在区外就起算"。
+                    boolean wasStarted = activity.visitStartedForTest();
+                    boolean wasInZone = isInsideTestZone(patron, helper);
+                    activity.tick(patron, helper.getLevel());
+                    // 这一拍刚变成"已起算"时，tick 前的人必须已经在区内
+                    if (!wasStarted && activity.visitStartedForTest() && !wasInZone) {
+                        helper.fail("人还在区外却已经开始扣预算——走位时间不该计入");
+                    }
+                })
+                // 等它进区：一旦起算，<b>抽到的初始预算</b>必须落在配置区间内
+                // （不能比"当前剩余"——预算每 tick 递减，比剩余只会越比越小）
+                .thenWaitUntil(() -> {
+                    activity.tick(patron, helper.getLevel());
+                    if (!activity.visitStartedForTest()) {
+                        throw new GameTestAssertException("等待客人踏进酒馆区");
+                    }
+                    int initial = activity.visitInitialTicksForTest();
+                    int min = com.bmf.bmfstown.config.Config.TAVERN_VISIT_MIN.get();
+                    int max = com.bmf.bmfstown.config.Config.TAVERN_VISIT_MAX.get();
+                    if (initial < min || initial > max) {
+                        throw new GameTestAssertException(
+                                "进馆初始预算应落在 " + min + "~" + max + "，实际 " + initial);
+                    }
+                })
+                // 进馆后预算必须真的在递减（不是"设了值不用"）
+                .thenExecute(() -> {
+                    int before = activity.visitTicksLeftForTest();
+                    activity.tick(patron, helper.getLevel());
+                    activity.tick(patron, helper.getLevel());
+                    int after = activity.visitTicksLeftForTest();
+                    if (after >= before) {
+                        helper.fail("进馆后预算应逐 tick 递减：" + before + " → " + after);
+                    }
+                })
+                .thenExecute(() -> activity.abort(patron, helper.getLevel()))
+                .thenSucceed();
     }
 
     /** 超量基液（玩家手倒）/ 投了配方外配料 / 已配齐在酿——一律不碰、不报缺口。 */

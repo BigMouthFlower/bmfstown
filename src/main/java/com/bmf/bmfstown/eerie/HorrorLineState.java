@@ -22,18 +22,21 @@ import java.util.UUID;
  *
  * <h2>状态机（每镇一份）</h2>
  * <pre>
- *   [无锁定] --发现首格--> [锁定线·第1格] --每次命中+1--> [第10格=写齐]
- *      ^                                                            |
+ *   [无锁定] --发现首格--> [锁定线·第1格] --每次命中+1--> [第 N 格写齐]
+ *      ^                                                  （N = 该线章数）|
  *      |            解锁（UnlockState 登记 + 随机 2~5 日应验倒计时）  |
  *      +---------------- 应验后该线降极小概率 <----------------------+
  * </pre>
  * <ul>
  *   <li><b>单线锁定</b>（#54）：一旦有锁定线，所有命中全部推进它，
  *       不并发第二条；写齐才释放；</li>
+ *   <li><b>章数按线</b>（2026-11-25 用户拍板）：不再固定 10 格——每条线
+ *       自己在 {@link HorrorLines.HorrorLine#chapters()} 声明总章数，
+ *       写齐即是解锁点（短故事 3 格、长故事 12 格都合法）；</li>
  *   <li><b>每日配额</b>（#57 稀缺池）：全镇每游戏日最多推进 1 格——
  *       闲逛触发可以很频繁，产出被配额按住；</li>
  *   <li><b>应验</b>（#54/#57）：写齐时掷 2~5 游戏日的应验日；应验动作
- *       是"登记应验 + 公告"，正式异象效果按线挂接（内容定稿前为空）；
+ *       是"登记应验 + 公告 + 按线的 effectId 挂效果"（空 = 只公告）；
  *       应验后该线从"正常权重"降为"极小概率"（可再次被零星写）。</li>
  * </ul>
  *
@@ -51,7 +54,7 @@ public final class HorrorLineState extends SavedData {
     private static final class TownState {
         /** 当前锁定的故事线 id（无锁定 = null）。 */
         String lockedLine;
-        /** 锁定线已写到的格数（1~10；lockedLine 为 null 时无意义）。 */
+        /** 锁定线已写到的格数（1~该线 chapters；lockedLine 为 null 时无意义）。 */
         int progress;
         /** 已写齐（解锁）的线 id。 */
         final Set<String> unlocked = new HashSet<>();
@@ -119,8 +122,8 @@ public final class HorrorLineState extends SavedData {
 
         st.lastProgressDay = today;
 
-        // 第 10 格：解锁 + 掷应验日 + 释放锁定（#54：解锁后该线降极小概率）
-        boolean unlockedNow = chapter >= HorrorLines.CHAPTERS;
+        // 写齐该线的章数（按线声明，不再固定 10）：解锁 + 掷应验日 + 释放锁定
+        boolean unlockedNow = chapter >= line.chapters();
         Long verifyDue = null;
         if (unlockedNow) {
             st.unlocked.add(line.id());
@@ -200,7 +203,7 @@ public final class HorrorLineState extends SavedData {
         return st == null ? null : st.lockedLine;
     }
 
-    /** 锁定线进度（1~10）。 */
+    /** 锁定线进度（1~该线 chapters）。 */
     public int progressOf(UUID townId) {
         TownState st = this.towns.get(townId);
         return st == null ? 0 : st.progress;

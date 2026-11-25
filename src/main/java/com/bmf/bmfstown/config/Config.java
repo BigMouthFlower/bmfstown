@@ -836,6 +836,37 @@ public final class Config {
                     "Maximum break between leisure sessions (gameTime ticks)")
             .defineInRange("leisure.breakMaxTicks", 600, 0, 24000);
 
+    /**
+     * 闲逛段时长（与 {@code leisure.break*} 分开，2026-11-25 用户拍板
+     * "闲逛的时间有点短"）。旧实现把闲逛长度和段间冷却共用 break 配置，
+     * 导致闲逛只有 10~30 秒，比图书馆/酒馆都短一截。
+     */
+    public static final ModConfigSpec.IntValue LEISURE_WANDER_MIN = BUILDER
+            .comment("闲逛一段的最短时长（gameTime tick，默认 1200 = 游戏 1.2 小时）",
+                    "Minimum wander segment length (gameTime ticks)")
+            .defineInRange("leisure.wanderMinTicks", 1200, 100, 24000);
+
+    public static final ModConfigSpec.IntValue LEISURE_WANDER_MAX = BUILDER
+            .comment("闲逛一段的最长时长（gameTime tick，默认 2400 = 游戏 2.4 小时）",
+                    "Maximum wander segment length (gameTime ticks)")
+            .defineInRange("leisure.wanderMaxTicks", 2400, 100, 24000);
+
+    /**
+     * 休闲活动池权重（并行抽取，2026-11-25 用户拍板推翻串行两段掷骰）。
+     *
+     * <p>三项各是权重而非百分比，分母 = 三项之和。抽中但去不成（今日已喝/
+     * 没酒馆/窖空）→ 落回闲逛，不把份额偷偷补贴给别的活动。
+     */
+    public static final ModConfigSpec.IntValue LEISURE_LIBRARY_CHANCE = BUILDER
+            .comment("休闲时去图书馆看书的权重（与酒馆/闲逛并行抽取）",
+                    "Weight for visiting the library during leisure (parallel draw)")
+            .defineInRange("leisure.libraryWeight", 50, 0, 100);
+
+    public static final ModConfigSpec.IntValue LEISURE_WANDER_CHANCE = BUILDER
+            .comment("休闲时自然闲逛的权重（与酒馆/图书馆并行抽取）",
+                    "Weight for wandering during leisure (parallel draw)")
+            .defineInRange("leisure.wanderWeight", 30, 0, 100);
+
     public static final ModConfigSpec.IntValue LEISURE_IDLE_BOOK_READ = BUILDER
             .comment("读完一本闲书所需的连续阅读时长（gameTime tick，一次休闲段内完成）",
                     "Reading time to finish one idle book (gameTime ticks, finishes within one session)")
@@ -890,9 +921,31 @@ public final class Config {
             .defineInRange("tavern.lingerMinTicks", 600, 0, 24000);
 
     public static final ModConfigSpec.IntValue TAVERN_LINGER_MAX = BUILDER
-            .comment("喝完后在酒馆逗留的最长时长（刻）；逗留期间每个落脚点会站着歇一阵（安静待客，不狂奔）",
-                    "Max ticks a patron lingers in the tavern after drinking; strolls between spots include a standing pause (calm pacing)")
+            .comment("【已被 TAVERN_VISIT_* 取代，仅在 visit 预算为 0 时兜底】喝完后逗留的最长时长（刻）",
+                    "[Superseded by TAVERN_VISIT_*; fallback only] Max ticks lingers after drinking")
             .defineInRange("tavern.lingerMaxTicks", 1200, 0, 24000);
+
+    /**
+     * 进馆总预算（2026-11-25 用户拍板：<b>踏进酒馆区才开始计时</b>）。
+     *
+     * <p>这个预算<b>包含点单、等酒、喝酒、逗留全过程</b>——到点整段收尾。
+     * 走过去的路上不计时。与图书馆同口径（到了才开始算）。
+     *
+     * <p>旧口径是"喝完再额外逗留 600~1200t"，导致总时长随走位/等酒浮动
+     * （实测 40~90 秒不等），玩家看到的是不确定的节奏。
+     *
+     * <p>默认 1200~2400t 与图书馆 {@code leisure.session*} 对齐；
+     * 想恢复旧口径就把这两项设为 0（届时回落到 {@code tavern.linger*}）。
+     */
+    public static final ModConfigSpec.IntValue TAVERN_VISIT_MIN = BUILDER
+            .comment("一次进酒馆的最短总时长（刻，从踏进酒馆区起算，含喝酒）；0=停用并回落 linger 配置",
+                    "Min total tavern visit length in ticks, counted from entering the tavern zone (drinking included); 0 disables and falls back to linger config")
+            .defineInRange("tavern.visitMinTicks", 1200, 0, 24000);
+
+    public static final ModConfigSpec.IntValue TAVERN_VISIT_MAX = BUILDER
+            .comment("一次进酒馆的最长总时长（刻，从踏进酒馆区起算，含喝酒）；0=停用并回落 linger 配置",
+                    "Max total tavern visit length in ticks, counted from entering the tavern zone (drinking included); 0 disables and falls back to linger config")
+            .defineInRange("tavern.visitMaxTicks", 2400, 0, 24000);
 
     public static final ModConfigSpec.IntValue TAVERN_MOOD_BONUS = BUILDER
             .comment("喝一杯的心情加成（点）",

@@ -56,10 +56,12 @@ public final class TownBulletinData extends SavedData {
             Component story = line == null
                     ? Component.literal(this.lineId)
                     : Component.translatable(line.titleKey());
+            // 进度分母按该线自己的章数（2026-11-25 起章数不再是全局常量）
+            int total = line == null ? HorrorLines.DEFAULT_CHAPTERS : line.chapters();
             return switch (this.kind) {
                 case KIND_SPOT -> Component.translatable("bulletin.bmfstown.horror.spot",
                         this.resident, Component.translatable(phaseKey), story,
-                        this.chapter, HorrorLines.CHAPTERS);
+                        this.chapter, total);
                 case KIND_VERIFY -> Component.translatable("bulletin.bmfstown.horror.verify",
                         this.resident, Component.translatable(phaseKey), story);
                 default -> Component.literal(this.kind);

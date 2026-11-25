@@ -103,8 +103,28 @@ public class TavernVisitActivity implements LeisureActivity {
     private SeatEntity seat;
     /** 落脚点之间的原地歇息（无座兜底游走用）。 */
     private int dwellTicksLeft;
-    /** 逗留段剩余（有界活动段：到点结束走人）。 */
-    private int lingerTicksLeft;
+    /**
+     * 进馆总预算剩余（{@code TAVERN_VISIT_*}）。
+     *
+     * <p>2026-11-25 用户拍板：<b>从"走进酒馆区"那一刻开始计时</b>，走过去的
+     * 路上完全不算；这个预算<b>包含点单、等酒、喝酒、逗留全过程</b>，到点整段
+     * 收尾。与图书馆同口径（图书馆也是"到了才开始算"，取书时间忽略不计）。
+     *
+     * <p>为什么不是"喝完再逗留 N tick"（旧口径）：那样酒馆总时长会随
+     * 走位/等酒浮动，玩家看到的是"有时 40 秒有时 90 秒"的不确定节奏。
+     */
+    private int visitTicksLeft;
+    /** 起算那一刻抽到的预算总量（测试用来验"抽值落在配置区间内"）。 */
+    private int visitInitialTicks;
+    /** 预算是否已开始（进区那一刻置真；未进区不递减）。 */
+    private boolean visitStarted;
+    /**
+     * 旧口径的逗留剩余（仅在 {@code tavern.visitMaxTicks = 0} 停用预算时使用）。
+     *
+     * <p>保留这条回落路径的原因：预算口径是新行为，万一有人更喜欢原版
+     * "喝完再坐一会儿，时长随境"的手感，改配置就能退回去，不必改代码。
+     */
+    private int legacyLingerLeft;
 
     @Override
     public String toString() {
@@ -308,6 +328,9 @@ public class TavernVisitActivity implements LeisureActivity {
         this.seatTarget = pickSeat(level, nearest, resident);
         this.seat = null;
         this.goSeatTicks = 0;
+        // 进馆预算：此刻还没起算（要等真正踏进区内，见 tickGoSeat）
+        this.visitStarted = false;
+        this.visitTicksLeft = 0;
         this.phase = Phase.GO_SEAT;
         // 无座兜底目标=中心就近的可站立格（中心落在酒桶里时别往桶上撞，2026-11-19）
         BlockPos fallback = com.bmf.bmfstown.entity.NavOps.findStandable(level,
@@ -328,6 +351,14 @@ public class TavernVisitActivity implements LeisureActivity {
             } else {
                 this.seat.ping();
             }
+        }
+        // ---- 进馆总预算（2026-11-25 用户拍板：进区起算，含喝酒）----
+        // 没进区之前不递减：走过去的路上不计时（与图书馆"到了才计时"同口径）。
+        if (this.visitStarted && --this.visitTicksLeft <= 0) {
+            // 预算到点：整段收尾。还杯/结账全走 abort 的既有路径
+            // （"点了就喝完"+"绝不揣着杯走"），这里只是提前触发它。
+            this.abort(resident, level);
+            return false;
         }
         return switch (this.phase) {
             case GO_SEAT -> tickGoSeat(resident, level);
@@ -357,6 +388,7 @@ public class TavernVisitActivity implements LeisureActivity {
         }
         // 已进区：停下办正事
         resident.getNavigation().stop();
+        startVisitClock(resident); // 进馆计时起点（2026-11-25：到馆才起算）
         if (!resident.getMainHandItem().isEmpty()) {
             return false; // 手被占：本次不喝
         }
@@ -374,6 +406,29 @@ public class TavernVisitActivity implements LeisureActivity {
             navigateTo(resident, this.seatTarget);
         }
         return true;
+    }
+
+    /**
+     * 启动进馆计时（2026-11-25 用户拍板：<b>踏进酒馆区才开始算</b>）。
+     *
+     * <p>只启动一次：从这一刻起 {@link #visitTicksLeft} 递减，<b>点单、等酒、
+     * 喝酒、逗留全在同一份预算里</b>。走过来的路不计时（与图书馆"到了才
+     * 开始读"同口径）。重复调用是空操作——tickGoSeat 每 tick 都会经过这里。
+     */
+    private void startVisitClock(Resident resident) {
+        if (this.visitStarted) {
+            return;
+        }
+        int min = Math.max(0, Config.TAVERN_VISIT_MIN.get());
+        int max = Math.max(min, Config.TAVERN_VISIT_MAX.get());
+        if (max <= 0) {
+            // 配置为 0 = 停用预算，回落到旧的"喝完再逗留"口径（见 tickLinger）
+            this.visitStarted = false;
+            return;
+        }
+        this.visitTicksLeft = min + resident.getRandom().nextInt(max - min + 1);
+        this.visitInitialTicks = this.visitTicksLeft;
+        this.visitStarted = true;
     }
 
     /** 当前镇民所站的酒馆区（XZ 判定）；不在任何区内返回 null。 */
@@ -396,6 +451,25 @@ public class TavernVisitActivity implements LeisureActivity {
     private static boolean zoneContainsXZ(TownZone zone, BlockPos pos) {
         return pos.getX() >= zone.min().getX() && pos.getX() <= zone.max().getX()
                 && pos.getZ() >= zone.min().getZ() && pos.getZ() <= zone.max().getZ();
+    }
+
+    // ------------------------------------------------------------
+    //  测试接缝（验证"进馆才计时"，勿在生产路径调用）
+    // ------------------------------------------------------------
+
+    /** @hidden 测试：预算是否已开始计时（进区那一刻置真）。 */
+    public boolean visitStartedForTest() {
+        return this.visitStarted;
+    }
+
+    /** @hidden 测试：预算剩余刻度（未开始时为 0）。 */
+    public int visitTicksLeftForTest() {
+        return this.visitTicksLeft;
+    }
+
+    /** @hidden 测试：起算时抽到的预算总量（用于验"落在配置区间内"）。 */
+    public int visitInitialTicksForTest() {
+        return this.visitInitialTicks;
     }
 
     /** 坐着等上酒：酒到手 → 立即喝（#67 不搞延迟）；超时 → 自取酒窖兜底。 */
@@ -601,33 +675,49 @@ public class TavernVisitActivity implements LeisureActivity {
         return true;
     }
 
-    /** 进入逗留：<b>有界的活动段</b>（600~1200t，lingerMin/MaxTicks）。到点
-     *  活动结束交还控制权——无业/周末居民的闲暇窗口全天开着，若逗留等窗口
-     *  收尾就会在酒吧待一整天（2026-11-15 用户确认口径）。段结束后自然重掷：
-     *  每日一杯闸门挡住再入酒馆，接下来的多半是游走/图书馆。 */
+    /**
+     * 进入逗留（预算口径，2026-11-25 用户拍板）。
+     *
+     * <p><b>旧口径</b>：喝完酒再额外待 600~1200t（{@code lingerMin/MaxTicks}），
+     * 于是总时长 = 走位 + 等酒 + 喝酒 + 逗留，随环境浮动（40~90 秒不等）。
+     *
+     * <p><b>新口径</b>：进馆那一刻起算一个总预算 {@code TAVERN_VISIT_*}，
+     * <b>喝酒的时间也算在里面</b>。这里不再重掷时长，只是继续消耗剩下的预算
+     * ——"喝完还剩多少就坐多少"，到点由 {@link #tick} 统一收尾。
+     *
+     * <p>为什么这样更对：玩家看到的节奏变确定（每次进店差不多同样的时长），
+     * 且与"图书馆到了就读 1~2 分钟"是同一个心智模型。
+     */
     private void toLinger(Resident resident, ServerLevel level) {
-        int lMin = Math.max(1, Config.TAVERN_LINGER_MIN.get());
-        int lMax = Math.max(lMin, Config.TAVERN_LINGER_MAX.get());
-        this.lingerTicksLeft = lMin + resident.getRandom().nextInt(lMax - lMin + 1);
         this.dwellTicksLeft = 0;
         this.phase = Phase.LINGER;
     }
 
     /**
-     * 逗留：有座位 → <b>坐在原座位上</b>安静待到段尾（聊天/看节目的壳挂在
+     * 逗留：有座位 → <b>坐在原座位上</b>安静待到预算耗尽（聊天/看节目的壳挂在
      * 坐姿上）；没座位 → 老的"走一步歇一阵"游走（安静待客，不永动机狂奔）。
      * 站歇的这段时间就是将来"跟别人聊天/看节目"要填充的壳（#65 下一步）。
+     *
+     * <p>到点判定统一由 {@link #tick} 的进馆预算负责；本方法只管"在馆里待着"。
      */
     private boolean tickLinger(Resident resident, ServerLevel level) {
-        if (--this.lingerTicksLeft <= 0) {
-            dismountSeat(resident);
-            discardSeat(); // 逗留到点：拆座位走人
-            return false; // 活动段结束，重掷下一件事（游走/图书馆…）
-        }
         if (threatened(resident)) {
             dismountSeat(resident);
             discardSeat();
             return false; // 遇险起身：酒已喝完杯已还，没什么好收尾的
+        }
+        if (!this.visitStarted) {
+            // 预算停用（配置为 0）：回落到旧的"喝完再逗留 N tick"口径
+            if (this.legacyLingerLeft <= 0) {
+                int lMin = Math.max(1, Config.TAVERN_LINGER_MIN.get());
+                int lMax = Math.max(lMin, Config.TAVERN_LINGER_MAX.get());
+                this.legacyLingerLeft = lMin + resident.getRandom().nextInt(lMax - lMin + 1);
+            }
+            if (--this.legacyLingerLeft <= 0) {
+                dismountSeat(resident);
+                discardSeat();
+                return false;
+            }
         }
         if (this.seat != null) {
             // 坐着逗留：还杯途中离座了就走回去再骑上

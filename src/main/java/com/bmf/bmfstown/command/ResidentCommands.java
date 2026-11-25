@@ -218,6 +218,15 @@ public final class ResidentCommands {
                                 .executes(ctx -> doLock(ctx.getSource(),
                                         StringArgumentType.getString(ctx, "城镇"),
                                         StringArgumentType.getString(ctx, "id"))))));
+        // ---- /bmfstown horror：恐怖线进度（只读，2026-11-25 决策 #129）----
+        // 验收用：一条命令看清"锁了哪条线/写到第几格/解锁没/哪天应验"。
+        // 只读，不改状态——不做推线命令（推线会绕过每日配额与锁线规则，
+        // 测出来的状态不是线上会发生的状态）。
+        root.then(Commands.literal("horror")
+                .executes(ctx -> showHorror(ctx.getSource(), null))
+                .then(Commands.argument("城镇", StringArgumentType.string())
+                        .executes(ctx -> showHorror(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "城镇")))));
         root.then(Commands.literal("unlocks")
                 .executes(ctx -> doUnlocks(ctx.getSource(), null))
                 .then(Commands.argument("城镇", StringArgumentType.string())
@@ -928,6 +937,38 @@ public final class ResidentCommands {
         return ids.size();
     }
 
+
+    /**
+     * 恐怖线进度（只读，决策 #129 验收辅助）。
+     *
+     * <p>报：锁线/格数/已解锁/已应验/下次应验日。刻意只读——<b>不做推线命令</b>：
+     * 推线会绕开"每日配额"与"单线锁定"，玩家看到的状态就不是线上真会发生的状态。
+     */
+    private static int showHorror(net.minecraft.commands.CommandSourceStack source,
+            @javax.annotation.Nullable String townText) {
+        Town town = resolveTown(source, townText);
+        if (town == null) {
+            return 0;
+        }
+        var level = source.getLevel();
+        var state = com.bmf.bmfstown.eerie.HorrorLineState.get(level);
+        String locked = state.lockedLineOf(town.id());
+        String lineText;
+        if (locked == null) {
+            lineText = "无（等下次闲逛抽到）";
+        } else {
+            var line = com.bmf.bmfstown.eerie.HorrorLines.byId(locked);
+            int total = line == null ? 0 : line.chapters();
+            lineText = locked + " 第 " + state.progressOf(town.id()) + "/" + total + " 章";
+        }
+        var unlocked = state.unlockedOf(town.id());
+        var verified = state.verifiedOf(town.id());
+        source.sendSuccess(() -> Component.literal(
+                "「" + town.name() + "」恐怖线：" + lineText
+                        + " | 已解锁: " + (unlocked.isEmpty() ? "无" : String.join(",", unlocked))
+                        + " | 已应验: " + (verified.isEmpty() ? "无" : String.join(",", verified))), false);
+        return 1;
+    }
 
     /** 历法调试：报当前镇民历日期（年/月/日/月相）。 */
     private static int showDate(CommandContext<CommandSourceStack> ctx) {

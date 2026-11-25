@@ -30,7 +30,8 @@ import java.util.UUID;
  *       新事件类型 = 加一个 EventType + 一个 dispatch 分支；</li>
  *   <li><b>恐怖线产出</b>：命中恐怖线后进 {@link HorrorLineState} 状态机
  *       ——单线锁定 + 全镇每日配额 {@link #HORROR_DAILY_CAP} 格（稀缺池：
- *       触发频繁×产出稀少），十卷写齐解锁、随机 {@link #VERIFY_MIN_DAYS}~
+ *       触发频繁×产出稀少），<b>写齐该线声明的章数</b>即解锁（#129 起按线、
+ *       不再固定十格）、随机 {@link #VERIFY_MIN_DAYS}~
  *       +{@link #VERIFY_SPAN_DAYS} 日应验、应验后降极小概率（#54）。</li>
  * </ol>
  *
@@ -151,7 +152,7 @@ public final class WanderEvents {
                 TownBulletinData.KIND_SPOT, residentName,
                 advance.line().id(), advance.chapter()));
 
-        // 解锁瞬间（第 10 格）：解锁登记（隐藏解锁类）——正式解锁物等用户定稿
+        // 解锁瞬间（写齐该线声明的章数）：解锁登记（隐藏解锁类）——正式解锁物等用户定稿
         if (advance.unlockedNow()) {
             UnlockState.get(level).unlockIfNew(level, townId, advance.line().unlockId());
         }
@@ -168,7 +169,7 @@ public final class WanderEvents {
     private static void placeVolumeNote(com.bmf.bmfstown.entity.Resident resident, ServerLevel level,
                                         UUID townId, HorrorLineState.Advance advance) {
         // 归类（决策 #58）：手记是隐藏解锁类的扩容——走 BookDraft.Unlock，
-        // unlockId 编码 horror_<线>#<格>；第 10 格的"解锁登记"另用 horror_<线>
+        // unlockId 编码 horror_<线>#<格>；写齐那一格的"解锁登记"另用 horror_<线>
         String volumeId = FinishedBookItem.HORROR_PREFIX + advance.line().id()
                 + "#" + advance.chapter();
         BookContent content = BookContent
@@ -246,7 +247,13 @@ public final class WanderEvents {
     //  应验（懒检查）
     // ==========================================================
 
-    /** 到期的线登记应验 + 发公告。正式异象效果按线挂接处（内容定稿前为空）。 */
+    /**
+     * 到期的线登记应验 + 发公告 + 按线声明挂应验效果（{@link VerificationEffects}）。
+     *
+     * <p>效果从 {@code line.effectId()} 取——空串 = 只发公告（测试线现状），
+     * 非空 = 查注册表执行（{@code exile} 等）。**这里没有任何 per-line 分支**：
+     * 新增故事线/新增效果都不动本方法（#129 声明式）。
+     */
     private static void pollVerifications(com.bmf.bmfstown.entity.Resident resident,
                                           ServerLevel level, UUID townId) {
         for (HorrorLines.HorrorLine line : HorrorLineState.get(level)
@@ -257,7 +264,8 @@ public final class WanderEvents {
                     line.id(), 0));
             DialogEngine.sayDirect(resident, Component.translatable(
                     "dialog.bmfstown.horror_verify.1"));
-            // TODO(内容定稿)：按 line.id() 挂接异象效果（草方块染菌丝/雷劈/……）
+            // 按线声明的效果 id 挂异象（空 = 只发公告；未登记 = 只 warn）
+            VerificationEffects.run(line.effectId(), level, townId, resident);
         }
     }
 

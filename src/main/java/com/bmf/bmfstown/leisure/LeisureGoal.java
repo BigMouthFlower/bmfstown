@@ -186,46 +186,101 @@ public class LeisureGoal extends Goal {
     //  决策：动态活动池随机
     // ------------------------------------------------------------
 
-    /** 随机到看书的概率（%）：没随机到 = 不启动任何活动，自然游走兜底。 */
-    private static final int LIBRARY_CHANCE = 50;
+    /** 图书馆去不成时的短冷却（保留旧口径：200t=10s 后重摇，不落闲逛）。 */
+    private static final int LIBRARY_FAIL_RETRY_TICKS = 200;
 
     /**
-     * 决策：先掷"去酒馆坐坐"（v0.16 决策 #64，默认 20%——成行三条件
-     * 今日未喝/镇里有酒馆/窖里有饮品任一不满足就落空），落空接着掷
-     * "图书馆看闲书"（50%，数值不变）；都没随机到就什么都不启动——
-     * 镇民回到原有的漫无目的游走（自然游走是既有 AI，不需要额外赋予）。
-     * 每日一杯的硬闸门在 {@link TavernVisitActivity#canStart} 内兜底。
+     * 休闲活动池：<b>并行抽取</b>（2026-11-25 用户拍板，推翻串行两段掷骰）。
      *
-     * <p>v0.16 沉浸层（#57）：自然游走段开始时掷闲暇随机事件
-     * （闲逛→（概率）随机事件→（子集）恐怖事件，见 {@code WanderEvents}）。
+     * <h2>为什么改（旧实现的三个毛病）</h2>
+     * 旧代码是两段串行：先掷酒馆 20%，没成再用<b>另一颗骰子</b>掷图书馆 50%，
+     * 都没中就闲逛。用户原话：<i>"他们应该是一个并行的抽取"</i>。旧写法的问题：
+     * <ol>
+     *   <li><b>酒馆占先手</b>：图书馆实际只有 40%（0.8×0.5），不是标称的 50%；</li>
+     *   <li><b>去不成的份额漏掉</b>：酒馆掷中但今日已喝/没酒馆/窖空时，那 20%
+     *       会往下漏给图书馆和闲逛，比例随时漂移；</li>
+     *   <li><b>加第四件事就得插 if</b>：掷骰顺序本身成了隐性权重，越加越乱。</li>
+     * </ol>
+     *
+     * <h2>现在</h2>
+     * 三项各有一个<em>明确的权重</em>，一次掷出，权重和即分母——谁都不占先手：
+     * <ul>
+     *   <li>酒馆 {@code TAVERN_VISIT_CHANCE}（默认 20）；</li>
+     *   <li>图书馆 {@code LEISURE_LIBRARY_CHANCE}（默认 50）；</li>
+     *   <li>闲逛 {@code LEISURE_WANDER_CHANCE}（默认 30）。</li>
+     * </ul>
+     * 抽中但去不成（今日已喝/没酒馆/窖空）→ <b>落回闲逛</b>，不把份额偷偷
+     * 补贴给图书馆（那又是变相的顺序优先）。
+     *
+     * <p>v0.16 沉浸层（#57）：闲逛段开始时掷闲暇随机事件（闲逛→（概率）随机
+     * 事件→（子集）恐怖事件，见 {@code WanderEvents}）。<b>只有闲逛会掷</b>
+     * ——去酒馆、去图书馆的两段都不掷。
      */
     private boolean pick(ServerLevel level) {
-        // ---- 酒馆（决策 #64）：先掷，两段掷骰的第一段 ----
-        int tavernChance = Math.min(100, Math.max(0, Config.TAVERN_VISIT_CHANCE.get()));
-        if (tavernChance > 0 && this.random.nextInt(100) < tavernChance) {
+        int tavernWeight = clampChance(Config.TAVERN_VISIT_CHANCE.get());
+        int libraryWeight = clampChance(Config.LEISURE_LIBRARY_CHANCE.get());
+        int wanderWeight = clampChance(Config.LEISURE_WANDER_CHANCE.get());
+        int total = tavernWeight + libraryWeight + wanderWeight;
+        if (total <= 0) {
+            this.breakCooldown = this.randomBreak(); // 三项全 0：不休闲（纯冷却）
+            return false;
+        }
+        int roll = this.random.nextInt(total);
+
+        // ---- 酒馆 ----
+        if (roll < tavernWeight) {
             LeisureActivity tavern = new TavernVisitActivity();
             if (tavern.canStart(this.resident, level) && tavern.start(this.resident, level)) {
                 this.current = tavern;
                 return true;
             }
+            return wanderOff(level); // 抽中但去不成 → 落回闲逛（份额不补贴给别人）
         }
-        if (this.random.nextInt(100) >= LIBRARY_CHANCE) {
-            this.breakCooldown = this.randomBreak(); // 没随机到：自然游走一阵再说
-            com.bmf.bmfstown.eerie.WanderEvents.onWanderSegmentStart(this.resident, level);
+        roll -= tavernWeight;
+
+        // ---- 图书馆 ----
+        if (roll < libraryWeight) {
+            LeisureActivity library = new LibraryReadActivity();
+            if (library.canStart(this.resident, level) && library.start(this.resident, level)) {
+                this.current = library;
+                return true;
+            }
+            this.breakCooldown = LIBRARY_FAIL_RETRY_TICKS; // 馆里没闲书可看：短冷却后重摇
             return false;
         }
-        LeisureActivity activity = new LibraryReadActivity();
-        if (activity.canStart(this.resident, level) && activity.start(this.resident, level)) {
-            this.current = activity;
-            return true;
-        }
-        this.breakCooldown = 200; // 馆里没闲书可看：短冷却后重摇
+
+        // ---- 闲逛 ----
+        return wanderOff(level);
+    }
+
+    /** 闲逛一段：定长度（{@code LEISURE_WANDER_*}，与段间冷却分开）+ 掷随机事件。 */
+    private boolean wanderOff(ServerLevel level) {
+        this.breakCooldown = this.randomWander();
+        com.bmf.bmfstown.eerie.WanderEvents.onWanderSegmentStart(this.resident, level);
         return false;
     }
 
+    private static int clampChance(int percent) {
+        return Math.min(100, Math.max(0, percent));
+    }
+
+    /** 段间冷却（活动结束→下次决策的空档）。 */
     private int randomBreak() {
         int min = Config.LEISURE_BREAK_MIN.get();
         int max = Math.max(min, Config.LEISURE_BREAK_MAX.get());
+        return Mth.randomBetweenInclusive(this.random, min, max);
+    }
+
+    /**
+     * 闲逛时长（与冷却分开：冷却只是"没在做事"的空档，闲逛是有长度的活动段）。
+     *
+     * <p>2026-11-25 用户："闲逛的时间有点短"——旧实现把闲逛时长和段间冷却
+     * 共用 {@code LEISURE_BREAK_*}（200~600t=10~30s），比图书馆（1200~2400t）
+     * 和酒馆（逗留 600~1200t 加上走位/点单）都短一截。现在单独配。
+     */
+    private int randomWander() {
+        int min = Config.LEISURE_WANDER_MIN.get();
+        int max = Math.max(min, Config.LEISURE_WANDER_MAX.get());
         return Mth.randomBetweenInclusive(this.random, min, max);
     }
 }
