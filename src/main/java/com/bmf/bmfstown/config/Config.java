@@ -619,6 +619,49 @@ public final class Config {
                     "Crafting xp per item for the worker")
             .defineInRange("craft.xpPerCraft", 5, 0, 1000);
 
+    // ==========================================================
+    //  石匠（建材回收，v0.17 石匠线）
+    // ==========================================================
+
+    /**
+     * 石匠拆一批建材的基础耗时（tick）。
+     *
+     * <p>比工人合成（默认 100）长——拆解是粗活，也要让"石匠上班时间"
+     * 成为真正的成本（用户设计原话："在上班时间消耗时间去分解"）。
+     *
+     * <p>效率缩放与工人<b>逐项同源</b>（{@code WorkerGoal.craftTicks}）：
+     * 熟练度段位 × 心情（坚韧轴位移阈值）× 专注段 × 特殊书 {@code CRAFT_SPEED}。
+     * 因此 Lv1 生疏实际要 140/0.6 ≈ 233 tick，Lv10 传奇只要 140/1.5 ≈ 93 tick
+     * ——用户 2026-11-25 问"效率受不受等级影响"，答案就在这里。
+     */
+    public static final ModConfigSpec.IntValue SALVAGE_TICKS_PER_BATCH = BUILDER
+            .comment("石匠拆一批（凑整批）建材的基础耗时（tick，受熟练度/心情效率缩放）",
+                    "Base ticks for the stonemason to salvage one batch of building materials")
+            .defineInRange("salvage.ticksPerBatch", 140, 10, 24000);
+
+    /**
+     * 石匠每产出 1 份通货涨多少合成经验。
+     *
+     * <p>按"份"结算而不是按"件"：拆 64 个台阶（=32 份料）与拆 32 个楼梯
+     * （=32 份料）工作量相当，经验也该相当——用件数结算会让台阶流不合理地肥。
+     */
+    public static final ModConfigSpec.IntValue SALVAGE_XP_PER_UNIT = BUILDER
+            .comment("石匠每产出 1 份通货（石材/木材/碎沙）获得的合成经验",
+                    "Crafting xp the stonemason gains per unit of salvaged material")
+            .defineInRange("salvage.xpPerUnit", 1, 0, 100);
+
+    /**
+     * 镇内切石机是否自动从镇库存补料（v0.17 石匠线，2026-11-25 用户拍板开）。
+     *
+     * <p>关掉就退回纯原版行为：玩家必须自己把通货从箱子掏出来带在身上切。
+     * 留这个开关是因为它动的是<b>原版菜单</b>（mixin），万一某个整合包里
+     * 与别的切石机 mod 撞了，玩家/服主能一键关掉而不必卸 mod。
+     */
+    public static final ModConfigSpec.BooleanValue SALVAGE_STONECUTTER_AUTOFEED = BUILDER
+            .comment("镇内切石机是否自动从镇登记容器的库存里补料（关闭=纯原版行为，需自己带货）",
+                    "Whether stonecutters inside a town auto-draw material from the town's registered containers")
+            .define("salvage.stonecutterAutoFeed", true);
+
     /** 炼金每一步涨多少经验（决策 #33 及其修订 2026-11-07：按生产链长结算——
      *  地狱疣/中间底药/主料/红石荧石/火药/龙息各算一步，收瓶入库时
      *  按 步数×每步经验 一次结清；步是整批劳动，不乘瓶数）。

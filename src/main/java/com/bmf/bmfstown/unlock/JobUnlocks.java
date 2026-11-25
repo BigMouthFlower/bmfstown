@@ -50,6 +50,7 @@ public final class JobUnlocks {
                 || type == ProfessionType.ALCHEMIST
                 || type == ProfessionType.FIREWORKSMAN
                 || type == ProfessionType.TAVERNKEEP
+                || type == ProfessionType.STONEMASON
                 || (townId != null && UnlockState.get(level).isUnlocked(townId, idOf(type)));
     }
 
@@ -65,6 +66,7 @@ public final class JobUnlocks {
                     || type == ProfessionType.ALCHEMIST
                     || type == ProfessionType.FIREWORKSMAN
                     || type == ProfessionType.TAVERNKEEP
+                    || type == ProfessionType.STONEMASON
                     || unlocked.test(type)) {
                 out.add(type);
             }

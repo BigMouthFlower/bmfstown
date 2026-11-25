@@ -623,6 +623,10 @@ public class Resident extends PathfinderMob {
         // ---- 酒保采集入库（v0.16 酒馆第一步：TAVERN 区内奶/蜜→库存容器，
         //      见 TavernkeepGoal 与决策 #63） ----
         this.goalSelector.addGoal(4, new TavernkeepGoal(this));
+        // ---- 石匠拆解建材（v0.17：登记容器里的旧建材 → 石材/木材/碎沙，
+        //      在**切石机岗位**上工作，见 StonemasonGoal 与 material/SalvageRecipes） ----
+        this.stonemasonGoal = new StonemasonGoal(this);
+        this.goalSelector.addGoal(4, this.stonemasonGoal);
         // ---- 收尾归还待办（#72：stop() 理货够不着容器时挂待还任务，
         //      这里走去最近能收的登记容器再还+开箱表演。优先级 3：
         //      压过工作(4)与闲暇(5)、让位开门/逃跑(2)——还完货再干别的） ----
@@ -1115,16 +1119,30 @@ public class Resident extends PathfinderMob {
     /** 烟火工匠 Goal 引用（v0.13；面板状态显示用）。 */
     @Nullable
     private FireworksmanGoal fireworksGoal;
+    /** 石匠 Goal 引用（v0.17；面板状态显示用）。 */
+    @Nullable
+    private StonemasonGoal stonemasonGoal;
+
+    /**
+     * 石匠 Goal（<b>仅 GameTest 观测</b>用，坑 65 的刷物品窗口需要精确打断）。
+     * 业务代码请走 {@link #runningWorkGoal()} 这类封装，别直接动 Goal 内部。
+     */
+    @Nullable
+    public StonemasonGoal stonemasonGoalForTest() {
+        return this.stonemasonGoal;
+    }
 
     /**
      * 当前职业的工作 Goal（面板状态打包用）：
-     * 工人查 WorkerGoal、烟火工匠查 FireworksmanGoal，其余职业无定点加工 Goal。
+     * 工人查 WorkerGoal、烟火工匠查 FireworksmanGoal、石匠查 StonemasonGoal，
+     * 其余职业无定点加工 Goal。
      */
     @Nullable
     private Goal runningWorkGoal() {
         return switch (this.getProfession()) {
             case WORKER -> this.workerGoal;
             case FIREWORKSMAN -> this.fireworksGoal;
+            case STONEMASON -> this.stonemasonGoal;
             default -> null;
         };
     }
@@ -1134,6 +1152,7 @@ public class Resident extends PathfinderMob {
         return switch (this.runningWorkGoal()) {
             case WorkerGoal g -> g.isRunningGoal();
             case FireworksmanGoal g -> g.isRunningGoal();
+            case StonemasonGoal g -> g.isRunningGoal();
             case null, default -> false;
         };
     }
@@ -1143,6 +1162,7 @@ public class Resident extends PathfinderMob {
         return switch (this.runningWorkGoal()) {
             case WorkerGoal g -> g.isRunningGoal() ? g.phaseOrdinal() : -1;
             case FireworksmanGoal g -> g.isRunningGoal() ? g.phaseOrdinal() : -1;
+            case StonemasonGoal g -> g.isRunningGoal() ? g.phaseOrdinal() : -1;
             case null, default -> -1;
         };
     }
@@ -1152,6 +1172,7 @@ public class Resident extends PathfinderMob {
         return switch (this.runningWorkGoal()) {
             case WorkerGoal g -> g.hasClaim();
             case FireworksmanGoal g -> g.hasClaim();
+            case StonemasonGoal g -> g.hasClaim();
             case null, default -> false;
         };
     }

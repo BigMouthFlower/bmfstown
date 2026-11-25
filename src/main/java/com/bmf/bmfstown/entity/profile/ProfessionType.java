@@ -76,7 +76,28 @@ public enum ProfessionType implements StringRepresentable {
      * 产物（奶桶/蜂蜜瓶）存进区内库存容器；空桶/空瓶也从库存容器取（缺工具=
      * #62 缺料待工语义：收工闲逛，补货自动复工）。饮品消费/秘传解锁是后续步骤。
      */
-    TAVERNKEEP("tavernkeeper", "酒保", 10);
+    TAVERNKEEP("tavernkeeper", "酒保", 10),
+
+    /**
+     * 石匠（v0.17，2026-11-25 用户立项）：把登记容器里的旧建材拆成
+     * 石材 / 木材 / 碎沙三种通货，在<b>切石机岗位</b>上砸，成品存回登记容器。
+     *
+     * <p><b>为什么用切石机当岗位</b>（决策 #125，推翻 #124 的"不占岗位池"）：
+     * 最初的推理只考虑了"需不需要设备"——拆东西拿锤子砸就行，于是直接对着
+     * 登记容器干活。结果是没有岗位就没有"必须到某处干活"的约束，石匠可以
+     * 原地隔空拆全镇的箱子，既不真实也不像上班（用户实机验收当场指出）。
+     * 现在切石机登记进 {@code stations}（与工作台同池，按方块类型分流认领，
+     * 一机一人）：流程变成<b>走向切石机 → 扫描箱子 → 取料 → 走回切石机 → 砸
+     * → 入库 → 回岗</b>，距离成了真实成本。
+     *
+     * <p><b>为什么是切石机而不是工作台</b>：工作台已被工人与烟火工匠共池，
+     * 石匠挤进去会三方抢桌；而且切石机是他产出的直接下游，语义与视觉都对得上。
+     *
+     * <p>兑换率见 {@code material.SalvageRecipes}——那份表是从原版切石/合成
+     * 配方反推的，天然守恒：玩家把料切成台阶再拆回来不会多出材料，
+     * 石匠的价值是"花时间把形态换回来"，不是"凭空造料"。
+     */
+    STONEMASON("stonemason", "石匠", 10);
 
     private final String name;
     private final String zhName;
@@ -126,6 +147,7 @@ public enum ProfessionType implements StringRepresentable {
             case ALCHEMIST -> SkillType.CRAFTING;
             case FIREWORKSMAN -> SkillType.CRAFTING;
             case TAVERNKEEP -> SkillType.COOKING; // #112：酒+肉干都是饮食产出，原 GATHERING 是无来源占位
+            case STONEMASON -> SkillType.CRAFTING; // v0.17：拆解算合成手艺（与工人/烟火同线）
             default -> null;
         };
     }

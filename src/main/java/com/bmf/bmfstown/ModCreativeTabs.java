@@ -35,6 +35,10 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.WRITING_BOOK.get());
                         output.accept(ModItems.FINISHED_BOOK.get());
                         output.accept(ModItems.RESIDENT_SPAWN_EGG.get());
+                        // 建材通货（v0.17 石匠线）：石匠拆解产物 / 切石机原料
+                        output.accept(ModItems.MATERIAL_STONE.get());
+                        output.accept(ModItems.MATERIAL_WOOD.get());
+                        output.accept(ModItems.MATERIAL_SAND.get());
                     })
                     .build());
 

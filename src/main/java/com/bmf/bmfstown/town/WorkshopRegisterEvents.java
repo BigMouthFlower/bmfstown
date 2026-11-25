@@ -197,8 +197,11 @@ public final class WorkshopRegisterEvents {
                 && state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED);
     }
 
-    /** 岗位登记/取消，按方块类型分流（v0.12 炼金扩展）：工作台 → 工人/烟火商岗位池，
-     * 酿造台 → 炼金术士岗位池。命中返回 true。
+    /**
+     * 岗位登记/取消，按方块类型分流（v0.12 炼金扩展 + v0.17 石匠）：
+     * 工作台 → 工人/烟火商岗位池，酿造台 → 炼金术士岗位池，
+     * <b>切石机 → 石匠岗位池</b>（与工作台共用 {@code stations}，靠方块类型区分认领）。
+     * 命中返回 true。
      */
     private static boolean toggleStation(ServerPlayer player,
             Town.WorkshopRegister register, BlockPos pos, BlockState state) {
@@ -210,6 +213,18 @@ public final class WorkshopRegisterEvents {
                 register.stations.add(pos.asLong());
                 player.displayClientMessage(Component.translatable(
                         "msg.bmfstown.register.station_on", pos.toShortString()), true);
+            }
+            return true;
+        }
+        // 石匠的岗位（v0.17）：切石机，与工作台同池不同判定
+        if (state.is(Blocks.STONECUTTER)) {
+            if (register.stations.remove(pos.asLong())) {
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.register.stonecutter_off", pos.toShortString()), true);
+            } else {
+                register.stations.add(pos.asLong());
+                player.displayClientMessage(Component.translatable(
+                        "msg.bmfstown.register.stonecutter_on", pos.toShortString()), true);
             }
             return true;
         }

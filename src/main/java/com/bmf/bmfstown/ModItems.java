@@ -108,6 +108,42 @@ public final class ModItems {
                     props -> new com.bmf.bmfstown.book.FinishedBookItem(props),
                     new Item.Properties().stacksTo(1));
 
+    // ==========================================================
+    //  建材通货（v0.17 石匠线）
+    // ==========================================================
+
+    /**
+     * 石材（石料通货）。
+     *
+     * <p>为什么用"通货"而不是"一种石头"：它是石匠的把旧石材拆解后的产物，
+     * 也是切石机做新建材的原料。它<b>不代表某一种具体方块</b>——
+     * 花岗岩、深板岩、凝灰岩拆出来都是它，做出去可以是任何石类建材。
+     * 语义上更接近"料"而不是"物"，所以不参与任何普通合成配方。
+     *
+     * <p>堆叠上限 64，与普通建材一致。
+     */
+    public static final DeferredItem<Item> MATERIAL_STONE =
+            ITEMS.registerSimpleItem("material_stone", new Item.Properties());
+
+    /**
+     * 木材（木料通货）。语义同 {@link #MATERIAL_STONE}：各树种拆出来都是它，
+     * 做出去可以是任何木类建材。基准 = 1 原木拆 4 份。
+     */
+    public static final DeferredItem<Item> MATERIAL_WOOD =
+            ITEMS.registerSimpleItem("material_wood", new Item.Properties());
+
+    /**
+     * 碎沙（沙料通货）。
+     *
+     * <p>为什么沙子要单独一组：砂岩的原版来源是<b>沙子</b>（4 沙 → 1 砂岩），
+     * 如果把砂岩拆成"石材"，等于让玩家拿可再生的沙子换不可再生的石头，
+     * 直接击穿平衡（2026-11-25 用户拍板）。所以沙系自成一组，与石材不通。
+     *
+     * <p>基准 = 1 份碎沙 ≈ 1 份沙子，可烧玻璃、可合砂岩。
+     */
+    public static final DeferredItem<Item> MATERIAL_SAND =
+            ITEMS.registerSimpleItem("material_sand", new Item.Properties());
+
     private ModItems() {
     }
 

@@ -179,16 +179,25 @@ public final class WorkshopRegisterClient {
     }
 
     /**
-     * 准星方块可否登记：容器（任意 Container 方块实体）、工作台/酿造台、
-     * 水源站三形态（含水炼药锅/水源/含水方块）。返回对应的标识色；
-     * 不可登记返回 null（不画候选框）。
+     * 准星候选的方块类别（登记标识色）；不是可登记方块返回 null（不画候选框）。
+     *
+     * <p>可登记的三类：容器（任意 Container 方块实体）、岗位（工作台 / 酿造台 /
+     * <b>切石机</b>）、水源站三形态（含水炼药锅 / 水源 / 含水方块）。
+     *
+     * <p>判定顺序即优先级（2026-11-06 踩过：酿造台是 Container，容器判定在前会把它染成黄色）：
+     * <ol>
+     *   <li>岗位类：工作台 / 酿造台 / <b>切石机</b>（v0.17 石匠）→ 岗位紫；</li>
+     *   <li>容器；</li>
+     *   <li>水源站。</li>
+     * </ol>
      */
     @Nullable
     private static float[] candidateKind(Minecraft mc, BlockPos pos) {
         BlockState state = mc.level.getBlockState(pos);
         // 岗位判定在前：酿造台本身是 Container，先判容器会把它染成容器黄
         if (state.is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE)
-                || state.is(net.minecraft.world.level.block.Blocks.BREWING_STAND)) {
+                || state.is(net.minecraft.world.level.block.Blocks.BREWING_STAND)
+                || state.is(net.minecraft.world.level.block.Blocks.STONECUTTER)) {
             return COLOR_STATION;
         }
         // 容器判定在水源之前：箱子也能被含水（waterlogged chest），

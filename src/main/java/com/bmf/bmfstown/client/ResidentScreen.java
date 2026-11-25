@@ -2437,6 +2437,22 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             drawCenteredInPanel(gfx,
                     I18n.get("gui.bmfstown.resident.work.alch_order_line", alchOrderTxt),
                     5, bw, perkAreaTop() - 10, 0x9E9E9E);
+        } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.STONEMASON) {
+            // 石匠（v0.17）：岗位=切石机（手册登记），无需订单——见什么拆什么。
+            // 2026-11-25 用户点名："这句话删掉就行"——岗位那一行提示（没有空闲
+            // 切石机 → 去手册登记）属于一次性引导，摆在常驻面板上是噪音。
+            // 现在只留"拆解建材"标题行 + 阶段行，找不到岗位时状态行会显示
+            // ws_unbound（"还没找到空闲岗位"），信息不丢但不占两行。
+            drawCenteredInPanel(gfx, I18n.get("gui.bmfstown.resident.work.stone_salvage_label"),
+                    5, bw, followY + 3, 0xE0E0E0);
+            int stonePhase = resident.workerPhaseSynced();
+            String stoneLine = resident.workerClaimedSynced()
+                    ? I18n.get("gui.bmfstown.resident.work.ws_bound")
+                    : I18n.get("gui.bmfstown.resident.work.ws_unbound");
+            if (stonePhase >= 0) {
+                stoneLine += " · " + I18n.get("gui.bmfstown.resident.work.wsphase." + stonePhase);
+            }
+            drawCenteredInPanel(gfx, stoneLine, 5, bw, perkAreaTop() - 10, 0x9E9E9E);
         } else if (current == com.bmf.bmfstown.entity.profile.ProfessionType.FIREWORKSMAN) {
             // 烟火工匠（v0.13）：开工开关 + 星配置器入口（与工人共池工作台自动认领）
             boolean enabled = resident.workerEnabledSynced();
