@@ -89,13 +89,28 @@ public class FinishedBookItem extends Item {
         }
     }
 
-    /** 解锁书书名：恐怖分卷 = 故事总名+卷号；其余查登记表 lang。 */
+    /**
+     * 解锁书书名：恐怖分卷 = 故事总名+卷号；其余查登记表 lang。
+     *
+     * <p><b>卷号是数据，不是逻辑</b>（2026-11-26 用户拍板）：某一格若在 lang 里
+     * 声明了 {@code book.bmfstown.horror.<线>.ch<i>.untitled}，该卷物品名就
+     * <b>不带卷号</b>，只用它的值当名字。代码这里不判断"哪一格是特殊的"——
+     * 它只知道"这一格有没有自己的名字"。机制侧完全不知道这回事：它仍是这条线
+     * 的第 i 格，推进/配额/解锁/应验全按格数走，只有印在物品上那行字变了。
+     */
     private static MutableComponent unlockTitle(String unlockId) {
         if (isHorrorVolume(unlockId)) {
-            return Component.translatable("book.bmfstown.horror." + horrorLine(unlockId) + ".name")
+            String line = horrorLine(unlockId);
+            int chapter = horrorChapter(unlockId);
+            String ownName = "book.bmfstown.horror." + line + ".ch" + chapter + ".untitled";
+            var language = net.minecraft.locale.Language.getInstance();
+            if (language.has(ownName)) {
+                // 该格自带名字（含不带卷号这种情形）：直接用它，不追加卷号
+                return Component.translatable(ownName);
+            }
+            return Component.translatable("book.bmfstown.horror." + line + ".name")
                     .append(" ")
-                    .append(Component.translatable("book.bmfstown.horror.volume",
-                            horrorChapter(unlockId)));
+                    .append(Component.translatable("book.bmfstown.horror.volume", chapter));
         }
         return Component.translatable("book.bmfstown.special." + unlockId + ".name");
     }

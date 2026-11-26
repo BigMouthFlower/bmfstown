@@ -6,17 +6,17 @@ import java.util.List;
 /**
  * 恐怖故事线登记表（决策 #54/#57 恐怖探索线）。
  *
- * <p><b>内容纪律</b>：正式故事线（标题/正文/解锁物/应验效果）全部
- * <b>留空等用户定稿</b>——这里只登记机制验证用的<b>测试线</b>（同
- * 《试炼之卷》先例，lang 键里明确标注测试占位）。用户定稿后往
- * {@link #LINES} 加条目 + 往 lang 填文本即可，机制零改动。
+ * <p><b>内容纪律</b>：这里只有<b>用户已定稿</b>的故事。加一条新故事 =
+ * 往 {@link #LINES} 加一个条目 + 往 lang 填文本，机制零改动。
  *
  * <h2>一条故事线的数据形状</h2>
  * <ul>
  *   <li>id：登记键（lang/公告/解锁 id 共用的路由名）；</li>
  *   <li><b>章数按线声明</b>（{@code chapters}）：第 i 格正文在 lang 键
  *       {@code book.bmfstown.horror.<id>.ch<i>}，总名在
- *       {@code book.bmfstown.horror.<id>.name}；</li>
+ *       {@code book.bmfstown.horror.<id>.name}；
+ *       <b>注意 {@code chapters} 数的是"推进几格"，不是"故事几卷"</b>
+ *       ——两者可以不等（见 {@link #LINES} 的《雾中人》）；</li>
  *   <li><b>应验效果按线声明</b>（{@code effectId}）：解锁后若干日内应验时
  *       由 {@link VerificationEffects} 按 id 查执行器——故事线只管"我要哪种
  *       应验"，不写代码；空串 = 只发公告、无异象（当前的默认行为）；</li>
@@ -85,14 +85,47 @@ public final class HorrorLines {
     /**
      * 正式登记表。
      *
-     * <p><b>内容纪律</b>：这里只有<b>用户已定稿</b>的故事。《岩石之令》正文在
-     * lang（{@code book.bmfstown.horror.rocks_order.ch1~ch9}）；章数=9
-     * （2026-11-25 用户拍板"故事完整最好，不强行凑十格"；当晚换成重写版
-     * 九卷全文，见 {@code .ai/designs/horror_story_yanshi.md}）；应验挂
-     * {@link ExileEffect#ID}（流放地）。
+     * <p><b>内容纪律</b>：这里只有<b>用户已定稿</b>的故事。
+     * <ul>
+     *   <li>《岩石之令》— 9 卷，应验挂 {@link ExileEffect#ID}（流放地）。
+     *       正文在 lang {@code book.bmfstown.horror.rocks_order.ch1~ch9}；
+     *       见 {@code .ai/designs/horror_story_yanshi.md}。</li>
+     *   <li>《雾中人》— 正文 6 卷，但<b>登记 7 格</b>：第 5 格是"陌生打断"
+     *       （HIM 的 {@code Stop.}），机制上它就是一格，与故事卷数无关。
+     *       该格物品名不带卷号、正文的暗红/银河字母，全部由 lang 决定
+     *       （见 {@code FinishedBookItem.unlockTitle}）；
+     *       应验效果留空 = 只发公告。见 {@code .ai/designs/horror_story_man_in_fog.md}。</li>
+     *   <li>《小屋》— 5 卷对 5 格，<b>没有</b>"卷数≠格数"的特殊处理，也没有
+     *       {@code .untitled} 卷：5 本都规规矩矩带卷号。它和前两条的差别在
+     *       正文写法上——全篇没有怪物、没有声音、没有动作，只描述一间房子。
+     *       应验效果暂留空（真实木屋方案见 {@code .ai/designs/horror_story_woodcutter_hut.md}）。</li>
+     *   <li>《发光地衣》— 6 卷对 6 格。全条线唯一"全镇覆灭"：地衣从井台长到
+     *       街道、牲口、人身上。执笔人是<b>外来者</b>（第四卷写"镇上的人"而非
+     *       "我们"），不用改字就成立。应验留空——<b>红线：绝不能真杀镇民或
+     *       往玩家建筑上糊地衣</b>，镇子是玩家一块砖搭的，毁掉是冒犯不是恐怖。
+     *       见 {@code .ai/designs/horror_story_glow_lichen.md}。</li>
+     *   <li>《日食》— 6 卷对 6 格。五条线里唯一<b>"物证归零"</b>：日食结束后
+     *       火把重燃、水车重转、零改变，所以<b>手记本身是唯一物证</b>。
+     *       应验留空不只是"没做"——原版无天空变暗接口（{@code setDayTime} 只让
+     *       太阳消失、不会缺角；切雷暴则六项现象全反），真做要动客户端渲染；
+     *       更关键是<b>不该做</b>：真黑一次就给了玩家"能再看一次"的东西，
+     *       "物证归零"的内核被自己破坏。见 {@code .ai/designs/horror_story_eclipse.md}。</li>
+     * </ul>
+     *
+     * <p><b>volume ≠ chapter</b>：`chapters` 数的是"推进几格"，不是"故事几卷"。
+     * 两者不一致是合法且有意的（《雾中人》6 卷 7 格）。
      */
     private static final List<HorrorLine> LINES = new ArrayList<>(List.of(
-            new HorrorLine("rocks_order", 9, ExileEffect.ID)));
+            new HorrorLine("rocks_order", 9, ExileEffect.ID),
+            // 6 卷正文 + 1 页无卷号的打断 = 7 格。别把它"对齐"成 6：
+            // 那会让第 5 格的正文永远抽不到，第 7 卷变成没正文的空壳。
+            new HorrorLine("man_in_fog", 7, ""),
+            // 5 卷 5 格，最规整的一条：没有自带名字的卷，五本都带卷号。
+            new HorrorLine("woodcutter_hut", 5, ""),
+            // 6 卷 6 格。红线：应验绝不能真杀镇民/糊墙（镇子是玩家搭的）。
+            new HorrorLine("glow_lichen", 6, ""),
+            // 6 卷 6 格。应验留空是"不该做"不是"没做"：真黑一次就毁了"物证归零"。
+            new HorrorLine("eclipse", 6, "")));
 
     /** 全部已登记故事线（只读视图）。 */
     public static List<HorrorLine> all() {

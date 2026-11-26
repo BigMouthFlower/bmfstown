@@ -138,6 +138,90 @@ public final class WanderEvents {
         horrorEvent(resident, level, townId, level.getRandom());
     }
 
+    // ==========================================================
+    //  调试台阶（/bmfstown horror step|verify|reset 走这里）
+    // ==========================================================
+
+    /**
+     * 调试：逐格推进一次，<b>只跳过"每镇每日 1 格"配额</b>。
+     *
+     * <p>表现三出口、解锁登记、应验掷日、写书寻架全部走生产同一条路
+     * （{@link #publishHorrorEvent}），差别只有配额那一道闸。
+     *
+     * @param lineId 指定故事线 id；null = 按生产口径随机抽线
+     * @return 推进结果；null = 没推进（配额外的每种落空都在 {@link #debugStepReason} 里说清楚）
+     */
+    @Nullable
+    public static HorrorLineState.Advance debugStep(
+            com.bmf.bmfstown.entity.Resident resident, ServerLevel level, @Nullable String lineId) {
+        UUID townId = resident.getIdentity().townId();
+        if (townId == null) {
+            return null;
+        }
+        HorrorLineState state = HorrorLineState.get(level);
+        HorrorLineState.Advance advance = lineId == null
+                ? state.advanceIgnoringDailyCap(level, townId, level.getRandom())
+                : state.advanceLineIgnoringDailyCap(level, townId, lineId, level.getRandom());
+        if (advance == null) {
+            return null;
+        }
+        publishHorrorEvent(resident, level, townId, advance);
+        return advance;
+    }
+
+    /**
+     * 调试：为什么没推进（只读诊断，给命令回显用）。
+     *
+     * <p>不推进的三种成因要分开说，否则"命令没反应"会被误当成 bug：
+     * 线 id 不存在 / 被另一条线锁着 / 该线已写齐。
+     */
+    @Nullable
+    public static String debugStepBlocker(HorrorLineState state, ServerLevel level,
+                                          UUID townId, @Nullable String lineId) {
+        if (lineId == null) {
+            return null;
+        }
+        if (HorrorLines.byId(lineId) == null) {
+            return "没有登记这条故事线：" + lineId
+                    + "（已登记：" + HorrorLines.all().stream()
+                            .map(HorrorLines.HorrorLine::id).toList() + "）";
+        }
+        String locked = state.lockedLineOf(townId);
+        if (locked != null && !locked.equals(lineId)) {
+            return "当前锁着另一条线 " + locked + "（第 " + state.progressOf(townId)
+                    + " 格）。单线锁定是规则不是节奏，不插队；"
+                    + "先把它推完，或 reset 后重来";
+        }
+        if (state.unlockedOf(townId).contains(lineId)) {
+            return lineId + " 已写齐解锁，不再推进。要再验一遍先 reset";
+        }
+        return null;
+    }
+
+    /**
+     * 调试：把某条线的应验日拉到今天，然后立刻走<b>生产那条</b>应验派发
+     * （公告 + 气泡 + 效果注册表），一次到位。
+     *
+     * @return 实际应验的线（没在等应验的线不会出现在结果里）
+     */
+    public static List<HorrorLines.HorrorLine> debugVerifyNow(
+            com.bmf.bmfstown.entity.Resident resident, ServerLevel level, @Nullable String lineId) {
+        UUID townId = resident.getIdentity().townId();
+        if (townId == null) {
+            return List.of();
+        }
+        HorrorLineState state = HorrorLineState.get(level);
+        if (lineId != null) {
+            state.dueNow(level, townId, lineId);
+        }
+        return pollVerificationsAndReport(resident, level, townId);
+    }
+
+    /** 调试：清空本镇推进状态。 */
+    public static void debugReset(ServerLevel level, UUID townId) {
+        HorrorLineState.get(level).resetTown(townId);
+    }
+
     private static void horrorEvent(com.bmf.bmfstown.entity.Resident resident, ServerLevel level,
                                     UUID townId, RandomSource random) {
         HorrorLineState state = HorrorLineState.get(level);
@@ -145,7 +229,19 @@ public final class WanderEvents {
         if (advance == null) {
             return; // 每日配额/无可抽线：这次事件落空（公告也不发——没发现就没故事）
         }
+        publishHorrorEvent(resident, level, townId, advance);
+    }
 
+    /**
+     * 一次推进的全部表现（三出口 + 解锁登记）。
+     *
+     * <p>生产（{@link #horrorEvent}）与调试（{@link #debugStep}）共用这一处——
+     * 这样"命令推出来的那本书"和"闲逛推出来的那本书"必然一致。任何在这
+     * 里加的表现（比如以后要加音效）两条路自动都有。
+     */
+    private static void publishHorrorEvent(com.bmf.bmfstown.entity.Resident resident,
+                                           ServerLevel level, UUID townId,
+                                           HorrorLineState.Advance advance) {
         String residentName = resident.getName().getString();
         TownBulletinData.get(level).post(level, townId, new TownBulletinData.Entry(
                 level.getDayTime() / 24000L, !level.isDay(),
@@ -256,8 +352,19 @@ public final class WanderEvents {
      */
     private static void pollVerifications(com.bmf.bmfstown.entity.Resident resident,
                                           ServerLevel level, UUID townId) {
-        for (HorrorLines.HorrorLine line : HorrorLineState.get(level)
-                .pollVerifications(level, townId)) {
+        pollVerificationsAndReport(resident, level, townId);
+    }
+
+    /**
+     * 应验派发的唯一实现：登记应验 + 公告 + 气泡 + 按线声明的效果。
+     *
+     * @return 这次真正应验的线（调试命令要回显，生产路径丢弃返回值）
+     */
+    private static List<HorrorLines.HorrorLine> pollVerificationsAndReport(
+            com.bmf.bmfstown.entity.Resident resident, ServerLevel level, UUID townId) {
+        List<HorrorLines.HorrorLine> due = HorrorLineState.get(level)
+                .pollVerifications(level, townId);
+        for (HorrorLines.HorrorLine line : due) {
             TownBulletinData.get(level).post(level, townId, new TownBulletinData.Entry(
                     level.getDayTime() / 24000L, !level.isDay(),
                     TownBulletinData.KIND_VERIFY, resident.getName().getString(),
@@ -267,6 +374,7 @@ public final class WanderEvents {
             // 按线声明的效果 id 挂异象（空 = 只发公告；未登记 = 只 warn）
             VerificationEffects.run(line.effectId(), level, townId, resident);
         }
+        return due;
     }
 
     private WanderEvents() {

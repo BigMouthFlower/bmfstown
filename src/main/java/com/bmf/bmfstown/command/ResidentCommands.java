@@ -39,6 +39,19 @@ import java.util.Collection;
  */
 public final class ResidentCommands {
 
+    /**
+     * 故事线 id 的补全源（按登记表实时取，新故事上线自动出现）。
+     *
+     * <p>写成静态常量而不是每个命令内联 lambda：登记表里现在是两条线、
+     * 以后会更多，而 debug 子命令有四个位置要补全——copy 四份迟早漏一个。
+     */
+    private static final com.mojang.brigadier.suggestion.SuggestionProvider<
+            CommandSourceStack> HORROR_LINES_SUGGEST = (ctx, builder) ->
+            SharedSuggestionProvider.suggest(
+                    com.bmf.bmfstown.eerie.HorrorLines.all().stream()
+                            .map(com.bmf.bmfstown.eerie.HorrorLines.HorrorLine::id).toList(),
+                    builder);
+
     private ResidentCommands() {
     }
 
@@ -220,13 +233,30 @@ public final class ResidentCommands {
                                         StringArgumentType.getString(ctx, "id"))))));
         // ---- /bmfstown horror：恐怖线进度（只读，2026-11-25 决策 #129）----
         // 验收用：一条命令看清"锁了哪条线/写到第几格/解锁没/哪天应验"。
-        // 只读，不改状态——不做推线命令（推线会绕过每日配额与锁线规则，
-        // 测出来的状态不是线上会发生的状态）。
         root.then(Commands.literal("horror")
                 .executes(ctx -> showHorror(ctx.getSource(), null))
                 .then(Commands.argument("城镇", StringArgumentType.string())
                         .executes(ctx -> showHorror(ctx.getSource(),
-                                StringArgumentType.getString(ctx, "城镇")))));
+                                StringArgumentType.getString(ctx, "城镇"))))
+                // ---- /bmfstown horror debug ...：逐格推进 / 强制应验 / 重置 ----
+                // 2026-11-26 用户点名：线上被"闲逛 10% × 每日 1 格"两道闸按住，
+                // 逐本验收得挂机几十个游戏日。这里给一条推线通路，**只跳每日
+                // 配额**，单线锁定/按线章数/解锁/应验掷日全走生产同一份代码。
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("step")
+                                .executes(ctx -> horrorStep(ctx, null))
+                                .then(Commands.argument("线", StringArgumentType.word())
+                                        .suggests(HORROR_LINES_SUGGEST)
+                                        .executes(ctx -> horrorStep(ctx,
+                                                StringArgumentType.getString(ctx, "线")))))
+                        .then(Commands.literal("verify")
+                                .executes(ctx -> horrorVerify(ctx, null))
+                                .then(Commands.argument("线", StringArgumentType.word())
+                                        .suggests(HORROR_LINES_SUGGEST)
+                                        .executes(ctx -> horrorVerify(ctx,
+                                                StringArgumentType.getString(ctx, "线")))))
+                        .then(Commands.literal("reset")
+                                .executes(ResidentCommands::horrorReset))));
         root.then(Commands.literal("unlocks")
                 .executes(ctx -> doUnlocks(ctx.getSource(), null))
                 .then(Commands.argument("城镇", StringArgumentType.string())
@@ -967,7 +997,153 @@ public final class ResidentCommands {
                 "「" + town.name() + "」恐怖线：" + lineText
                         + " | 已解锁: " + (unlocked.isEmpty() ? "无" : String.join(",", unlocked))
                         + " | 已应验: " + (verified.isEmpty() ? "无" : String.join(",", verified))), false);
+        var pending = state.pendingVerifications(town.id());
+        if (!pending.isEmpty()) {
+            long today = level.getDayTime() / 24000L;
+            StringBuilder sb = new StringBuilder("等应验：");
+            pending.forEach((line, day) -> sb.append(line).append("（")
+                    .append(day <= today ? "今天" : "还有 " + (day - today) + " 个游戏日")
+                    .append("） "));
+            source.sendSuccess(() -> Component.literal(sb.toString().trim()), false);
+        }
         return 1;
+    }
+
+    // ==========================================================
+    //  恐怖线调试（/bmfstown horror debug step|verify|reset）
+    // ==========================================================
+
+    /**
+     * 调试：推进一格（指定线则锁这条线推进）。
+     *
+     * <p>发现者取<b>离执行者最近的镇民</b>——和 {@code /bmfstown say} 同口径。
+     * 手记要落到"发现者附近的登记图书馆书架"，所以必须有具体居民；用玩家
+     * 当发现者会让作者名变成玩家名，书架上那本书就假了。
+     */
+    private static int horrorStep(CommandContext<CommandSourceStack> ctx,
+                                  @javax.annotation.Nullable String lineId)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        CommandSourceStack source = ctx.getSource();
+        ServerLevel level = source.getLevel();
+        Resident finder = nearestResident(source);
+        if (finder == null) {
+            source.sendFailure(Component.literal("附近 32 格内没有镇民——推线需要一名居民当发现者"));
+            return 0;
+        }
+        var state = com.bmf.bmfstown.eerie.HorrorLineState.get(level);
+        java.util.UUID townId = finder.getIdentity().townId();
+        if (townId == null) {
+            source.sendFailure(Component.literal(
+                    finder.getName().getString() + " 不属于任何城镇，无法推进恐怖线"));
+            return 0;
+        }
+        // 先诊断，再动手：命令没反应必须说清是哪一条规则拦的
+        String blocker = com.bmf.bmfstown.eerie.WanderEvents
+                .debugStepBlocker(state, level, townId, lineId);
+        if (blocker != null) {
+            source.sendFailure(Component.literal(blocker));
+            return 0;
+        }
+        var advance = com.bmf.bmfstown.eerie.WanderEvents.debugStep(finder, level, lineId);
+        if (advance == null && lineId == null) {
+            source.sendFailure(Component.literal(
+                    "这次没抽到可推进的线（未解锁的线都写齐了）——可指定线名，或用 reset 重来"));
+            return 0;
+        }
+        if (advance == null) {
+            source.sendFailure(Component.literal("推进失败：" + lineId));
+            return 0;
+        }
+        int total = advance.line().chapters();
+        String tail = advance.unlockedNow()
+                ? "　★ 写齐解锁，应验日 " + advance.verifyDueDay() + "（用 horror debug verify 立刻触发）"
+                : "";
+        source.sendSuccess(() -> Component.literal(
+                "推进：" + advance.line().id() + " 第 " + advance.chapter() + "/" + total
+                        + " 格（发现者 " + finder.getName().getString() + "）" + tail), false);
+        return 1;
+    }
+
+    /**
+     * 调试：把某条线的应验拉到今天并立刻触发（公告 + 气泡 + 效果全走生产路径）。
+     *
+     * <p>不给线名 = 把所有在等应验的线一起触发。
+     */
+    private static int horrorVerify(CommandContext<CommandSourceStack> ctx,
+                                    @javax.annotation.Nullable String lineId)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        CommandSourceStack source = ctx.getSource();
+        ServerLevel level = source.getLevel();
+        Resident finder = nearestResident(source);
+        if (finder == null) {
+            source.sendFailure(Component.literal("附近 32 格内没有镇民——应验需要一名居民当报信人"));
+            return 0;
+        }
+        java.util.UUID townId = finder.getIdentity().townId();
+        if (townId == null) {
+            source.sendFailure(Component.literal(
+                    finder.getName().getString() + " 不属于任何城镇"));
+            return 0;
+        }
+        if (lineId != null && com.bmf.bmfstown.eerie.HorrorLines.byId(lineId) == null) {
+            source.sendFailure(Component.literal("没有登记这条故事线：" + lineId));
+            return 0;
+        }
+        var due = com.bmf.bmfstown.eerie.WanderEvents.debugVerifyNow(finder, level, lineId);
+        if (due.isEmpty()) {
+            String why = lineId == null
+                    ? "本镇没有任何线在等应验（先把某条线写齐）"
+                    : lineId + " 不在等应验：没写齐，或已经应验过了";
+            source.sendFailure(Component.literal(why));
+            return 0;
+        }
+        String names = String.join(",", due.stream()
+                .map(com.bmf.bmfstown.eerie.HorrorLines.HorrorLine::id).toList());
+        source.sendSuccess(() -> Component.literal(
+                "应验触发：" + names + "（效果按线声明的 effectId 执行，空 = 只发公告）"), false);
+        return due.size();
+    }
+
+    /** 调试：清空本镇恐怖线状态（锁线/格数/解锁/应验），公告栏保留。 */
+    private static int horrorReset(CommandContext<CommandSourceStack> ctx)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        CommandSourceStack source = ctx.getSource();
+        Resident finder = nearestResident(source);
+        if (finder == null) {
+            source.sendFailure(Component.literal("附近 32 格内没有镇民——按居民归属定位城镇"));
+            return 0;
+        }
+        java.util.UUID townId = finder.getIdentity().townId();
+        if (townId == null) {
+            source.sendFailure(Component.literal(
+                    finder.getName().getString() + " 不属于任何城镇"));
+            return 0;
+        }
+        com.bmf.bmfstown.eerie.WanderEvents.debugReset(source.getLevel(), townId);
+        source.sendSuccess(() -> Component.literal(
+                "本镇恐怖线状态已清空（公告栏保留；UnlockState 里的解锁 id 不撤回，"
+                        + "需要的话另用 /bmfstown lock horror_<线>）"), false);
+        return 1;
+    }
+
+    /** 离执行者最近的镇民（32 格）；没有返回 null。 */
+    @javax.annotation.Nullable
+    private static Resident nearestResident(CommandSourceStack source) {
+        Entity executor = source.getEntity();
+        if (executor == null) {
+            return null;
+        }
+        Resident nearest = null;
+        double best = Double.MAX_VALUE;
+        for (Resident resident : source.getLevel().getEntitiesOfClass(
+                Resident.class, executor.getBoundingBox().inflate(32.0D))) {
+            double d = resident.distanceToSqr(executor);
+            if (d < best) {
+                best = d;
+                nearest = resident;
+            }
+        }
+        return nearest;
     }
 
     /** 历法调试：报当前镇民历日期（年/月/日/月相）。 */

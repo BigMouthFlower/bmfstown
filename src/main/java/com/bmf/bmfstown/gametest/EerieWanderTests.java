@@ -219,6 +219,235 @@ public class EerieWanderTests {
         helper.succeed();
     }
 
+    /**
+     * "自带名字的卷"：声明了 {@code .untitled} 的格，物品名<b>不许</b>再拼卷号。
+     *
+     * <p>为什么值得单独立一条：这是唯一一处"印刷名与格数不一致"，而它一旦错了
+     * 不会有任何功能异常——只是那一本悄悄变回"·第5卷"，把整个设计意图抹掉，
+     * 而且没人会去看物品名才发现。所以用用例钉住：<b>有没有 .untitled 键</b>
+     * 与实际拼出来的名字必须一致。
+     *
+     * <p>反向验证过：把 ch5.untitled 删掉后本条会报"第5格没有自带名字却按
+     * 无卷号处理"一类的不一致（见 decisions #133）。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 100)
+    public static void ownNameVolumesPrintNoNumber(GameTestHelper helper) {
+        var zh = langOrNull("zh_cn");
+        var en = langOrNull("en_us");
+        if (zh == null || en == null) {
+            helper.fail("lang 文件读不到");
+        }
+        int ownNamed = 0;
+        for (HorrorLines.HorrorLine line : HorrorLines.all()) {
+            for (int ch = 1; ch <= line.chapters(); ch++) {
+                String key = line.chapterKey(ch) + ".untitled";
+                boolean hasOwnName = zh.has(key) || en.has(key);
+                if (!hasOwnName) {
+                    continue;
+                }
+                ownNamed++;
+                // 双语必须都声明（否则换语言后一本突然带上卷号，等于两本书）
+                if (!zh.has(key)) {
+                    helper.fail("zh_cn 缺 " + key + "：英文侧声明了自带名字，中文侧没有");
+                }
+                if (!en.has(key)) {
+                    helper.fail("en_us 缺 " + key + "：中文侧声明了自带名字，英文侧没有");
+                }
+                if (!hasText(zh, key)) {
+                    helper.fail(key + " 是空串：物品名会变成空白的书");
+                }
+            }
+        }
+        if (ownNamed == 0) {
+            helper.fail("一条自带名字的卷都没有：若《雾中人》已登记，说明 ch5.untitled 被误删了");
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 调试台阶：逐格推进<b>只跳过每日配额</b>，其余规则一条不少。
+     *
+     * <p>守两件事，缺一不可：
+     * <ol>
+     *   <li>同一天连推能推进（这是用户要的那条通路，否则验收还得挂机）；</li>
+     *   <li><b>生产路径同一天仍然只能推进一格</b>——如果哪天有人图省事把
+     *       {@code advance} 的配额判断顺手删了/改成条件恒假，这条会红。没有
+     *       第 2 点，第 1 点是"把闸拆了"，不是"开了个调试门"。</li>
+     * </ol>
+     *
+     * <p>反向验证过：把 {@code advance(…, false, null)} 里的
+     * {@code !ignoreDailyCap} 去掉（=生产也跳配额）→ 第 2 段报
+     * "同日第二次推进应被配额拦住，实际推进到第 2 格"。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void debugStepSkipsOnlyDailyCap(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        HorrorLineState state = HorrorLineState.get(level);
+        UUID townId = UUID.randomUUID();
+        var random = net.minecraft.util.RandomSource.create();
+        String id = "cap_probe";
+        var old = HorrorLines.swapForTest(
+                java.util.List.of(new HorrorLines.HorrorLine(id, 5)));
+        try {
+            gotoDay(level, 1);
+            // 生产口径：同一天只能 1 格
+            var p1 = state.advance(level, townId, random);
+            if (p1 == null || p1.chapter() != 1) {
+                helper.fail("生产首推应到第 1 格，实际 " + p1);
+            }
+            if (state.advance(level, townId, random) != null) {
+                helper.fail("生产路径同日第二次推进应被每日配额拦住"
+                        + "（若这里红了：配额判断被拆了，线上节奏会失控）");
+            }
+            // 调试口径：同一天可继续推
+            var d2 = state.advanceIgnoringDailyCap(level, townId, random);
+            if (d2 == null || d2.chapter() != 2) {
+                helper.fail("调试台阶同日应能推进到第 2 格，实际 " + d2);
+            }
+            // 而且不连带把"今天已推过"抹掉：之后生产口径仍然拦住
+            if (state.advance(level, townId, random) != null) {
+                helper.fail("调试推进后，生产口径在同一天仍应被拦住");
+            }
+        } finally {
+            HorrorLines.restoreAfterTest(old);
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 调试台阶：可以<b>点名</b>推进某条线（线上是等概率随机抽），
+     * 但<b>不许插队</b>别的线（单线锁定是规则不是节奏）。
+     *
+     * <p>反向验证过：把 {@code forcedLineId} 的插队判断删掉 → 本用例报
+     * "锁着 A 时点名 B 不该推进"。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void debugStepPicksNamedLineButNeverJumpsQueue(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        HorrorLineState state = HorrorLineState.get(level);
+        UUID townId = UUID.randomUUID();
+        var random = net.minecraft.util.RandomSource.create();
+        String a = "line_a";
+        String b = "line_b";
+        var old = HorrorLines.swapForTest(java.util.List.of(
+                new HorrorLines.HorrorLine(a, 3), new HorrorLines.HorrorLine(b, 3)));
+        try {
+            gotoDay(level, 1);
+            // 点名 B：应当锁上 B（线上随机，调试要能指定）
+            var first = state.advanceLineIgnoringDailyCap(level, townId, b, random);
+            if (first == null || !b.equals(first.line().id())) {
+                helper.fail("点名推进应落在 " + b + "，实际 " + first);
+            }
+            if (!b.equals(state.lockedLineOf(townId))) {
+                helper.fail("点名推进后应锁上 " + b + "，实际锁 " + state.lockedLineOf(townId));
+            }
+            // 锁着 B 时点名 A：必须拒绝（不抢锁）
+            if (state.advanceLineIgnoringDailyCap(level, townId, a, random) != null) {
+                helper.fail("锁着 " + b + " 时点名 " + a + " 不该推进（单线锁定是规则）");
+            }
+            // 不存在的线：null，不炸
+            if (state.advanceLineIgnoringDailyCap(level, townId, "no_such_line", random) != null) {
+                helper.fail("不存在的线 id 应返回 null");
+            }
+        } finally {
+            HorrorLines.restoreAfterTest(old);
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 调试台阶：写齐后能把应验拉到今天，并走<b>生产那条</b>应验派发
+     * （公告 + 气泡 + 效果注册表），不是调试自己另开一条路。
+     *
+     * <p>判据选"公告栏出现 KIND_VERIFY 一条"正是为了钉住这一点：公告只在
+     * {@code WanderEvents.pollVerificationsAndReport} 里发。如果哪天有人图省事
+     * 让调试命令直接调 {@code VerificationEffects.run}（跳过派发），本用例会红
+     * ——反向验证过。
+     */
+    @GameTest(template = "librarypracticetests.room9x4x9", timeoutTicks = 300)
+    public static void debugVerifyNowGoesThroughProductionDispatch(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        Scene scene = scene(helper, false); // 不需要书架：本用例只看派发
+        UUID townId = scene.town().id();
+        var finder = scene.resident();
+        String id = "verify_probe";
+        var old = HorrorLines.swapForTest(
+                java.util.List.of(new HorrorLines.HorrorLine(id, 2)));
+        try {
+            // 写齐 2 格（调试台阶，同一天连推）
+            gotoDay(level, 1);
+            if (WanderEvents.debugStep(finder, level, id) == null) {
+                helper.fail("第 1 格应能推进");
+            }
+            var last = WanderEvents.debugStep(finder, level, id);
+            if (last == null || !last.unlockedNow()) {
+                helper.fail("2 格线写齐应解锁，实际 " + last);
+            }
+            // 应验日还没到：poll 不出，公告栏也没有应验条
+            if (!HorrorLineState.get(level).pollVerifications(level, townId).isEmpty()) {
+                helper.fail("应验日未到不应应验");
+            }
+            // 拉到今天并触发：必须经生产派发
+            var due = WanderEvents.debugVerifyNow(finder, level, id);
+            if (due.size() != 1 || !id.equals(due.get(0).id())) {
+                helper.fail("应触发 " + id + "，实际 " + due);
+            }
+            boolean hasVerifyBulletin = false;
+            for (var entry : TownBulletinData.get(level).latest(townId, 20)) {
+                if (TownBulletinData.KIND_VERIFY.equals(entry.kind())) {
+                    hasVerifyBulletin = true;
+                }
+            }
+            if (!hasVerifyBulletin) {
+                helper.fail("应验必须经 WanderEvents 派发（公告栏应有一条 KIND_VERIFY）"
+                        + "——若这里红了：调试命令绕开了生产派发，验的不是线上那条路");
+            }
+            // 已应验的线再拉应是空（没有可拉的日期）
+            if (!WanderEvents.debugVerifyNow(finder, level, id).isEmpty()) {
+                helper.fail("已应验的线不该还能再应验");
+            }
+        } finally {
+            HorrorLines.restoreAfterTest(old);
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 调试台阶：reset 清空状态机，但<b>不动公告栏</b>（那是历史记录）。
+     *
+     * <p>反向验证过：让 {@code resetTown} 顺手清公告 → 本用例报
+     * "reset 不该抹掉公告栏"。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void debugResetClearsStateKeepsBulletin(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        HorrorLineState state = HorrorLineState.get(level);
+        UUID townId = UUID.randomUUID();
+        var random = net.minecraft.util.RandomSource.create();
+        String id = "reset_probe";
+        var old = HorrorLines.swapForTest(
+                java.util.List.of(new HorrorLines.HorrorLine(id, 3)));
+        try {
+            gotoDay(level, 1);
+            state.advanceIgnoringDailyCap(level, townId, random);
+            TownBulletinData.get(level).post(level, townId, new TownBulletinData.Entry(
+                    1L, false, TownBulletinData.KIND_SPOT, "测试居民", id, 1));
+            if (state.progressOf(townId) != 1) {
+                helper.fail("前置：应推到第 1 格");
+            }
+            state.resetTown(townId);
+            if (state.progressOf(townId) != 0 || state.lockedLineOf(townId) != null) {
+                helper.fail("reset 后不该还有锁线/进度");
+            }
+            if (TownBulletinData.get(level).latest(townId, 10).isEmpty()) {
+                helper.fail("reset 不该抹掉公告栏（那是历史记录）");
+            }
+        } finally {
+            HorrorLines.restoreAfterTest(old);
+        }
+        helper.succeed();
+    }
+
     /** 断言某个键在中英两份 lang 里都有非空文本。 */
     private static void assertLang(GameTestHelper helper, com.google.gson.JsonObject zh,
                                    com.google.gson.JsonObject en, String key, String what) {
@@ -230,9 +459,32 @@ public class EerieWanderTests {
         }
     }
 
+    /**
+     * 语言键是否有实际内容。
+     *
+     * <p>lang 的值有两种合法形态（坑71）：字符串，或<b>组件 JSON 数组</b>
+     * （带颜色/字体的那一页就是这么写的——原版 {@code Language.loadFromJson}
+     * 见到数组会按 {@code ComponentSerialization.CODEC} 解析成带样式组件）。
+     * 旧版本这里直接 {@code getAsString()}，遇到数组会抛
+     * {@code IllegalStateException}——用例不是报"缺键"，而是整条崩掉。
+     */
     private static boolean hasText(com.google.gson.JsonObject lang, String key) {
         var v = lang.get(key);
-        return v != null && !v.isJsonNull() && !v.getAsString().isEmpty();
+        if (v == null || v.isJsonNull()) {
+            return false;
+        }
+        if (v.isJsonArray()) {
+            // 组件数组：至少有一条的 text 是非空字符串
+            for (var e : v.getAsJsonArray()) {
+                if (e.isJsonObject() && e.getAsJsonObject().has("text")
+                        && !e.getAsJsonObject().get("text").isJsonNull()
+                        && !e.getAsJsonObject().get("text").getAsString().isEmpty()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return !v.getAsString().isEmpty();
     }
 
     /** 从 classpath 读语言文件（服务端 ResourceManager 只挂 data 包，读不到 assets/lang）。 */
