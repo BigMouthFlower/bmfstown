@@ -137,6 +137,12 @@ public final class PersonalityEventHandler {
         }
         // ---- 受害者是居民：广播给周围居民 ----
         if (event.getEntity() instanceof Resident victim) {
+            // 同镇零仇恨（2026-11-29 用户定稿，坑101）：自己人打自己人不许广播呼救，
+            // 否则 A 打 B → 周围 16 格全体助战 → 全镇混战。只挡"攻击者也是同镇居民"，
+            // 玩家与怪物的呼救行为完全不变。
+            if (victim.isAllyOf(attacker)) {
+                return;
+            }
             AABB box = victim.getBoundingBox().inflate(NOTICE_RADIUS);
             List<Resident> residents = event.getEntity().level().getEntitiesOfClass(Resident.class, box);
             for (Resident ally : residents) {

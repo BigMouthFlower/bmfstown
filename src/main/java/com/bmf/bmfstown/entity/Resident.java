@@ -2384,6 +2384,38 @@ public class Resident extends PathfinderMob {
         return town;
     }
 
+    /**
+     * 同镇判定（2026-11-29，决策 #151 / 坑101）：{@code a} 与 {@code b} 是否都属于同一个镇。
+     *
+     * <h2>为什么需要它</h2>
+     * 还手（{@code RetaliateGoal}）、呼救（{@code PersonalityEventHandler}）、
+     * 助战（{@code AssistGoal}）三处原本只排除玩家，没有"攻击者是不是自己人"这一条。
+     * 于是任何对同镇居民的伤害都会滚成一场全镇混战（坑101）——
+     * 比武就是第一条引信。
+     *
+     * <h2>判据为什么是 townId 而不是 boundTown()</h2>
+     * {@code boundTown()} 要求镇民<b>此刻站在自己镇的维度里</b>，否则返回 null。
+     * 用它判同镇会出现"两个人在别的维度打起来就不算同镇"这种荒谬结果——
+     * 关系是档案属性，不该随坐标变化。
+     * <b>两边都 null 不算同镇</b>：两个无归属的野人互砍还不还手，比现在还怪。
+     */
+    public static boolean isSameTown(@Nullable Resident a, @Nullable Resident b) {
+        if (a == null || b == null || a == b) {
+            return false;
+        }
+        UUID idA = a.identity.townId();
+        UUID idB = b.identity.townId();
+        return idA != null && idA.equals(idB);
+    }
+
+    /**
+     * 自己人判定（对任意攻击实体的版本）：攻击者是同镇居民 ⇒ true。
+     * 只认 {@link Resident}；玩家、怪物、"无主"攻击一律 false（保持原行为）。
+     */
+    public boolean isAllyOf(@Nullable net.minecraft.world.entity.Entity other) {
+        return other instanceof Resident otherResident && isSameTown(this, otherResident);
+    }
+
     // ==========================================================
     //  觅食（v0.6：就餐区箱子 → 背包）
     // ==========================================================

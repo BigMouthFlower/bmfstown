@@ -59,6 +59,9 @@ public final class CourageGoals {
             if (attacker instanceof Player) {
                 return false; // NPC 对玩家零仇恨（用户定稿）
             }
+            if (this.resident.isAllyOf(attacker)) {
+                return false; // 同镇零仇恨（2026-11-29 用户定稿，坑101）：战士也不还手自己人
+            }
             if (this.resident.isWarrior()) {
                 this.pending = attacker; // 战士保底自卫（含非敌对生物误伤）
                 return true;
@@ -216,6 +219,9 @@ public final class CourageGoals {
             }
             if (this.mob.getTarget() != null) {
                 return false; // 已经在打架：不中途换目标（锁敌稳定）
+            }
+            if (this.resident.isAllyOf(attacker)) {
+                return false; // 防御性兜底：呼救不广播同镇（坑101），这里再挡一次
             }
             return this.resident.isWarrior()
                     || this.resident.axisValue(PersonalityAxis.COURAGE)

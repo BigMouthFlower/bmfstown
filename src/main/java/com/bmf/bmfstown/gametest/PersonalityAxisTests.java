@@ -788,4 +788,127 @@ public class PersonalityAxisTests {
 
         c.throwIfAny(helper, "chronoWindowShift");
     }
+
+    // ==========================================================
+    //  十一、同镇零仇恨（2026-11-29 用户定稿，决策 #151 / 坑101）
+    // ==========================================================
+
+    /** 同镇判定本身：相同 townId 才算，双 null 不算，一边 null 不算。 */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 100)
+    public static void sameTownPredicate(GameTestHelper helper) {
+        Checks c = new Checks();
+        Resident a = spawnResident(helper, new BlockPos(1, 1, 1));
+        Resident b = spawnResident(helper, new BlockPos(3, 1, 1));
+        java.util.UUID townOne = java.util.UUID.randomUUID();
+        java.util.UUID townTwo = java.util.UUID.randomUUID();
+
+        c.eq(false, Resident.isSameTown(a, b), "两个无归属镇民不算同镇");
+        c.eq(false, a.isAllyOf(b), "无归属 → 不是自己人");
+
+        a.getIdentity().setTownId(townOne);
+        c.eq(false, Resident.isSameTown(a, b), "只有一边有归属不算同镇");
+        b.getIdentity().setTownId(townOne);
+        c.eq(true, Resident.isSameTown(a, b), "同 townId 算同镇");
+        c.eq(true, a.isAllyOf(b), "同镇 → 自己人（双向）");
+        c.eq(true, b.isAllyOf(a), "自己人判定对称");
+
+        b.getIdentity().setTownId(townTwo);
+        c.eq(false, Resident.isSameTown(a, b), "不同 townId 不算同镇");
+        c.eq(false, a.isAllyOf(b), "异镇不是自己人");
+
+        c.eq(false, Resident.isSameTown(a, a), "自己不与自己成对");
+        c.eq(false, Resident.isSameTown(a, null), "null 安全");
+        // 玩家/怪物不是居民 ⇒ 永远不是自己人（零仇恨铁律不动）
+        var zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(2, 1, 2));
+        zombie.setNoAi(true);
+        c.eq(false, a.isAllyOf(zombie), "怪物不是自己人");
+
+        c.throwIfAny(helper, "sameTownPredicate");
+    }
+
+    /**
+     * 还手：同镇攻击者不还手（战士也不还手），异镇/怪物照旧。
+     *
+     * <p>反向验证：删掉 {@code RetaliateGoal.canUse} 里的 {@code isAllyOf} 那一行，
+     * "战士被同镇人打不还手"必红。
+     */
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void sameTownNoRetaliate(GameTestHelper helper) {
+        Checks c = new Checks();
+        Resident a = spawnResident(helper, new BlockPos(2, 1, 2));
+        Resident b = spawnResident(helper, new BlockPos(4, 1, 2));
+        java.util.UUID townId = java.util.UUID.randomUUID();
+        a.getIdentity().setTownId(townId);
+        b.getIdentity().setTownId(townId);
+
+        var goal = new CourageGoals.RetaliateGoal(a);
+        a.getStatus().setAxis(PersonalityAxis.COURAGE, 100);
+        a.setLastHurtByMob(b);
+        c.eq(false, goal.canUse(), "非战士被同镇人打不还手（勇气满格也不还）");
+
+        a.getIdentity().setProfession(ProfessionType.WARRIOR);
+        a.syncClient();
+        c.eq(false, goal.canUse(), "战士被同镇人打也不还手（坑101 主缺口）");
+
+        // 异镇居民照旧还手（零仇恨只限自己人）
+        java.util.UUID otherTown = java.util.UUID.randomUUID();
+        b.getIdentity().setTownId(otherTown);
+        c.eq(true, goal.canUse(), "战士被异镇居民打仍还手");
+
+        // 无归属居民打有镇的人：不算同镇 ⇒ 还手（保持原行为）
+        b.getIdentity().setTownId(null);
+        c.eq(true, goal.canUse(), "战士被无归属野人打仍还手");
+
+        // 怪物照旧
+        var zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(6, 1, 2));
+        zombie.setNoAi(true);
+        a.setLastHurtByMob(zombie);
+        c.eq(true, goal.canUse(), "战士被怪打仍还手");
+
+        c.throwIfAny(helper, "sameTownNoRetaliate");
+    }
+
+    /**
+     * 呼救 + 助战：同镇人打人既不广播呼救，助战也不参战。
+     *
+     * <p>反向验证二选一：① 删 {@code PersonalityEventHandler.onResidentAttacked}
+     * 里的 {@code isAllyOf} 早退 ⇒ "同镇人不呼救"必红；
+     * ② 删 {@code AssistGoal.canUse} 里的 {@code isAllyOf} ⇒ "助战不参战"必红。
+     */
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
+    public static void sameTownNoAlarmAndNoAssist(GameTestHelper helper) {
+        Checks c = new Checks();
+        Resident victim = spawnResident(helper, new BlockPos(2, 1, 2));
+        Resident attacker = spawnResident(helper, new BlockPos(5, 1, 2));
+        Resident bystander = spawnResident(helper, new BlockPos(3, 1, 5));
+        java.util.UUID townId = java.util.UUID.randomUUID();
+        victim.getIdentity().setTownId(townId);
+        attacker.getIdentity().setTownId(townId);
+        bystander.getIdentity().setTownId(townId);
+        bystander.getStatus().setAxis(PersonalityAxis.COURAGE, 100); // 胆大，本该助战
+
+        ServerLevel level = helper.getLevel();
+        // 走真实伤害入口：hurt 内部会 post LivingIncomingDamageEvent
+        victim.hurt(level.damageSources().mobAttack(attacker), 1.0F);
+        c.isTrue(bystander.currentAlarm() == null, "同镇人袭击不广播呼救（坑101）");
+        var assist = new CourageGoals.AssistGoal(bystander);
+        c.eq(false, assist.canUse(), "呼救为空 ⇒ 助战不参战");
+
+        // 反向对照：换成怪物袭击，必须照旧广播 + 助战
+        var zombie = helper.spawn(EntityType.ZOMBIE, new BlockPos(6, 1, 6));
+        zombie.setNoAi(true);
+        victim.hurt(level.damageSources().mobAttack(zombie), 1.0F);
+        c.isTrue(bystander.currentAlarm() == zombie, "怪物袭击照旧广播呼救");
+
+        // 防御性：即便有人手工喂了同镇攻击者的呼救，AssistGoal 也不参战
+        bystander.clearAlarm();
+        bystander.raiseAlarm(attacker);
+        c.eq(false, assist.canUse(), "手工喂同镇呼救也不参战（AssistGoal 兜底）");
+        bystander.clearAlarm();
+        bystander.raiseAlarm(zombie);
+        c.eq(true, assist.canUse(), "异类呼救照常参战（兜底没误伤）");
+        bystander.clearAlarm();
+
+        c.throwIfAny(helper, "sameTownNoAlarmAndNoAssist");
+    }
 }

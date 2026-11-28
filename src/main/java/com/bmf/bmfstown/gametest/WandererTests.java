@@ -39,7 +39,7 @@ public class WandererTests {
      * 标记语义全弧线：打标记 → NBT 往返保留（含 since）→ 赋归属领养
      * 当场删标记 → 再 NBT 往返确认标记确实永久消失。
      */
-    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
     public static void wandererFlagRoundtripAndAdoptionClears(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         Scene scene = scene(helper);
@@ -74,7 +74,7 @@ public class WandererTests {
     }
 
     /** 三天期限：超期未领养 → 到期扫描移除 + （广播在无头服无害）。 */
-    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
     public static void wandererExpiresAfterThreeDays(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         Scene scene = scene(helper);
@@ -90,7 +90,7 @@ public class WandererTests {
     }
 
     /** 人口计数与开关语义：默认开、未满员不动、手动关可关、过客不计入人口。 */
-    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
     public static void populationCountAndSwitchSemantics(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         Scene scene = scene(helper);
@@ -133,7 +133,7 @@ public class WandererTests {
      * 预约制调度（2026-11-12 频率补记）：下次路过日 NBT 往返保留；
      * 开关闸门语义——无镇放行、有镇任一开即放行、全部手动关则不放行。
      */
-    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    @GameTest(template = "fireworkstests.room13x6x11", timeoutTicks = 200)
     public static void wandererSchedulePersistenceAndGate(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         Scene scene = scene(helper);
