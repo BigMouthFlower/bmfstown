@@ -24,11 +24,11 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 
 /**
- * 挂历（v0.9.2）：镇民历的"实体显示设备"——挂在墙上，右键看今天几号。
+ * 挂历（v0.9.2）：历法的"实体显示设备"——挂在墙上，右键看今天几号。
  *
  * <p>设计定稿（用户）：日期不做常驻 HUD，做成世界里的物件——
  * 右键后在**物品栏上方那条**（actionbar）打一行
- * "镇民历 第N年M月D日 · 满月"，抬头看月亮对日期。
+ * "公元 3 年 5 月 12 日 · 满月"，抬头看月亮对日期。
  *
  * <p>放置：复用原版 {@link FaceAttachedHorizontalDirectionalBlock} 骨架
  * （按钮/告示牌同款），地面 / 墙面 / 天花板三态放置与依附判定免费获得；
@@ -99,12 +99,10 @@ public class WallCalendarBlock extends FaceAttachedHorizontalDirectionalBlock {
             Player player, BlockHitResult hit) {
         if (level instanceof ServerLevel serverLevel) {
             TownCalendar calendar = TownCalendar.get(serverLevel);
-            TownCalendar.CalendarDate date = calendar.today(serverLevel);
-            // 日期 + 星期几（v0.10.3：纪元 1 月 1 日 = 周日顺延）合并为一条
-            player.displayClientMessage(Component.translatable(
-                    "msg.bmfstown.calendar.today",
-                    date.year(), date.month(), date.day(),
-                    TownCalendar.moonPhaseName(date.moonPhase()))
+            // 日期文本由 TownCalendar.describeToday 统一生成（"公元 3 年 5 月 12 日 · 满月"）——
+            // 与 /bmfstown 的日期命令同一个出口，措辞不会漂。
+            player.displayClientMessage(TownCalendar.describeToday(serverLevel)
+                    .copy()
                     .append(" · ")
                     .append(TownCalendar.weekdayName(calendar.weekday(serverLevel))), true);
             serverLevel.playSound(null, pos, SoundEvents.BOOK_PAGE_TURN,

@@ -28,6 +28,25 @@ public final class BmfTownClient {
 
     @SubscribeEvent
     public static void onClientSetup(final FMLClientSetupEvent event) {
+        // ---- 墓碑物品按材质换图标（2026-11-28 决策 #144）----
+        //
+        // 8 种石材共用一个 Item，材质在 block_state 组件里。物品图标由
+        // `models/item/grave_stone.json` 的 overrides 按这个属性挑模型；
+        // 属性本身必须在这里登记，否则 overrides 全部匹配不上、全部显示默认
+        // （石砖）——**而且不报错**：ItemOverrides 对取不到的属性填
+        // Float.NEGATIVE_INFINITY，结果是静默退回默认模型。
+        //
+        // 值取枚举 ordinal：0（石砖）不写 override（它就是 parent），
+        // 1~7 各指向 `item/grave_stone_<variant>`。加第 9 种石头只补一条 override。
+        //
+        // ⚠ 必须包在 enqueueWork 里：onClientSetup 跑在并行加载线程，
+        // 而 ItemProperties 用的是普通 HashMap。
+        event.enqueueWork(() -> net.minecraft.client.renderer.item.ItemProperties.register(
+                ModItems.GRAVE_STONE.get(),
+                net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
+                        BmfTown.MOD_ID, "grave_variant"),
+                (stack, level, entity, seed) ->
+                        com.bmf.bmfstown.block.GraveStoneItem.variantOf(stack).modelIndex()));
         BmfTown.LOGGER.info("[BmfTown] 客户端初始化完成");
     }
 
@@ -90,6 +109,7 @@ public final class BmfTownClient {
         com.bmf.bmfstown.client.ClientTauntState.clear();
         com.bmf.bmfstown.client.ClientMoodState.clear();
         com.bmf.bmfstown.client.ClientSkinCatalog.clear();
+        com.bmf.bmfstown.client.ClientLedgerState.clear();
     }
 
     /**

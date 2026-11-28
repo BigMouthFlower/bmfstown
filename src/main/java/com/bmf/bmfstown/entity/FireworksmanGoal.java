@@ -595,8 +595,14 @@ public class FireworksmanGoal extends Goal {
             return;
         }
         // 烟花成品 + 盈余星（合法中间物）全部入库
+        // 终身统计（2026-11-28）：入库前先数火箭件数。
+        // 不改 moveAllFromInventory 的签名——它还被理货/退货两处调用，
+        // 加返回值会把"这次搬了几件"的语义混进一个纯搬运函数。
+        int rockets = countInInventory(Items.FIREWORK_ROCKET);
         moveAllFromInventory(output, Items.FIREWORK_ROCKET);
         moveAllFromInventory(output, Items.FIREWORK_STAR);
+        this.resident.getLedger().add(
+                com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.FIREWORKS_MADE, rockets);
         com.bmf.bmfstown.entity.PracticeObserver.observe(level, this.resident,
                 ProfessionType.FIREWORKSMAN);
         this.storeTarget = null;
@@ -972,6 +978,19 @@ public class FireworksmanGoal extends Goal {
                 inv.setItem(i, ItemStack.EMPTY);
             }
         }
+    }
+
+    /** 数背包里某种物品的总件数（终身统计用，纯读不改）。 */
+    private int countInInventory(net.minecraft.world.item.Item item) {
+        var inv = this.resident.getInventory();
+        int total = 0;
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack stack = inv.getItem(i);
+            if (stack.is(item)) {
+                total += stack.getCount();
+            }
+        }
+        return total;
     }
 
     /** 理货：把身上所有非空槽尽可能塞进该容器（合并同类；装不下留身上）。 */

@@ -1,0 +1,124 @@
+{
+  "variants": {
+    "facing=south,variant=stone_bricks": {
+      "model": "bmfstown:block/grave_stone_stone_bricks"
+    },
+    "facing=west,variant=stone_bricks": {
+      "model": "bmfstown:block/grave_stone_stone_bricks",
+      "y": 90
+    },
+    "facing=north,variant=stone_bricks": {
+      "model": "bmfstown:block/grave_stone_stone_bricks",
+      "y": 180
+    },
+    "facing=east,variant=stone_bricks": {
+      "model": "bmfstown:block/grave_stone_stone_bricks",
+      "y": 270
+    },
+    "facing=south,variant=deepslate_bricks": {
+      "model": "bmfstown:block/grave_stone_deepslate_bricks"
+    },
+    "facing=west,variant=deepslate_bricks": {
+      "model": "bmfstown:block/grave_stone_deepslate_bricks",
+      "y": 90
+    },
+    "facing=north,variant=deepslate_bricks": {
+      "model": "bmfstown:block/grave_stone_deepslate_bricks",
+      "y": 180
+    },
+    "facing=east,variant=deepslate_bricks": {
+      "model": "bmfstown:block/grave_stone_deepslate_bricks",
+      "y": 270
+    },
+    "facing=south,variant=tuff_bricks": {
+      "model": "bmfstown:block/grave_stone_tuff_bricks"
+    },
+    "facing=west,variant=tuff_bricks": {
+      "model": "bmfstown:block/grave_stone_tuff_bricks",
+      "y": 90
+    },
+    "facing=north,variant=tuff_bricks": {
+      "model": "bmfstown:block/grave_stone_tuff_bricks",
+      "y": 180
+    },
+    "facing=east,variant=tuff_bricks": {
+      "model": "bmfstown:block/grave_stone_tuff_bricks",
+      "y": 270
+    },
+    "facing=south,variant=blackstone_bricks": {
+      "model": "bmfstown:block/grave_stone_blackstone_bricks"
+    },
+    "facing=west,variant=blackstone_bricks": {
+      "model": "bmfstown:block/grave_stone_blackstone_bricks",
+      "y": 90
+    },
+    "facing=north,variant=blackstone_bricks": {
+      "model": "bmfstown:block/grave_stone_blackstone_bricks",
+      "y": 180
+    },
+    "facing=east,variant=blackstone_bricks": {
+      "model": "bmfstown:block/grave_stone_blackstone_bricks",
+      "y": 270
+    },
+    "facing=south,variant=polished_granite": {
+      "model": "bmfstown:block/grave_stone_polished_granite"
+    },
+    "facing=west,variant=polished_granite": {
+      "model": "bmfstown:block/grave_stone_polished_granite",
+      "y": 90
+    },
+    "facing=north,variant=polished_granite": {
+      "model": "bmfstown:block/grave_stone_polished_granite",
+      "y": 180
+    },
+    "facing=east,variant=polished_granite": {
+      "model": "bmfstown:block/grave_stone_polished_granite",
+      "y": 270
+    },
+    "facing=south,variant=polished_diorite": {
+      "model": "bmfstown:block/grave_stone_polished_diorite"
+    },
+    "facing=west,variant=polished_diorite": {
+      "model": "bmfstown:block/grave_stone_polished_diorite",
+      "y": 90
+    },
+    "facing=north,variant=polished_diorite": {
+      "model": "bmfstown:block/grave_stone_polished_diorite",
+      "y": 180
+    },
+    "facing=east,variant=polished_diorite": {
+      "model": "bmfstown:block/grave_stone_polished_diorite",
+      "y": 270
+    },
+    "facing=south,variant=polished_andesite": {
+      "model": "bmfstown:block/grave_stone_polished_andesite"
+    },
+    "facing=west,variant=polished_andesite": {
+      "model": "bmfstown:block/grave_stone_polished_andesite",
+      "y": 90
+    },
+    "facing=north,variant=polished_andesite": {
+      "model": "bmfstown:block/grave_stone_polished_andesite",
+      "y": 180
+    },
+    "facing=east,variant=polished_andesite": {
+      "model": "bmfstown:block/grave_stone_polished_andesite",
+      "y": 270
+    },
+    "facing=south,variant=smooth_stone": {
+      "model": "bmfstown:block/grave_stone_smooth_stone"
+    },
+    "facing=west,variant=smooth_stone": {
+      "model": "bmfstown:block/grave_stone_smooth_stone",
+      "y": 90
+    },
+    "facing=north,variant=smooth_stone": {
+      "model": "bmfstown:block/grave_stone_smooth_stone",
+      "y": 180
+    },
+    "facing=east,variant=smooth_stone": {
+      "model": "bmfstown:block/grave_stone_smooth_stone",
+      "y": 270
+    }
+  }
+}

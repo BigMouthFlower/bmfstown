@@ -13,18 +13,36 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
 
 
 /**
- * 镇民历（v0.9.2）：mod 自带的纪年体系——记忆与纪念日的"时间坐标系"。
+ * 世界历（v0.9.2）：mod 自带的纪年体系——记忆与纪念日的"时间坐标系"。
  *
- * <p><b>为什么不用现实历法</b>：MC 原版月相是 8 相位、8 天一循环
- * （现实朔望月约 29.5 天，MC 压缩成了 8 天），照搬现实 365 天太长。
- * 于是顺着 MC 自己的天上时钟走：
+ * <h2>对外叫「公元」（2026-11-28 用户定）</h2>
+ * 界面上<b>一律显示为「公元 N 年 N 月 N 日」</b>，不能叫"镇民历"。
+ * 代码里这个类仍叫 {@code TownCalendar}（类名/包名是资产，不改），
+ * 但<b>任何玩家能看到的字符串都不许再出现"镇民历"</b>。
+ *
+ * <h2>这套历法是<b>全世界一份</b>，不属于任何城镇</h2>
+ * {@link #get} 忽略传进来的 level，恒取 {@code overworld} 的数据仓
+ * （{@code TownSaveData} 那套是镇级的，这里不是）。所以：
+ * <ul>
+ *   <li>不管从哪个维度、替哪个镇取，拿到的都是同一份；</li>
+ *   <li><b>镇建了拆、拆了建，历法照走</b>；</li>
+ *   <li>一个存档里压根没建过镇，历法也照走。</li>
+ * </ul>
+ * ⇒ <b>"某个城镇建立"不是这套历法里的任何事件</b>。所以纪年之前绝不能叫
+ * "开镇前"——那个词凭空发明了一个不存在的起点（2026-11-28 用户抓出来的
+ * 硬错，我把它当事实写进了 #148 决策文档，见坑96）。正确说法是<b>"公元前"</b>。
+ *
+ * <h2>为什么不用现实历法</h2>
+ * MC 原版月相是 8 相位、8 天一循环（现实朔望月约 29.5 天，MC 压缩成了 8 天），
+ * 照搬现实 365 天太长。于是顺着 MC 自己的天上时钟走：
  * <ul>
  *   <li><b>月 = 8 天</b>（一个月相周期）——<b>日号直接取原版月相序号</b>
  *       （1 号必是满月、5 号必是新月），玩家抬头看月亮就是看日历，
  *       纪元落在周期哪一天都能自动对齐；</li>
  *   <li><b>年 = 12 月 × 8 = 96 天</b>（现实游玩约 32 小时过一年）；</li>
- *   <li><b>纪元</b>：mod 首次在某世界启用那天记为镇民历第 0 天
- *       （老世界中途装 mod = 当天就是元年元旦），落存档，此后不变。</li>
+ *   <li><b>纪年起点（"元旦"）</b>：见 {@link #relDay} 的惰性落锚——实际效果是
+ *       <b>装好 mod 后头一天</b>（镇里只要有一个居民在跑，他的工作 Goal 一 tick
+ *       就会问"今天是不是工作日"，当场落锚）。</li>
  * </ul>
  *
  * <p><b>内部只存世界绝对天数</b>（{@code dayTime / 24000}），显示时减纪元换算：
@@ -42,7 +60,22 @@ public final class TownCalendar extends SavedData {
     /** 一年天数 = 96。 */
     public static final int DAYS_PER_YEAR = DAYS_PER_MONTH * MONTHS_PER_YEAR;
 
-    /** 镇民历第 0 天对应的世界绝对天数；{@code Long.MIN_VALUE} = 未初始化（首次访问时落锚）。 */
+    /**
+     * 公元第 1 天（"公元 1 年"元旦）对应的世界绝对天数；
+     * {@code Long.MIN_VALUE} = 未初始化（首次访问时落锚）。
+     *
+     * <p><b>"落锚"是什么意思（说人话）</b>：就是决定"公元 1 年 1 月 1 日是这世界的第几天"。
+     *
+     * <p><b>为什么是惰性的、而不是立刻定</b>：只在<b>第一次有人问今天几号</b>时
+     * 才把当天定成元旦。听起来悬，实际上装好 mod 头一天就会触发——镇里只要有一个
+     * 居民在跑，他的工作 Goal 每 tick 都要问"今天是不是工作日"（{@code isWorkday}），
+     * 一问就落锚。所以<b>效果上就是"装 mod 那天"</b>，同时不用额外挂一个登录/开档钩子。
+     *
+     * <p>副作用（要知道，但不用修）：日志里如果<b>一个居民都没有</b>、也没有人敲
+     * {@code /bmfstown} 的日期命令，那落锚会一直推迟到第一次真有人问为止。
+     * 此时"公元元年"会比装 mod 那天晚几天——但<b>不会影响任何相对时间</b>
+     * （生日、享年、在镇年数全是两个绝对天数相减），只是所有人共用的原点平移。
+     */
     private long epochDay = Long.MIN_VALUE;
 
 
@@ -161,25 +194,116 @@ public final class TownCalendar extends SavedData {
 
     public CalendarDate today(ServerLevel level) {
         long abs = absoluteDay(level);
-        long rel = Math.max(0L, relDay(level));
+        // 先走一次 relDay：首次访问的落锚副作用在这里，不能省。
+        relDay(level);
+        return dateOf(abs);
+    }
+
+    /**
+     * 世界绝对天数 → 公元日期（用本历法的纪元）。
+     *
+     * <p>⚠ 读 {@code epochDay} 前必须已经落锚。要"可能还没落锚的那一刻"也安全，
+     * 用 {@link #dateOf(long, long)} 并自己传 {@link #epochDay(ServerLevel)}。
+     */
+    public CalendarDate dateOf(long absoluteDay) {
+        return dateOf(this.epochDay, absoluteDay);
+    }
+
+    /**
+     * 纪元（"公元 1 年"元旦）的世界绝对天数；首次访问时先落锚，再返回。
+     *
+     * <p>给需要"把某个绝对天数换算成日期、但那一天可能<b>早于纪元</b>"的地方用
+     * （履历页的生日：{@code today − 年龄×96 − 偏移}）。直接读字段可能是
+     * {@code Long.MIN_VALUE} 这个未初始化哨兵——所以必须走这里。
+     */
+    public long epochDay(ServerLevel level) {
+        relDay(level); // 副作用：首次访问落锚
+        return this.epochDay;
+    }
+
+    /**
+     * 世界绝对天数 → 公元日期（纪元显式传入，纯函数）。
+     *
+     * <h2>为什么允许 {@code absoluteDay < epochDay}（"公元前"）</h2>
+     * 生日是<b>从今天往前推</b>的投影（{@code today − (年龄×96 + 偏移)}），
+     * 一个 29 岁的居民生日在 2784 天前，远早于公元元年。
+     * 所以这里必须能算公元前，返回的 {@code year} 会是 <b>0 或负数</b>
+     * （1 = 公元元年，0 = 公元前 1 年，-1 = 公元前 2 年…）。
+     *
+     * <p><b>⚠ 这里不叫"开镇前"</b>：这套历法全世界一份、不属于任何城镇
+     * （见类注释），"建镇"根本不是历法里的事件。用"开镇前"等于凭空发明
+     * 一个不存在的起点（2026-11-28 用户抓出来的硬错，坑96）。
+     * 显示给玩家时用 {@link #formatDate} / {@link #formatYear}。
+     *
+     * <p>⚠ <b>这里必须全程 {@code floorMod} / {@code floorDiv}</b>：绝对天数
+     * 可为负，而 Java 的 {@code %} 和 {@code /} 对负数<b>向零截断</b>——
+     * {@code -1 % 8 == -1}（日号变 0 号）、{@code -1 / 12 == 0}（年份跳一年）。
+     * 用错就是"公元前 28 年"写成"公元前 27 年 12 月 0 日"。
+     */
+    public static CalendarDate dateOf(long epochDay, long absoluteDay) {
         // 日号直接取原版月相序号（1 号 = 满月）：与天上的月亮一一对应，
         // 纪元落在周期哪一天都无所谓——启用当天是残月就显示 4 号（用户定稿：
         // 月相从游戏里读，不乱编）
-        int day = (int) (abs % DAYS_PER_MONTH) + 1;
+        int day = (int) Math.floorMod(absoluteDay, DAYS_PER_MONTH) + 1;
         // 年月从"启用当天所在的满月"起算：把纪元回退到当月 1 号（满月日）
-        long epochAligned = this.epochDay - Math.floorMod(this.epochDay, DAYS_PER_MONTH);
-        long monthStart = abs - Math.floorMod(abs, DAYS_PER_MONTH);
+        long epochAligned = epochDay - Math.floorMod(epochDay, DAYS_PER_MONTH);
+        long monthStart = absoluteDay - Math.floorMod(absoluteDay, DAYS_PER_MONTH);
         long totalMonths = (monthStart - epochAligned) / DAYS_PER_MONTH;
-        int year = (int) (totalMonths / MONTHS_PER_YEAR) + 1;
-        int month = (int) (Math.floorMod(totalMonths, MONTHS_PER_YEAR)) + 1;
+        int year = (int) Math.floorDiv(totalMonths, MONTHS_PER_YEAR) + 1;
+        int month = (int) Math.floorMod(totalMonths, MONTHS_PER_YEAR) + 1;
         // 月相直接对齐原版口径（绝对天数 % 8），与天上月亮永远一致
-        int phase = (int) (abs % DAYS_PER_MONTH);
+        int phase = (int) Math.floorMod(absoluteDay, DAYS_PER_MONTH);
         return new CalendarDate(year, month, day, phase);
+    }
+
+    /**
+     * 整段日期的显示文本：<b>"公元 3 年 5 月 12 日"</b> / <b>"公元前 28 年 5 月 12 日"</b>。
+     *
+     * <h2>为什么这一个法子必须是唯一出口</h2>
+     * 同一套措辞有四处要显示：日历方块右键、{@code /bmfstown} 的日期命令、
+     * 履历页生日、<b>墓碑上的死亡日期</b>。要是各拼一套，迟早出现
+     * "碑上讲公元前、命令讲第 -28 年"。所以格式只在 lang 里定义两份
+     * （{@code calendar.bmfstown.date.ce} / {@code .bce}），这里只做分流。
+     *
+     * @param date 由 {@link #dateOf(long, long)} 算出
+     */
+    public static Component formatDate(CalendarDate date) {
+        return formatYear(date.year())
+                .copy()
+                .append(Component.translatable("calendar.bmfstown.date.md",
+                        date.month(), date.day()));
+    }
+
+    /**
+     * 只给年份：<b>"公元 3 年"</b> / <b>"公元前 28 年"</b>。
+     *
+     * <p>{@code year <= 0} 是<b>常态</b>（公元前的年份），不是错误值：
+     * {@code 0} ⇒ 公元前 1 年、{@code -27} ⇒ 公元前 28 年。
+     * 换算就是 {@code 1 - year}——公元前 1 年紧挨着公元 1 年，中间没有"公元 0 年"。
+     */
+    public static Component formatYear(int year) {
+        return year <= 0
+                ? Component.translatable("calendar.bmfstown.date.bce", 1 - year)
+                : Component.translatable("calendar.bmfstown.date.ce", year);
     }
 
     /** 原版月相 0~7 的中文名（0 = 满月）。 */
     public static Component moonPhaseName(int phase) {
         return Component.translatable("calendar.bmfstown.moon." + (phase & 7));
+    }
+
+    /**
+     * 一行完整的"今天是几号"：<b>"公元 3 年 5 月 12 日 · 满月"</b>。
+     *
+     * <p>给日历方块右键与 {@code /bmfstown} 的日期命令共用——两处各拼一遍就会漂
+     * （一处改了措辞另一处没改），所以统一从这里出。
+     */
+    public static Component describeToday(ServerLevel level) {
+        TownCalendar calendar = get(level);
+        CalendarDate date = calendar.today(level);
+        return Component.translatable("msg.bmfstown.calendar.today",
+                formatYear(date.year()), date.month(), date.day(),
+                moonPhaseName(date.moonPhase()));
     }
 
     // ------------------------------------------------------------

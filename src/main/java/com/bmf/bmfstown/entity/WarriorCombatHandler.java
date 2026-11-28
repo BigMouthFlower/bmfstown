@@ -32,6 +32,10 @@ public final class WarriorCombatHandler {
         if (event.getSource().getEntity() instanceof Resident resident) {
             int gain = Config.WARRIOR_XP_PER_KILL.get();
             resident.addSkillXp(SkillType.COMBAT, gain);
+            // 终身统计（2026-11-28）：不管什么职业，只要是他杀的就算一次。
+            // 与上面"全民入账"同一个口径——非战士助战杀了也算他的一笔。
+            resident.getLedger().add(
+                    com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.MOBS_KILLED, 1);
             // 观察期用 debug（验证完毕调回；需要时临时升 INFO）
             BmfTown.LOGGER.debug("[BmfTown][调试] {} 击杀 {}：格斗经验 +{}（累计 {}）",
                     resident.getName().getString(), event.getEntity().getType().toShortString(),

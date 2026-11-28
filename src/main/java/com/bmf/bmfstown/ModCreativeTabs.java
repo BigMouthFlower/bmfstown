@@ -32,6 +32,14 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.WALL_CALENDAR.get());
                         output.accept(ModItems.BULLETIN_BOARD.get());
                         output.accept(ModItems.TAVERN_MENU_BOARD.get());
+                        // 墓碑：8 种材质共用一个物品，但**各给一条**——
+                        // 创造模式是玩家唯一能直接拿到"非石砖"材质的路（生存只能切石机）。
+                        // 只放一条的话，创造栏里给出的永远是没组件的那块，落地就是石砖，
+                        // 玩家会以为"材质功能坏了"（2026-11-28 实际被问到）。
+                        for (com.bmf.bmfstown.block.GraveStoneVariant v
+                                : com.bmf.bmfstown.block.GraveStoneVariant.values()) {
+                            output.accept(com.bmf.bmfstown.block.GraveStoneItem.stackFor(v));
+                        }
                         output.accept(ModItems.WRITING_BOOK.get());
                         output.accept(ModItems.FINISHED_BOOK.get());
                         output.accept(ModItems.RESIDENT_SPAWN_EGG.get());

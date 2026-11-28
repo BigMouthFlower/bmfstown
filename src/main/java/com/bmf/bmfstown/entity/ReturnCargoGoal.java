@@ -123,7 +123,8 @@ public class ReturnCargoGoal extends Goal {
         if (--this.retargetTimer <= 0) {
             this.retargetTimer = 20;
             this.resident.getNavigation().moveTo(
-                    next.getX() + 0.5, next.getY(), next.getZ() + 0.5, 1.0D);
+                    next.getX() + 0.5, next.getY(), next.getZ() + 0.5,
+                    com.bmf.bmfstown.config.Speeds.normal());
         }
     }
 

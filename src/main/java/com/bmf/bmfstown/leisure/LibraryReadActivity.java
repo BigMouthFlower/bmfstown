@@ -234,7 +234,8 @@ public class LibraryReadActivity implements LeisureActivity {
         this.sourceShelf = best;
         this.phase = Phase.WALK_TO_SHELF;
         resident.getNavigation().moveTo(
-                best.getX() + 0.5D, best.getY(), best.getZ() + 0.5D, 0.9D);
+                best.getX() + 0.5D, best.getY(), best.getZ() + 0.5D,
+                com.bmf.bmfstown.config.Speeds.normal());
         return true;
     }
 
@@ -255,7 +256,8 @@ public class LibraryReadActivity implements LeisureActivity {
             if (resident.getNavigation().isDone()) {
                 resident.getNavigation().moveTo(
                         this.sourceShelf.getX() + 0.5D, this.sourceShelf.getY(),
-                        this.sourceShelf.getZ() + 0.5D, 0.9D);
+                        this.sourceShelf.getZ() + 0.5D,
+                        com.bmf.bmfstown.config.Speeds.normal());
             }
             return true;
         }

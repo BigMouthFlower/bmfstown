@@ -1,0 +1,29 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "bmfstown:grave_stone"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "minecraft:survives_explosion"
+        }
+      ],
+      "functions": [
+        {
+          "function": "minecraft:copy_state",
+          "block": "bmfstown:grave_stone",
+          "properties": [
+            "variant",
+            "facing"
+          ]
+        }
+      ]
+    }
+  ]
+}

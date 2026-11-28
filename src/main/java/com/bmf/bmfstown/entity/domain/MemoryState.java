@@ -39,7 +39,7 @@ public class MemoryState {
     public record Impression(String type, int day, int strength, String itemId) {
     }
 
-    /** 铭记（永久记忆）：type + 固化时记录的最后受苦日（镇民历坐标系）。 */
+    /** 铭记（永久记忆）：type + 固化时记录的最后受苦日（公元纪年日坐标）。 */
     public record FirmMemory(String type, int day) {
     }
 

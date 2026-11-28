@@ -48,7 +48,11 @@ public class ScholarFollowGoal extends Goal {
         }
         double dist = this.resident.distanceToSqr(target);
         if (dist > 6.0D * 6.0D) {
-            this.resident.getNavigation().moveTo(target, 1.0D);
+            // 跟着另一个居民走：目标是动的，必须用奔跑档（1.3）才追得上。
+            // 改前这里裸写 1.0，比被跟随者自己的 0.6 快不了多少，
+            // 一拉开 6 格就开始掉队。
+            this.resident.getNavigation().moveTo(target,
+                    com.bmf.bmfstown.config.Speeds.follow());
         } else {
             this.resident.getNavigation().stop();
             this.resident.getLookControl().setLookAt(target);

@@ -846,8 +846,16 @@ public class TavernVisitActivity implements LeisureActivity {
         resident.getInventory().addItem(this.cup);
     }
 
+    /**
+     * 馆内走动（落座 / 去取酒 / 还杯）统一走<b>正常档</b>。
+     *
+     * <p>改前这里是裸字面量 0.9，而漫步是 0.6 —— 用户实测原话："还杯子什么的，
+     * 你走那么快，我觉得没有必要，就是正常就是像村民一样走过去就好了"。
+     * 还杯是个"顺路办完"的动作，不该比闲逛快半档。
+     */
     private void navigateTo(Resident resident, BlockPos pos) {
         resident.getNavigation().moveTo(
-                pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D, 0.9D);
+                pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D,
+                com.bmf.bmfstown.config.Speeds.normal());
     }
 }

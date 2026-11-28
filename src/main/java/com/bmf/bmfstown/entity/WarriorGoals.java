@@ -151,10 +151,10 @@ public final class WarriorGoals {
                     return;
                 }
                 this.resident.getNavigation().moveTo(player,
-                        Config.WARRIOR_FOLLOW_SPEED.get());
+                        com.bmf.bmfstown.config.Speeds.follow());
                 LOGGER.debug("[BmfTown][跟随] {} 追向玩家（距离 {}，速度 {}）{}",
                         this.resident.getName().getString(),
-                        String.format("%.1f", dist), Config.WARRIOR_FOLLOW_SPEED.get(),
+                        String.format("%.1f", dist), com.bmf.bmfstown.config.Speeds.follow(),
                         this.resident.getTarget() != null ? "，同时带着目标" : "");
             } else {
                 this.resident.getNavigation().stop();
@@ -224,7 +224,7 @@ public final class WarriorGoals {
                         this.resident.getName().getString(), radius * 1.5D);
                 this.resident.getNavigation().moveTo(
                         post.getX() + 0.5D, post.getY(), post.getZ() + 0.5D,
-                        Config.WARRIOR_GUARD_SPEED.get());
+                        com.bmf.bmfstown.config.Speeds.normal());
                 return;
             }
 
@@ -237,7 +237,7 @@ public final class WarriorGoals {
                     double x = post.getX() + 0.5D + Math.cos(angle) * r;
                     double z = post.getZ() + 0.5D + Math.sin(angle) * r;
                     this.resident.getNavigation().moveTo(x, post.getY(), z,
-                            Config.WARRIOR_GUARD_SPEED.get());
+                            com.bmf.bmfstown.config.Speeds.normal());
                     LOGGER.debug("[BmfTown][站岗] {} 巡逻选点 ({}, {}, {})",
                             this.resident.getName().getString(),
                             String.format("%.1f", x), post.getY(), String.format("%.1f", z));

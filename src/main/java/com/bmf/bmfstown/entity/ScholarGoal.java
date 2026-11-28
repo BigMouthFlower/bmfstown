@@ -449,6 +449,9 @@ public class ScholarGoal extends Goal {
                         this.resident.getName().getString());
             }
             grantCompletionXp(content, level);
+            // 终身统计（2026-11-28）：写成一本算一本（抄本也算——抄完的也是他的活）
+            this.resident.getLedger().add(
+                    com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.BOOKS_WRITTEN, 1);
             this.resident.syncClient();
         }
         this.phase = Phase.GO_INPUT;

@@ -188,7 +188,7 @@ public final class ResidentCommands {
                         })));
 
         // ---- /bmfstown date ----
-        // 历法调试命令：报当前镇民历日期（年/月/日/月相）。
+        // 历法调试命令：报当前公元日期（年/月/日/月相）。
         root.then(Commands.literal("date")
                 .executes(ResidentCommands::showDate));
 
@@ -261,6 +261,14 @@ public final class ResidentCommands {
                 .executes(ctx -> doUnlocks(ctx.getSource(), null))
                 .then(Commands.argument("城镇", StringArgumentType.string())
                         .executes(ctx -> doUnlocks(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "城镇")))));
+        // ---- /bmfstown grave：死者名册（只读，2026-11-28）----
+        // 验收用：看"谁死了、有碑没碑、在镇多久、一辈子干了多少"。
+        // 刻碑交互（蹲下右键）还没做时，这条是唯一能确认名册写没写对的路。
+        root.then(Commands.literal("grave")
+                .executes(ctx -> showGrave(ctx.getSource(), null))
+                .then(Commands.argument("城镇", StringArgumentType.string())
+                        .executes(ctx -> showGrave(ctx.getSource(),
                                 StringArgumentType.getString(ctx, "城镇")))));
         // ---- /bmfstown town add|remove|list|leave|disband ----
         // 领地权限（v0.11.1）：成员白名单。城镇按**站位**解析（沿用 unlocks
@@ -1010,6 +1018,56 @@ public final class ResidentCommands {
     }
 
     // ==========================================================
+    //  死者名册（/bmfstown grave，只读，2026-11-28）
+    // ==========================================================
+
+    /**
+     * 打印一个镇的死者名册：谁死了、有没有碑、统计摘要。
+     *
+     * <p><b>为什么要这条命令</b>：刻碑交互（蹲下右键）还没做，玩家没有任何
+     * 途径知道"名册里有没有人"。验收和实机调试都需要一条看得见的路。
+     *
+     * <p>排序：<b>待葬的排前面</b>（那是玩家要处理的事），已葬的排后面。
+     */
+    private static int showGrave(net.minecraft.commands.CommandSourceStack source,
+            @javax.annotation.Nullable String townText) {
+        Town town = resolveTown(source, townText);
+        if (town == null) {
+            return 0;
+        }
+        var level = source.getLevel();
+        var data = com.bmf.bmfstown.town.GraveyardData.get(level);
+        var all = data.ofTown(town.id());
+        if (all.isEmpty()) {
+            source.sendSuccess(() -> Component.literal(
+                    "「" + town.name() + "」死者名册：还没有人。"), false);
+            return 1;
+        }
+        // 碑文里的死亡日期要用世界历纪元（会顺带落锚），取一次给整个列表用。
+        long epochDay = com.bmf.bmfstown.calendar.TownCalendar
+                .get(source.getLevel()).epochDay(source.getLevel());
+        var unburied = data.unburied();
+        source.sendSuccess(() -> Component.literal(
+                "「" + town.name() + "」死者名册 " + all.size() + " 人，待葬 "
+                        + (int) all.stream().filter(g -> unburied.contains(g)).count() + " 人。"),
+                false);
+
+        // 待葬在前
+        var ordered = new java.util.ArrayList<>(all);
+        ordered.sort((a, b) -> Boolean.compare(unburied.contains(a), unburied.contains(b)));
+
+        for (var g : ordered) {
+            // 摘要正文由 GraveText 统一生成 —— 与墓碑方块右键**同一份代码**。
+            // 两处各写一遍迟早会漂（命令改了排序、碑上没改），
+            // 所以排序口径与字段顺序只在那里定义一次。
+            var line = Component.literal(unburied.contains(g) ? "  [待葬] " : "  [已葬] ")
+                    .append(com.bmf.bmfstown.town.GraveText.summary(g, epochDay));
+            source.sendSuccess(() -> line, false);
+        }
+        return 1;
+    }
+
+    // ==========================================================
     //  恐怖线调试（/bmfstown horror debug step|verify|reset）
     // ==========================================================
 
@@ -1146,15 +1204,12 @@ public final class ResidentCommands {
         return nearest;
     }
 
-    /** 历法调试：报当前镇民历日期（年/月/日/月相）。 */
+    /** 历法调试：报当前日期（"公元 3 年 5 月 12 日 · 满月"）。 */
     private static int showDate(CommandContext<CommandSourceStack> ctx) {
         net.minecraft.server.level.ServerLevel level = ctx.getSource().getLevel();
-        com.bmf.bmfstown.calendar.TownCalendar.CalendarDate date =
-                com.bmf.bmfstown.calendar.TownCalendar.get(level).today(level);
-        ctx.getSource().sendSuccess(() -> Component.translatable(
-                "msg.bmfstown.calendar.today",
-                date.year(), date.month(), date.day(),
-                com.bmf.bmfstown.calendar.TownCalendar.moonPhaseName(date.moonPhase())), false);
+        // 走和日历方块同一个出口（TownCalendar.describeToday），措辞不漂。
+        ctx.getSource().sendSuccess(
+                () -> com.bmf.bmfstown.calendar.TownCalendar.describeToday(level), false);
         return 1;
     }
 

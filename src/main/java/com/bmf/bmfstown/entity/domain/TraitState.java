@@ -49,6 +49,18 @@ public final class TraitState {
     /** 复制到期游戏日（从复制开始的一天后）。 */
     private int mimicExpireDay = Integer.MIN_VALUE;
     /**
+     * 回拨探针：上次见到的游戏日（坑97）。
+     *
+     * <p>单纯比 {@code day >= mimicExpireDay} 判不了"时间被拨过"——不到期时
+     * 这个条件本来就为假，两者分不开。能分的只有"今天比上次见到的那天更早"，
+     * 这个 {@code tickTraits} 每 tick 都在跑，探针等于免费的。
+     *
+     * <p>内存态、不落档：它只需覆盖"同一个进程内的时间倒退"。
+     * 跨存档的回拨（读了个更早的存档）由恐怖线那边的探针兜底，
+     * 而模仿只有一个游戏日，够用。
+     */
+    private int lastSeenDay = Integer.MIN_VALUE;
+    /**
      * 复制开始时自己的快照（复原用）：
      * Identity + Growth + Prefs + Status(hunger/mood) + Name 五段。
      */
@@ -97,10 +109,29 @@ public final class TraitState {
         // GATTACA 模仿到期检查。判据必须是 isMimicking() 而不是 trait==GATTACA——
         // 模仿开始时特性已被换成对方的，按 trait 查永远不命中（v0.8.1 实测教训：
         // 状态机检查不能依赖会被自身行为修改的状态）。
+        //
+        // ⚠ 回拨保护（2026-11-28，坑97）：`day >= mimicExpireDay` 是"向上等"的判据——
+        // 时间一旦往回拨，day 就永远够不到 expireDay，**模仿永久不复原**：
+        // 那个居民会顶着一张别人的脸、用着别人的技能，一直活到世界重新走到那天。
+        //
+        // 补救与恐怖线同一套思路：把**到期日按回拨量一起平移**，剩余时长原样保留。
+        // 不选"立刻复原"是因为那冤枉了玩家——刚模仿上就被拨回一天，
+        // 不该立刻剥掉；也不选"不管"，那样永久不触发。
         if (isMimicking() && this.mimicExpireDay != Integer.MIN_VALUE
-                && resident.level() instanceof ServerLevel sl
-                && (int) (sl.getDayTime() / 24000L) >= this.mimicExpireDay) {
-            restoreMimic(resident);
+                && resident.level() instanceof ServerLevel sl) {
+            int day = (int) (sl.getDayTime() / 24000L);
+            if (day < this.lastSeenDay) {
+                // 回拨了：到期日整体后移同等天数（开始日一并平移，保持"一天"不变）
+                int rewind = this.lastSeenDay - day;
+                this.mimicExpireDay -= rewind;
+            }
+            this.lastSeenDay = day;
+            if (day >= this.mimicExpireDay) {
+                restoreMimic(resident);
+            }
+        } else if (resident.level() instanceof ServerLevel sl0) {
+            // 没在模仿时也要推进探针，否则下次模仿开始时基准是旧值
+            this.lastSeenDay = (int) (sl0.getDayTime() / 24000L);
         }
         if (this.trait == TraitType.FLIGHTY) {
             // 每 30 秒检定一次 1/8 概率 → 平均约 4 分钟浮一次，3 秒（60 tick）

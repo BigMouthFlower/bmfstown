@@ -85,6 +85,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private static final int PAGE_TOWN = ResidentMenu.PAGE_TOWN;
     /** 页编号：工作页（职业分配 + 战士工作模式）。 */
     private static final int PAGE_WORK = ResidentMenu.PAGE_WORK;
+    /** 页编号：履历页（在镇多久 + 一生统计）。 */
+    private static final int PAGE_STATS = ResidentMenu.PAGE_STATS;
     /** 页编号：喜好页（偏好一览 + 想法日志）。 */
     private static final int PAGE_HOBBY = ResidentMenu.PAGE_HOBBY;
     private static final int PAGE_THOUGHTS = ResidentMenu.PAGE_THOUGHTS;
@@ -97,8 +99,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     //  归属页列表参数
     // ==========================================================
 
-    /** 一行的高度（px）。 */
-    private static final int ROW_H = 13;
+    /** 一行的高度（px）。<b>唯一真相源在 {@link ResidentMenu#STATS_ROW_H}</b>。 */
+    private static final int ROW_H = ResidentMenu.STATS_ROW_H;
     /**
      * 列表可见行数。
      *
@@ -257,6 +259,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         this.imageHeight = switch (this.page) {
             case PAGE_TOWN -> TOWN_GUI_HEIGHT;
             case PAGE_WORK -> WORK_GUI_HEIGHT;
+            case PAGE_STATS -> STATS_GUI_HEIGHT;
             case PAGE_HOBBY -> HOBBY_GUI_HEIGHT;
             case PAGE_THOUGHTS -> THOUGHTS_GUI_HEIGHT;
             case PAGE_KNOWLEDGE -> KNOWLEDGE_GUI_HEIGHT;
@@ -292,6 +295,25 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     // 字段是非法前向引用，编译直接失败（v0.8 交付后本地编译踩坑，同 MoodState.TONE_*）。
     private static final int THOUGHTS_GUI_HEIGHT = ResidentMenu.PANEL_Y + THOUGHTS_VISIBLE * ROW_H + 6;
     private static final int KNOWLEDGE_GUI_HEIGHT = ResidentMenu.PANEL_Y + 9 * ROW_H + 6;
+
+    /**
+     * 履历页可见统计行数。
+     *
+     * <p><b>为什么是 12 而不是像知识页那样写死 9</b>：履历的行数随职业变化
+     * （战士有击杀行、学者有写书行），固定行数会在"只当了三天工人的镇民"
+     * 身上留半页空白。这里按"最多可能出现的行数"给一个够用的高度，
+     * 超出的项**由服务端裁掉**（只发前 N 条非零项，§3.8.8），客户端不滚动。
+     */
+    private static final int STATS_VISIBLE = ResidentMenu.STATS_VISIBLE_ROWS;
+
+    /** 头部行数：名字 1 行 + 活了多少天 / 在镇多少天 / 年龄 3 行。 */
+    private static final int STATS_HEADER_ROWS = ResidentMenu.STATS_HEADER_ROWS;
+
+    /** 头部与统计区之间的分隔：上留 2 + 线 1 + 下留 4 = 7px。 */
+    private static final int STATS_DIVIDER_H = ResidentMenu.STATS_DIVIDER_H;
+
+    /** 履历页面板高度（权威算式在 {@link ResidentMenu#STATS_GUI_HEIGHT}）。 */
+    private static final int STATS_GUI_HEIGHT = ResidentMenu.STATS_GUI_HEIGHT;
 
     /** 想法页当前滚动位置（0 = 最新的在最上面）。 */
     private int thoughtScroll = 0;
@@ -338,6 +360,12 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
 
         // 页高随页变化：leftPos/topPos 依赖 imageHeight，必须重建一次布局
         this.rebuildWidgets();
+
+        // 履历页：切进来才拉一次（按需发包，不进快照）
+        if (newPage == PAGE_STATS && this.menu.getResident() != null) {
+            ModNetworking.sendToServer(
+                    new ModNetworking.LedgerRequestPayload(this.menu.getResident().getId()));
+        }
     }
 
     // ==========================================================
@@ -367,6 +395,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             renderTownPageBg(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_WORK) {
             renderWorkPageBg(gfx, mouseX, mouseY);
+        } else if (this.page == PAGE_STATS) {
+            renderStatsPageBg(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_HOBBY) {
             renderHobbyPageBg(gfx);
         } else if (this.page == PAGE_THOUGHTS) {
@@ -625,6 +655,8 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             renderTownPageText(gfx);
         } else if (this.page == PAGE_WORK) {
             renderWorkPageText(gfx, mouseX, mouseY);
+        } else if (this.page == PAGE_STATS) {
+            renderStatsPageText(gfx);
         } else if (this.page == PAGE_HOBBY) {
             renderHobbyPageText(gfx, mouseX, mouseY);
         } else if (this.page == PAGE_THOUGHTS) {
@@ -765,6 +797,28 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
         }
         drawStat(gfx, textY + LINE * 5, I18n.get("gui.bmfstown.resident.stat.trait"),
                 traitValue, 0xB06A10);
+
+        // 6. 年龄 + 在镇（2026-11-28 用户："年龄什么的要啥啥没有"）。
+        //    只占第 6/7 行（STAT_LINES=8 里现成空着），面板不增高。
+        //    -1 = 老档还没生成 / 过客没有入镇日，整行不画，别显示"0 岁"或"在镇 0 天"。
+        //
+        // ⚠ "活了多久"这一行**从来没有出现在资料页**，而且以后也不该加：
+        //   年龄已经答了同一个问题（#148 用户："活了多久具体到天无人在意，
+        //   年龄就能看到大致了"）。资料页是"认识这个人"，
+        //   履历页才是"给他算账"——生日也在那一页。
+        //
+        // "在镇"仍然要走 {@code humanSpan}（"1 年 47 天"）：它是**另一个量**
+        // （不是年龄），裸天数在这里没有对照物，玩家读不出这人待了多久（坑91）。
+        int age = p.ageYears();
+        if (age >= 0) {
+            drawStat(gfx, textY + LINE * 6, I18n.get("gui.bmfstown.resident.stats.age"),
+                    I18n.get("gui.bmfstown.resident.stat.age_value", age), 0x5A6B8A);
+        }
+        int inTown = p.daysInTown();
+        if (inTown >= 0) {
+            drawStat(gfx, textY + LINE * 7, I18n.get("gui.bmfstown.resident.stats.town_days"),
+                    humanSpan(inTown), 0x5A6B8A);
+        }
 
         // GATTACA 本尊（非查看模式）：特性行右侧"伪装"按钮；模仿中灰字"正在模仿 xxx"
         if (trait.equals("gattaca") && GATTACA_VIEWER_ID < 0) {
@@ -1091,6 +1145,136 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 String.join(I18n.get("gui.bmfstown.resident.hobby.separator"), items));
     }
 
+    // ==========================================================
+    //  履历页（PAGE_STATS，2026-11-28）
+    // ==========================================================
+
+    /**
+     * 履历页背景：整页深灰列表底（与想法页同一语言）。
+     *
+     * <p>这一页**没有可点的东西**——它是纯读数页。所以背景只画一块底，
+     * 不画滚动条：行数固定在 {@link #STATS_VISIBLE} 以内，超出部分
+     * 由服务端先裁好（只发前 N 条非零项，见 §3.8.8），客户端不做滚动。
+     */
+    private void renderStatsPageBg(GuiGraphics gfx, int mouseX, int mouseY) {
+        gfx.fill(this.leftPos + 4, this.topPos + ResidentMenu.PANEL_Y,
+                this.leftPos + this.imageWidth - 4,
+                this.topPos + this.imageHeight - 4, 0xFF373737);
+    }
+
+    /**
+     * 履历页文字：左标签、右数值，一行一项。
+     *
+     * <p><b>为什么数值右对齐</b>：这是"账本"的视觉语言——标签参差、数字成列，
+     * 一眼能看出哪个数字最大。左对齐会让"击杀 5"和"击杀 500"看起来一样长。
+     *
+     * <p><b>数据来源</b>：{@code ClientLedgerState}（按需发包，不进快照）。
+     * 没拉到包之前显示一行"同步中"，**不显示 0**——0 和"还没拿到"是两件事，
+     * 混起来玩家会以为这个人什么都没干过。
+     */
+    private void renderStatsPageText(GuiGraphics gfx) {
+        Resident resident = this.menu.getResident();
+        if (resident == null) {
+            return;
+        }
+        int rowY = ResidentMenu.PANEL_Y + ResidentMenu.STATS_TOP_PAD;
+        int left = TEXT_PAD;
+        int right = this.imageWidth - TEXT_PAD;
+
+        // ---- 第 0 行：名字（这一页不画标题，名字就是标题） ----
+        gfx.drawString(this.font, resident.getName(), left, rowY, 0xFFE0C878, false);
+        // 用 ResidentMenu.STATS_ROW_H 而不是本类通用的 ROW_H：纵向的账
+        // （STATS_GUI_HEIGHT）是按 STATS_ROW_H 算的，绘制必须同源，
+        // 否则哪天有人调了 ROW_H，文字会溢出面板而高度断言照样绿。
+        rowY += ResidentMenu.STATS_ROW_H;
+
+        ModNetworking.LedgerDataPayload ledger = ClientLedgerState.of(resident.getId());
+        if (ledger == null) {
+            gfx.drawString(this.font, I18n.get("gui.bmfstown.resident.stats.syncing"),
+                    left, rowY, 0xFF9A9A9A, false);
+            return;
+        }
+
+        // ---- 时间三项：年龄 / 生日 / 在镇多久 ----
+        // ⚠ 2026-11-28 用户第二次打回："履历显示的应该是他的年龄和出生日期，
+        //   而非活了多久，活了多久具体到天无人在意，年龄就能看到大致了。"
+        //   所以这里**不再有"活了 X 天"**——年龄已经答了那个问题，同一屏再用
+        //   另一种单位报一遍只是噪音。换上来的是生日，它给出年龄给不出的
+        //   那半条信息：**哪一天长一岁**（年内偏移是独立抽的，见 AgingRolls）。
+        //
+        // 三项都可能缺失（老档没生成 aging / 过客没 arrivalDay / 没有生日投影），
+        // 缺失时**整行不画**——画出来就是"活了 -1 天"，比不显示糟得多。
+        if (ledger.ageYears() >= 0) {
+            rowY = drawLedgerRow(gfx, left, right, rowY,
+                    I18n.get("gui.bmfstown.resident.stats.age"),
+                    I18n.get("gui.bmfstown.resident.stat.age_value", ledger.ageYears()));
+        }
+        if (ledger.hasBirthday()) {
+            rowY = drawLedgerRow(gfx, left, right, rowY,
+                    I18n.get("gui.bmfstown.resident.stats.birthday"),
+                    birthdayText(ledger.birthYear(), ledger.birthMonth(), ledger.birthDay()));
+        }
+        if (ledger.daysInTown() >= 0) {
+            rowY = drawLedgerRow(gfx, left, right, rowY,
+                    I18n.get("gui.bmfstown.resident.stats.town_days"),
+                    humanSpan(ledger.daysInTown()));
+        }
+
+        // ---- 分隔线：时间在上、干活在下（和碑文同一个分区思路） ----
+        // 三段位移必须与 ResidentMenu.STATS_DIVIDER_H 的构成一致（上留+线+下留），
+        // 否则高度算式与绘制不同源，调了任一侧都会悄悄错位。
+        rowY += ResidentMenu.STATS_DIVIDER_TOP;
+        gfx.fill(left, rowY, right, rowY + 1, 0xFF5A5A5A);
+        rowY += 1 + ResidentMenu.STATS_DIVIDER_BOTTOM;
+
+        // ---- 统计项：按次数降序，零项不画 ----
+        // ⚠ 天数类**必须在这里再滤一遍**：服务端已经不发它们了，但
+        // ① 老版本服务端/存了旧 stats 的档仍可能带着；
+        // ② 它们没有 lang 键，缺键兜底"标签置空"会留下一行只有数字的裸数（"2829"），
+        //    正是用户截图里那个来路不明的数。
+        // 判据共用 {@code GraveText.isDateDerived}，不在这里另写一份。
+        java.util.List<java.util.Map.Entry<String, Integer>> entries =
+                new java.util.ArrayList<>(ledger.stats().entrySet());
+        entries.removeIf(e -> e.getValue() == null || e.getValue() <= 0
+                || com.bmf.bmfstown.town.GraveText.isDateDerived(e.getKey()));
+        if (entries.isEmpty()) {
+            gfx.drawString(this.font,
+                    I18n.get("gui.bmfstown.resident.stats.none"), left, rowY, 0xFF9A9A9A, false);
+            return;
+        }
+        entries.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+
+        int shown = 0;
+        for (java.util.Map.Entry<String, Integer> e : entries) {
+            if (shown >= STATS_VISIBLE) {
+                break;
+            }
+            String label = I18n.get("gui.bmfstown.resident.stats.k." + e.getKey());
+            // 语言键缺失时 I18n 会回显 key 本身——那比不显示更糟（一屏 stats.k.xxx）。
+            // 这里兜底成空串，宁可只剩数字，也不让玩家看见内部 key。
+            if (label.startsWith("gui.bmfstown.")) {
+                label = "";
+            }
+            rowY = drawLedgerRow(gfx, left, right, rowY, label, e.getValue());
+            shown++;
+        }
+    }
+
+    /** 画一行"标签 …… 数值"，返回下一行的 y。 */
+    private int drawLedgerRow(GuiGraphics gfx, int left, int right, int rowY,
+            String label, int value) {
+        return drawLedgerRow(gfx, left, right, rowY, label, String.valueOf(value));
+    }
+
+    /** 数值可以是格式化过的文本（"29 年 47 天"），不一定是裸整数。 */
+    private int drawLedgerRow(GuiGraphics gfx, int left, int right, int rowY,
+            String label, String value) {
+        gfx.drawString(this.font, label, left, rowY, 0xFFD8D8D8, false);
+        gfx.drawString(this.font, value, right - this.font.width(value), rowY, 0xFFFFFFFF, false);
+        // 与 STATS_GUI_HEIGHT 的算式同源（ResidentMenu.STATS_ROW_H）
+        return rowY + ResidentMenu.STATS_ROW_H;
+    }
+
     /** 想法页背景：整页深灰列表底 + 右缘滚动条。 */
     private void renderThoughtsPageBg(GuiGraphics gfx) {
         gfx.fill(this.leftPos + 4, this.topPos + thoughtListTop(),
@@ -1219,6 +1403,66 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private void drawStat(GuiGraphics gfx, int y, String label, String value, int color) {
         gfx.drawString(this.font, label, TEXT_PAD, y, 0x707070, false);
         gfx.drawString(this.font, value, TEXT_PAD + 32, y, color, false);
+    }
+
+    /**
+     * 把"天数"说成人话：{@code 2829 天} → <b>"29 年 47 天"</b>。
+     *
+     * <h2>为什么不能只写"活了 2829"（用户 2026-11-28 第二次打回）</h2>
+     * 用户原话："活了 2829，年龄 29，你觉得像人话吗？"
+     *
+     * <p>2829 是"活了 2829 天"，29 是"29 岁"——<b>同一个人的同一个量，
+     * 用了两把尺</b>。玩家看到这两个数并排，第一反应是"这俩对不上吧"，
+     * 而实际上 {@code 2829 / 96 ≈ 29.5}，完全自洽。问题是<b>没人该在心里
+     * 做这道除法</b>。
+     *
+     * <p>所以这条规则是：<b>同一屏里同一个量，必须同一单位</b>。
+     * 年龄按岁报，那"活了多久"也按岁报；剩下的零头用天补齐，
+     * 既不丢精度（29 年 47 天 ≈ 29.5 岁），也不用玩家换算。
+     *
+     * <p>精确到天的账<b>仍然留在履历页</b>——那一页本来就是账本，
+     * 一行一个整数才是它的视觉语言（见 {@code renderStatsPageText}）。
+     * <b>同一个数，在两页用两种尺度是对的</b>：资料页是"认识这个人"，
+     * 履历页是"给他算账"。
+     */
+    private static String humanSpan(int days) {
+        int yearDays = com.bmf.bmfstown.calendar.TownCalendar.DAYS_PER_YEAR;
+        if (days < yearDays) {
+            return I18n.get("gui.bmfstown.resident.span.days", days);
+        }
+        int years = days / yearDays;
+        int rest = days % yearDays;
+        return rest == 0
+                ? I18n.get("gui.bmfstown.resident.span.years", years)
+                : I18n.get("gui.bmfstown.resident.span.years_days", years, rest);
+    }
+
+    /**
+     * 生日一行：<b>"公元 3 年 5 月 12 日"</b> / <b>"公元前 28 年 5 月 12 日"</b>。
+     *
+     * <h2>为什么会有公元前</h2>
+     * 生日是从今天<b>往前推</b>的投影（{@code today − (年龄×96 + 年内偏移)}）。
+     * 按这套历法 96 天一年，一个 29 岁的居民生日在 <b>2784 天前</b>，
+     * 远早于纪元——所以全镇绝大多数人的生日都在<b>公元前</b>。
+     *
+     * <h2>⚠ 这里曾经叫"开镇前"，是错的（2026-11-28 用户抓出来）</h2>
+     * 我当时的推理是："类叫 {@code TownCalendar}、lang 是'镇民历'、满屏都是镇，
+     * 所以纪元 = 这个镇建立的那天"。<b>但历法是全世界一份、不属于任何城镇</b>
+     * （{@code TownCalendar.get} 恒取主世界数据仓，见该类注释），
+     * "建镇"根本不是历法里的事件。我把类名当成了定义，还把这个错事实
+     * 写进了决策文档（坑96）。
+     *
+     * <h2>为什么这里不再自己拼字符串</h2>
+     * 上一轮我在本类里写了个 {@code birthdayText}，自己拼"第 %s 年/元年/开镇前"。
+     * 那是<b>第二套日期措辞</b>——日历命令、日历方块、墓碑各有一份，
+     * 迟早四处漂。现在统一走 {@code TownCalendar.formatDate}，
+     * 客户端只负责把服务端算好的年月日喂进去。
+     */
+    private static String birthdayText(int year, int month, int day) {
+        return com.bmf.bmfstown.calendar.TownCalendar
+                .formatDate(new com.bmf.bmfstown.calendar.TownCalendar.CalendarDate(
+                        year, month, day, 0))
+                .getString();
     }
 
     // ---- 段位配色（泰拉瑞亚稀有度风格） ----
@@ -3194,17 +3438,23 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             "gui.bmfstown.resident.tab.info",
             "gui.bmfstown.resident.tab.town",
             "gui.bmfstown.resident.tab.work",
+            "gui.bmfstown.resident.tab.stats",
             "gui.bmfstown.resident.tab.hobby",
             "gui.bmfstown.resident.tab.thoughts",
             "gui.bmfstown.resident.tab.knowledge"};
     /** 页签文字（每次绘制时从 lang 取，语言切换即时生效）。 */
     private static String[] tabNames() {
-        return new String[]{I18n.get(TAB_KEYS[0]), I18n.get(TAB_KEYS[1]),
-                I18n.get(TAB_KEYS[2]), I18n.get(TAB_KEYS[3]), I18n.get(TAB_KEYS[4]),
-                I18n.get(TAB_KEYS[5])};
+        String[] out = new String[TAB_KEYS.length];
+        for (int i = 0; i < TAB_KEYS.length; i++) {
+            out[i] = I18n.get(TAB_KEYS[i]);
+        }
+        return out;
     }
-    /** 页签宽度（px），与 TAB_KEYS 一一对应。五个页签总宽不得超面板 176px。 */
-    private static final int[] TAB_WIDTHS = {34, 30, 30, 30, 30, 30};
+    /**
+     * 页签宽度（px），权威定义在 {@link ResidentMenu#TAB_WIDTHS}
+     * （放那里 GameTest 才读得到真常量，见坑83）。这里只做别名。
+     */
+    private static final int[] TAB_WIDTHS = ResidentMenu.TAB_WIDTHS;
 
     /**
      * 画左上角的页签。
@@ -3220,7 +3470,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
     private void drawTabs(GuiGraphics gfx, int mouseX, int mouseY) {
         int x = this.leftPos;
         int y = this.topPos;
-        int tx = 6;
+        int tx = ResidentMenu.TAB_START_X;
         String[] names = tabNames();
         for (int i = 0; i < TAB_KEYS.length; i++) {
             int w = TAB_WIDTHS[i];
@@ -3243,13 +3493,13 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
             int textX = x + tx + (w - this.font.width(name)) / 2;
             int textY = top + (bottom - top - 8) / 2;
             gfx.drawString(this.font, name, textX, textY, sel ? 0x303030 : 0x505050, false);
-            tx += w + 2;
+            tx += w + ResidentMenu.TAB_GAP;
         }
     }
 
     /** 页签命中判定。返回 true = 点中了某个页签（已切换）。 */
     private boolean clickTab(double mouseX, double mouseY) {
-        int tx = 6;
+        int tx = ResidentMenu.TAB_START_X;
         for (int i = 0; i < TAB_KEYS.length; i++) {
             int w = TAB_WIDTHS[i];
             if (mouseX >= this.leftPos + tx && mouseX < this.leftPos + tx + w
@@ -3259,7 +3509,7 @@ public class ResidentScreen extends AbstractContainerScreen<ResidentMenu> {
                 }
                 return true;
             }
-            tx += w + 2;
+            tx += w + ResidentMenu.TAB_GAP;
         }
         return false;
     }

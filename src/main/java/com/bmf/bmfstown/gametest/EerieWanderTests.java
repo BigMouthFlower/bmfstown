@@ -604,4 +604,133 @@ public class EerieWanderTests {
         }
         helper.succeed();
     }
+
+    // ==========================================================
+    //  八、时间回拨（坑97）：游标不许永久卡死
+    // ==========================================================
+
+    /**
+     * 时间往回拨之后，<b>应验必须仍然会来</b>。
+     *
+     * <h2>用户问的那件事</h2>
+     * "检查一下之前那些类似防止时间倒拨导致 npc 时间相关行为的 bug 会不会出来，
+     * 类似那种时间倒拨以后游标永远不能触发的问题。"
+     *
+     * <p><b>确实会。</b>{@code pollVerifications} 原来是 {@code today >= dueDay}，
+     * 而 dueDay 是解锁那一刻算出来的<b>未来某天</b>（today + 2~6）。时间一往回拨，
+     * today 就永远追不上——这条线<b>永久</b>等不到应验。老代码在
+     * {@code Status.elapsed} / {@code settleSleep} / {@code Events.townCooldownOk}
+     * 里都写过"now < last 就放行"（v0.9.3 的教训），恐怖线是后加的，漏了。
+     *
+     * <h2>修法与这条用例守的不变量</h2>
+     * 应验日<b>按回拨量整体平移</b>——等待期原样保留，不是"立刻应验"
+     * （那等于拿回拨换免费解锁），也不是"不管"（那才叫永久卡死）。
+     *
+     * <p>场景：第 1~10 天写齐 → 应验日 ≈ 第 13 天。然后<b>拨回第 3 天</b>，
+     * 再一路走到"回拨后应验日"。到点必须应验。
+     *
+     * <p>反向验证：把 {@code pollVerifications} 里那段平移删掉 ⇒ 红
+     * （报"回拨之后永远等不到应验"）。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void horrorVerifySurvivesTimeRewind(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        HorrorLineState state = HorrorLineState.get(level);
+        UUID townId = UUID.randomUUID();
+        RandomSourceWrap random = new RandomSourceWrap();
+        var old = HorrorLines.swapForTest(java.util.List.of(PROBE_10));
+        try {
+            // 写齐 10 格（第 1~10 天）
+            gotoDay(level, 1);
+            for (int day = 1; day <= PROBE_10.chapters(); day++) {
+                gotoDay(level, day);
+                state.advance(level, townId, random.source());
+            }
+            if (state.unlockedOf(townId).isEmpty()) {
+                helper.fail("前置：写齐后应解锁");
+                return;
+            }
+            long dueDay = state.pendingVerifications(townId).get(PROBE_10.id());
+
+            // 关键一步：时间<b>往回拨</b>到第 3 天
+            gotoDay(level, 3);
+            state.pollVerifications(level, townId); // 这一下负责检测回拨并平移
+
+            var shifted = state.pendingVerifications(townId).get(PROBE_10.id());
+            if (shifted == null) {
+                helper.fail("回拨后应验记录不该消失（它还没应验）");
+                return;
+            }
+            // 平移后的应验日应该一起被拉回到"第 3 天 + 原本的等待期"
+            if (shifted >= dueDay) {
+                helper.fail("回拨后应验日没有跟着往前移（原 " + dueDay
+                        + "，现在 " + shifted + "）——它永远追不上，这条线永久卡死");
+                return;
+            }
+
+            // 先确认"平移后仍未到"：第 3 天不该立刻应验
+            if (!state.pollVerifications(level, townId).isEmpty()) {
+                helper.fail("刚回拨就立刻应验了——那等于拿回拨换免费解锁，等待期白设");
+                return;
+            }
+
+            // 一路走到平移后的应验日：必须应验
+            gotoDay(level, shifted);
+            var due = state.pollVerifications(level, townId);
+            if (due.size() != 1 || !PROBE_10.id().equals(due.get(0).id())) {
+                helper.fail("走到平移后的应验日（第 " + shifted + " 天）仍不应验——"
+                        + "这正是'游标永远不能触发'的bug，实际返回 " + due);
+                return;
+            }
+        } finally {
+            HorrorLines.restoreAfterTest(old);
+        }
+        helper.succeed();
+    }
+
+    /**
+     * 没回拨时，回拨保护<b>绝不能误伤</b>：等待期还得老老实实等。
+     *
+     * <p>这条是上一条的对照。没有它，"把应验日直接拉到今天"这种写法
+     * 也能让上一条绿——那等于每条线都立刻应验，恐怖线的节奏全毁。
+     *
+     * <p>反向验证：把平移逻辑改成"回拨检测恒为真 / 无条件把 dueDay 设成 today"
+     * ⇒ 这条红（报"应验日之前不应验"）。
+     */
+    @GameTest(template = "smoketests.empty3x3x3", timeoutTicks = 200)
+    public static void horrorVerifyKeepsWaitingWithoutRewind(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        HorrorLineState state = HorrorLineState.get(level);
+        UUID townId = UUID.randomUUID();
+        RandomSourceWrap random = new RandomSourceWrap();
+        var old = HorrorLines.swapForTest(java.util.List.of(PROBE_10));
+        try {
+            gotoDay(level, 1);
+            for (int day = 1; day <= PROBE_10.chapters(); day++) {
+                gotoDay(level, day);
+                state.advance(level, townId, random.source());
+            }
+            long dueDay = state.pendingVerifications(townId).get(PROBE_10.id());
+            if (dueDay <= PROBE_10.chapters()) {
+                helper.fail("前置：应验日应在解锁日之后，实际 " + dueDay);
+                return;
+            }
+            // 正常往前走一天，poll 不该应验
+            gotoDay(level, PROBE_10.chapters() + 1);
+            if (!state.pollVerifications(level, townId).isEmpty()) {
+                helper.fail("应验日（第 " + dueDay + " 天）之前就应验了——等待期失效");
+                return;
+            }
+            // 应验日仍在原地（没有因为正常前进被平移）
+            var still = state.pendingVerifications(townId).get(PROBE_10.id());
+            if (still == null || still != dueDay) {
+                helper.fail("正常过一天不该改动应验日（原 " + dueDay + "，现在 " + still + "）");
+                return;
+            }
+        } finally {
+            HorrorLines.restoreAfterTest(old);
+        }
+        helper.succeed();
+    }
+
 }

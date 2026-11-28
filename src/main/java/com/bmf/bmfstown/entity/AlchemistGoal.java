@@ -1244,6 +1244,9 @@ public class AlchemistGoal extends Goal {
         int xp = Config.CRAFT_XP_PER_BREW_STEP.get() * this.steps.size();
         this.resident.addSkillXp(SkillType.CRAFTING, xp);
         PracticeObserver.observe(level, this.resident, ProfessionType.ALCHEMIST);
+        // 终身统计（2026-11-28）：按实际出瓶数记（含手艺补的第 4 瓶）
+        this.resident.getLedger().add(
+                com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.POTIONS_BREWED, bottles);
         LOGGER.info("[BmfTown][炼金] {} 整批 {} 瓶入库（订单={}，链长 {} 步，经验 +{}）",
                 this.resident.getName().getString(), bottles, this.currentOrderKey,
                 this.steps.size(), xp);

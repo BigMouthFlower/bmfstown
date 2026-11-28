@@ -626,6 +626,342 @@ public final class ModNetworking {
     }
 
     /**
+     * C → S：请求某个居民的履历数据（打开履历页时发一次）。
+     *
+     * <p><b>为什么不走快照</b>：统计表会随职业越做越长，而快照是
+     * `DATA_ARCHIVE` 实体同步数据——名字一变、心情一动就整包重发。
+     * 履历是"打开时才需要"的按需数据，不该拖着每一次心情波动走。
+     * 与 {@link CensusRequestPayload} 同一个思路（点开才拉）。
+     */
+    public record LedgerRequestPayload(int entityId) implements CustomPacketPayload {
+
+        public static final Type<LedgerRequestPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "ledger_request"));
+
+        public static final StreamCodec<ByteBuf, LedgerRequestPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        ByteBufCodecs.VAR_INT, LedgerRequestPayload::entityId,
+                        LedgerRequestPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * S → C：履历数据。
+     *
+     * <p><b>为什么天数是服务端算好发过来</b>：客户端没有 `ServerLevel`，
+     * `TownCalendar.absoluteDay` 拿不到权威天数（同一个老坑：客户端自己算
+     * 年龄会跳变，见 §3.5）。天数和统计都在服务端定稿，客户端只负责画。
+     *
+     * <h2>为什么发"生日"而不是"活了几天"（2026-11-28 用户第二次打回）</h2>
+     * 用户原话："履历显示的应该是他的年龄和出生日期，而非活了多久，
+     * 活了多久具体到天无人在意，年龄就能看到大致了。"
+     *
+     * <p>这话是对的，而且不只是"精度"问题：<b>年龄已经由 {@code ageYears} 给出，
+     * 再报一个"活了 2829 天"就是在同一屏用两把尺量同一个量</b>。
+     * 生日给了年龄<b>给不出的那半条信息</b>——哪天长一岁（年内偏移是独立抽的，
+     * 见 {@code AgingRolls}）。所以这一栏换成生日，信息量是净增的。
+     *
+     * <p>生日<b>换算成年月日再发</b>：客户端没有 {@code TownCalendar}（那是
+     * 主世界的 {@code SavedData}），自己换算不了。换算用
+     * {@code TownCalendar.dateOf(epoch, birthDay)}，允许 {@code birthDay < epoch}
+     * ——29 岁的居民生日必然早于开镇，此时 {@code birthYear <= 0} 表示"开镇前"。
+     *
+     * @param daysInTown 在镇几天（`today − arrivalDay`）；**-1 = 未知，客户端不画这一行**
+     * @param ageYears 整岁；-1 = 未生成
+     * @param birthYear 生日所在年（1 = 元年；**<= 0 = 开镇前**）；{@code UNKNOWN_DAY} 生日时无意义
+     * @param birthMonth 生日所在月（1~12）
+     * @param birthDay 生日日号（1~8，= 月相序号 + 1）
+     * @param hasBirthday 生日投影是否存在（老档居民没有；false 时三个生日字段都不画）
+     */
+    public record LedgerDataPayload(int entityId, int daysInTown,
+            int ageYears, int birthYear, int birthMonth, int birthDay,
+            boolean hasBirthday, java.util.Map<String, Integer> stats)
+            implements CustomPacketPayload {
+
+        public static final Type<LedgerDataPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "ledger_data"));
+
+        public static final StreamCodec<ByteBuf, LedgerDataPayload> STREAM_CODEC = StreamCodec.of(
+                (buf, payload) -> {
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.entityId());
+                    // daysInTown 可能是 -1（未知）。可以走 VAR_INT：原版 varint 是
+                    // zigzag 变长编码，负数无损。
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.daysInTown());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.ageYears());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.birthYear());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.birthMonth());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.birthDay());
+                    ByteBufCodecs.BOOL.encode(buf, payload.hasBirthday());
+                    ByteBufCodecs.VAR_INT.encode(buf, payload.stats().size());
+                    payload.stats().forEach((k, v) -> {
+                        ByteBufCodecs.STRING_UTF8.encode(buf, k);
+                        ByteBufCodecs.VAR_INT.encode(buf, v);
+                    });
+                },
+                buf -> {
+                    int entityId = ByteBufCodecs.VAR_INT.decode(buf);
+                    int daysInTown = ByteBufCodecs.VAR_INT.decode(buf);
+                    int ageYears = ByteBufCodecs.VAR_INT.decode(buf);
+                    int birthYear = ByteBufCodecs.VAR_INT.decode(buf);
+                    int birthMonth = ByteBufCodecs.VAR_INT.decode(buf);
+                    int birthDay = ByteBufCodecs.VAR_INT.decode(buf);
+                    boolean hasBirthday = ByteBufCodecs.BOOL.decode(buf);
+                    int size = ByteBufCodecs.VAR_INT.decode(buf);
+                    java.util.Map<String, Integer> stats = new java.util.LinkedHashMap<>();
+                    for (int i = 0; i < size; i++) {
+                        String k = ByteBufCodecs.STRING_UTF8.decode(buf);
+                        stats.put(k, ByteBufCodecs.VAR_INT.decode(buf));
+                    }
+                    return new LedgerDataPayload(entityId, daysInTown, ageYears,
+                            birthYear, birthMonth, birthDay, hasBirthday,
+                            java.util.Map.copyOf(stats));
+                });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * C → S：请求"这块碑可以刻谁"的名单（2026-11-28 决策 #144）。
+     *
+     * <p><b>为什么走"请求-回包"而不是把名单塞进方块状态</b>：
+     * 名册是镇级的（{@code GraveyardData} 挂主世界，全局一份），
+     * 但玩家只是右键一块碑——他要的是"此刻这一下能刻谁"，
+     * 不是全镇几十个死人的历史。放方块状态里就得每次名册变动刷新所有碑，
+     * 而实际上玩家看名单的时间以秒计。
+     *
+     * @param pos 被右键的那块碑（回包里原样带回，客户端只认这一块）
+     */
+    public record GravePickRequestPayload(net.minecraft.core.BlockPos pos)
+            implements CustomPacketPayload {
+
+        public static final Type<GravePickRequestPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "grave_pick_request"));
+
+        public static final StreamCodec<ByteBuf, GravePickRequestPayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        net.minecraft.core.BlockPos.STREAM_CODEC,
+                        GravePickRequestPayload::pos,
+                        GravePickRequestPayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * S → C：待葬名单（刻碑选人界面用）。
+     *
+     * <p><b>只发"显示需要的四样"</b>：UUID（回选用）、名字、死亡日、死因。
+     * 碑文那一整串统计<b>不发</b>——名单是"挑人"，挑完才看碑文；
+     * 一次传几十条的全量碑文纯属浪费，而且会让列表渲染变重。
+     *
+     * <p>{@code candidates} 为空 = 名册里一个待葬的都没有，客户端据此显示
+     * "没有待葬的人"而不是开一个空列表。
+     *
+     * <p><b>不带请求序号</b>：发起请求的是"右键一块碑"这一个动作，
+     * 同一时刻玩家只可能有一个选人界面（{@code setScreen} 是替换）。
+     * 加一个永远等于 0 的字段只会让人以为有防串包机制。
+     *
+     * @param pos 原样带回的碑位——界面靠它决定"刻到哪块碑"
+     */
+    public record GravePickListPayload(net.minecraft.core.BlockPos pos,
+            java.util.List<GraveCandidate> candidates) implements CustomPacketPayload {
+
+        public static final Type<GravePickListPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "grave_pick_list"));
+
+        public static final StreamCodec<ByteBuf, GravePickListPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buf, payload) -> {
+                            net.minecraft.core.BlockPos.STREAM_CODEC.encode(buf, payload.pos());
+                            ByteBufCodecs.VAR_INT.encode(buf, payload.candidates().size());
+                            for (GraveCandidate c : payload.candidates()) {
+                                GraveCandidate.STREAM_CODEC.encode(buf, c);
+                            }
+                        },
+                        buf -> {
+                            net.minecraft.core.BlockPos pos =
+                                    net.minecraft.core.BlockPos.STREAM_CODEC.decode(buf);
+                            int size = ByteBufCodecs.VAR_INT.decode(buf);
+                            java.util.List<GraveCandidate> list =
+                                    new java.util.ArrayList<>(size);
+                            for (int i = 0; i < size; i++) {
+                                list.add(GraveCandidate.STREAM_CODEC.decode(buf));
+                            }
+                            return new GravePickListPayload(pos, java.util.List.copyOf(list));
+                        });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * 待葬名单里的一行。
+     *
+     * <p><b>2026-11-28 补 {@code profile}</b>：原先只发"名字/死亡日/死因"四样，
+     * 理由是"名单是挑人、挑完才看碑文"。用户实测直接否掉——挑人的时候
+     * 最需要知道的恰恰是<b>这个人是谁</b>，只给一串名字根本没法判断该刻谁。
+     * 现在每行自带一段生平（见 {@link #profileOf}），点选后显示在界面下半部。
+     *
+     * <p>原版 {@code Component} 的 {@code STREAM_CODEC} 需要 registry 上下文，
+     * 而这个包的编解码器是 {@code StreamCodec<ByteBuf, ...>}（不带上下文），
+     * 所以用 {@code TRUSTED_CONTEXT_FREE_STREAM_CODEC}——发出去的内容是
+     * 我们自己拼的翻译键，不是玩家输入，不需要 registry 查表。
+     *
+     * @param deathDay 死亡日（世界绝对天数）；客户端只用来排序/显示
+     * @param cause    死因 id（{@code old_age}/{@code killed}/{@code other}），
+     *                 客户端拼 {@code death.bmfstown.cause.<cause>}
+     * @param profile  生平分段（享年/在镇/职业/死因/前几条统计），已排好序
+     *
+     * <p><b>2026-11-28 二次改：从"一个用 \n 拼的组件"改成"行数组"。</b>
+     * 拼 {@code \n} 的写法逼客户端自己 split 才能算高度、才能滚，
+     * 而"一段占几行"本该由渲染端按窗口宽度定（中文没空格，只能像素折行）。
+     * 现在发的是<b>逻辑分段</b>，客户端每段自己折行。
+     */
+    public record GraveCandidate(java.util.UUID id, String name, long deathDay, String causeKey,
+            java.util.List<net.minecraft.network.chat.Component> profile) {
+
+        public static final StreamCodec<ByteBuf, GraveCandidate> STREAM_CODEC =
+                StreamCodec.of(
+                        (buf, c) -> {
+                            net.minecraft.core.UUIDUtil.STREAM_CODEC.encode(buf, c.id());
+                            ByteBufCodecs.STRING_UTF8.encode(buf, c.name());
+                            ByteBufCodecs.VAR_LONG.encode(buf, c.deathDay());
+                            ByteBufCodecs.STRING_UTF8.encode(buf, c.causeKey());
+                            ByteBufCodecs.VAR_INT.encode(buf, c.profile().size());
+                            for (var line : c.profile()) {
+                                net.minecraft.network.chat.ComponentSerialization
+                                        .TRUSTED_CONTEXT_FREE_STREAM_CODEC.encode(buf, line);
+                            }
+                        },
+                        buf -> {
+                            var id = net.minecraft.core.UUIDUtil.STREAM_CODEC.decode(buf);
+                            String name = ByteBufCodecs.STRING_UTF8.decode(buf);
+                            long deathDay = ByteBufCodecs.VAR_LONG.decode(buf);
+                            String causeKey = ByteBufCodecs.STRING_UTF8.decode(buf);
+                            int n = ByteBufCodecs.VAR_INT.decode(buf);
+                            java.util.List<net.minecraft.network.chat.Component> profile =
+                                    new java.util.ArrayList<>(n);
+                            for (int i = 0; i < n; i++) {
+                                profile.add(net.minecraft.network.chat.ComponentSerialization
+                                        .TRUSTED_CONTEXT_FREE_STREAM_CODEC.decode(buf));
+                            }
+                            return new GraveCandidate(id, name, deathDay, causeKey,
+                                    java.util.List.copyOf(profile));
+                        });
+    }
+
+    /**
+     * 一个人的生平分段（{@link GraveCandidate#profile()} 的产出）。
+     *
+     * <p><b>直接返回 {@code GraveText.epitaphLines}</b>：名单里看的生平
+     * 与碑上刻的碑文必须是<b>同一份东西</b>。原先这里另拼了一个
+     * "用 \n 连起来"的版本，于是字段顺序要维护两遍——这才是比
+     * "生平只有一个死因"更隐蔽的问题：改一处漏一处。
+     *
+     * <p>未知项（享年/在镇算不出来、无职业）在 {@code GraveText} 里整项不出现，
+     * 不会印出"享年 -1"。
+     */
+    public static java.util.List<net.minecraft.network.chat.Component> profileOf(
+            com.bmf.bmfstown.town.GraveyardData.Grave g, long epochDay) {
+        return java.util.List.copyOf(
+                com.bmf.bmfstown.town.GraveText.epitaphLines(g, epochDay));
+    }
+
+    /**
+     * C → S：选定了某位逝者，刻到这块碑上。
+     *
+     * <p><b>服务端必须重新校验三件事</b>（客户端的名单可能已经过期）：
+     * ① 这块位置还是墓碑、② 这块碑还没刻过人、③ 这个 UUID 真的待葬。
+     * 任一不成立就回一条聊天提示，<b>绝不静默绑上</b>——
+     * 静默成功会让"屏幕上显示刻的是 A、实际刻的是 B"变成可能。
+     */
+    public record GraveCarvePayload(net.minecraft.core.BlockPos pos,
+            java.util.UUID who) implements CustomPacketPayload {
+
+        public static final Type<GraveCarvePayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "grave_carve"));
+
+        public static final StreamCodec<ByteBuf, GraveCarvePayload> STREAM_CODEC =
+                StreamCodec.composite(
+                        net.minecraft.core.BlockPos.STREAM_CODEC, GraveCarvePayload::pos,
+                        net.minecraft.core.UUIDUtil.STREAM_CODEC, GraveCarvePayload::who,
+                        GraveCarvePayload::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
+     * S → C：一块碑的碑文（刻完立刻弹界面看，右键已刻碑也走它）。
+     *
+     * <h2>为什么必须做成界面，不能继续往聊天栏打</h2>
+     * 用户 2026-11-28 原话："刻上之后就没有 ui 了，什么狗屎，而且以后
+     * 墓志铭会很长，你也要就这样放聊天框吗，蠢死了，顾头不顾尾。"
+     * 聊天栏是**流水账**：十条碑文会把玩家的对话全顶掉，而且几个 tick 后
+     * 就滚走了，玩家想再看一遍只能再右键一次。<b>碑文是"一件东西"，
+     * 该有一个能停下来读的地方。</b>
+     *
+     * <h2>为什么发"行数组"而不是一个长字符串</h2>
+     * 界面要<b>按宽度自动折行</b>（中文没有空格，机器折行和人工排版结果
+     * 不一样）。发一个字符串客户端自己 split，等于把"一行是什么"这件事
+     * 在客户端重定义一遍；发数组则让服务端（{@code GraveText} 的唯一口径）
+     * 决定<b>逻辑分段</b>，客户端只负责在每段内折行。<b>分段是内容，
+     * 折行是排版</b>——两件事不能混。
+     *
+     * <p>名字单独一个字段：它是标题，字号/颜色/位置都跟正文不同，
+     * 混在数组里客户端就得猜"第一行是不是名字"。
+     */
+    public record GraveEpitaphPayload(net.minecraft.core.BlockPos pos, String name,
+            java.util.List<net.minecraft.network.chat.Component> lines)
+            implements CustomPacketPayload {
+
+        public static final Type<GraveEpitaphPayload> TYPE = new Type<>(
+                ResourceLocation.fromNamespaceAndPath(BmfTown.MOD_ID, "grave_epitaph"));
+
+        public static final StreamCodec<ByteBuf, GraveEpitaphPayload> STREAM_CODEC =
+                StreamCodec.of(
+                        (buf, payload) -> {
+                            net.minecraft.core.BlockPos.STREAM_CODEC.encode(buf, payload.pos());
+                            ByteBufCodecs.STRING_UTF8.encode(buf, payload.name());
+                            ByteBufCodecs.VAR_INT.encode(buf, payload.lines().size());
+                            for (var line : payload.lines()) {
+                                net.minecraft.network.chat.ComponentSerialization
+                                        .TRUSTED_CONTEXT_FREE_STREAM_CODEC.encode(buf, line);
+                            }
+                        },
+                        buf -> {
+                            var pos = net.minecraft.core.BlockPos.STREAM_CODEC.decode(buf);
+                            String name = ByteBufCodecs.STRING_UTF8.decode(buf);
+                            int n = ByteBufCodecs.VAR_INT.decode(buf);
+                            java.util.List<net.minecraft.network.chat.Component> lines =
+                                    new java.util.ArrayList<>(n);
+                            for (int i = 0; i < n; i++) {
+                                lines.add(net.minecraft.network.chat.ComponentSerialization
+                                        .TRUSTED_CONTEXT_FREE_STREAM_CODEC.decode(buf));
+                            }
+                            return new GraveEpitaphPayload(pos, name, java.util.List.copyOf(lines));
+                        });
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /**
      * C → S：簿记员寻物（玩家在选择界面点了某物品）。
      * 服务端找"最近的装着该物品的容器"，簿记员带路过去并撒粒子。
      */
@@ -1166,6 +1502,90 @@ public final class ModNetworking {
             serverPlayer.displayClientMessage(net.minecraft.network.chat.Component.translatable(
                     "msg.bmfstown.rename.done", name), false);
         });
+    }
+
+    /** 履历页：请求某个居民的一生统计（打开页面时发一次）。 */
+    private static void handleLedgerRequest(LedgerRequestPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Player player = ctx.player();
+            if (!(player instanceof ServerPlayer serverPlayer)) {
+                return;
+            }
+            if (!(serverPlayer.level().getEntity(payload.entityId())
+                    instanceof com.bmf.bmfstown.entity.Resident resident)) {
+                return;
+            }
+            sendLedger(serverPlayer, resident);
+        });
+    }
+
+    /**
+     * 把履历数据发给一个玩家。
+     *
+     * <p><b>天数在这里算、在客户端不许再算</b>：客户端拿不到权威
+     * {@code today}（没有 {@code ServerLevel}），自己算会跳变。
+     *
+     * <p><b>零项不发</b>：只传 {@code > 0} 的统计项，空表项不发——
+     * 省字节，也让客户端不必再过滤一遍。
+     */
+    public static void sendLedger(ServerPlayer player,
+            com.bmf.bmfstown.entity.Resident resident) {
+        long today = com.bmf.bmfstown.calendar.TownCalendar.absoluteDay(
+                player.serverLevel());
+        var identity = resident.getIdentity();
+        long birthDay = identity.birthDay();
+        long arrivalDay = identity.arrivalDay();
+
+        int daysInTown = com.bmf.bmfstown.entity.domain.AgingRolls.daysSince(today, arrivalDay);
+        int ageYears = identity.ageYears(today);
+
+        // ⚠ 不再算 daysAlive（2026-11-28 用户第二次打回："活了多久具体到天无人在意，
+        //   年龄就能看到大致了"）。年龄已经有 ageYears，同一屏再报一个天数就是用
+        //   两把尺量同一个量。生日给的是年龄给不出的那半条信息：哪一天长一岁。
+        boolean hasBirthday = birthDay != com.bmf.bmfstown.entity.domain.AgingRolls.UNKNOWN_DAY;
+        int birthYear = 0;
+        int birthMonth = 0;
+        int birthDom = 0;
+        if (hasBirthday) {
+            // 生日是从今天往前推的投影，必然早于开镇（29 岁 ≈ 2784 天前），
+            // 所以这里必须允许算出"开镇前"的日期——dateOf 全程 floorMod，负天数安全。
+            var calendar = com.bmf.bmfstown.calendar.TownCalendar.get(player.serverLevel());
+            var date = com.bmf.bmfstown.calendar.TownCalendar.dateOf(
+                    calendar.epochDay(player.serverLevel()), birthDay);
+            birthYear = date.year();
+            birthMonth = date.month();
+            birthDom = date.day();
+        }
+
+        java.util.Map<String, Integer> stats = new java.util.LinkedHashMap<>();
+        // ① ledger 里的终身累计
+        resident.getLedger().view().forEach((k, v) -> {
+            if (v != null && v > 0) {
+                stats.put(k, v);
+            }
+        });
+        // ② 已经有了、但不进 ledger 的终身量（唯一真相源在 KnowledgeState）
+        int read = resident.getKnowledge().totalBooksRead();
+        if (read > 0) {
+            stats.put(com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.BOOKS_READ, read);
+        }
+        // ⚠ <b>天数类绝不进 stats</b>（2026-11-28 用户截图实测的残留 bug）。
+        // 初版把 days_alive/days_in_town 也塞进这张表，可是：
+        //   ① 它们已经在包体里各有一个独立字段（daysAlive/daysInTown），重复；
+        //   ② 它们**没有 lang 键**（不是统计项，是表头），客户端对缺键的兜底
+        //      是"标签置空"，于是履历页统计区多出一行**只有数字、没有名字**的
+        //      "2829"——玩家截图里那个来路不明的数就是它；
+        //   ③ 值有几千，客户端按值降序取前 N 条时必然霸占前几名，
+        //      把"拆出的材料 3 / 击杀 1"挤到看不见。
+        // 结论：天数是"时间"，不是"次数"。时间走表头那三行，统计区只放计数。
+
+        player.connection.send(new LedgerDataPayload(resident.getId(),
+                daysInTown, ageYears, birthYear, birthMonth, birthDom,
+                hasBirthday, stats));
+    }
+
+    private static void handleLedgerData(LedgerDataPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> com.bmf.bmfstown.client.ClientLedgerState.accept(payload));
     }
 
     private static void handleCensusData(CensusDataPayload payload, IPayloadContext ctx) {
@@ -1941,6 +2361,144 @@ public final class ModNetworking {
         });
     }
 
+    // ==========================================================
+    //  刻碑选人（2026-11-28 决策 #144）
+    // ==========================================================
+
+    /** 服务端：把"这块碑此刻能刻谁"发回去。 */
+    private static void handleGravePickRequest(GravePickRequestPayload payload,
+            IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer player)
+                    || !(player.level() instanceof ServerLevel level)) {
+                return;
+            }
+            sendGraveCandidates(player, payload.pos(), level);
+        });
+    }
+
+    /** 客户端：收到碑文 → 开碑文界面（刻完那一刻看，以及右键已刻碑时看）。 */
+    private static void handleGraveEpitaph(GraveEpitaphPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof net.minecraft.client.player.LocalPlayer) {
+                com.bmf.bmfstown.client.GraveEpitaphScreen.openWith(payload);
+            }
+        });
+    }
+
+    /** 客户端：收到名单 → 开选人界面（名单为空时界面自己显示"没有人"）。 */
+    private static void handleGravePickList(GravePickListPayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player() instanceof net.minecraft.client.player.LocalPlayer) {
+                com.bmf.bmfstown.client.GravePickScreen.openWith(payload);
+            }
+        });
+    }
+
+    /**
+     * 服务端：玩家在选人界面点了某人 → 刻到那块碑上。
+     *
+     * <p><b>三重复核，缺一不可</b>：
+     * <ol>
+     *   <li><b>位置还是墓碑</b>——名单发出到玩家点选之间，碑可能已被挖掉。
+     *       不查就会把"一个人的碑位"写到一个已经不存在的位置，
+     *       那块位置将来放任何方块都可能被误判成碑位。</li>
+     *   <li><b>这块碑还没刻过人</b>——防连点两个名字，后者覆盖前者
+     *       （一人一碑、一碑一人是 #143 定的）。</li>
+     *   <li><b>这个 UUID 真的待葬</b>——别人的碑可能刚被刻上，
+     *       名单是那一刻的快照。</li>
+     * </ol>
+     * 任一条不过就发聊天提示，不静默绑。
+     */
+    private static void handleGraveCarve(GraveCarvePayload payload, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer player)
+                    || !(player.level() instanceof ServerLevel level)) {
+                return;
+            }
+            var pos = payload.pos();
+            // 距离校验：方块交互包不带位置校验的话，改客户端就能刻任意远处的碑
+            if (player.distanceToSqr(pos.getX() + 0.5D, pos.getY() + 0.5D,
+                    pos.getZ() + 0.5D) > 64.0D) {
+                player.displayClientMessage(Component.translatable(
+                        "grave.bmfstown.too_far"), false);
+                return;
+            }
+            var data = com.bmf.bmfstown.town.GraveyardData.get(level);
+            // 三重复核全在 GraveCarving 里（可单测），这里只负责"查世界 + 发提示"
+            var result = com.bmf.bmfstown.town.GraveCarving.check(data, pos,
+                    level.getBlockState(pos).is(
+                            com.bmf.bmfstown.block.ModBlocks.GRAVE_STONE.get()),
+                    payload.who());
+            if (result != com.bmf.bmfstown.town.GraveCarving.Result.OK) {
+                player.displayClientMessage(
+                        Component.translatable(
+                                com.bmf.bmfstown.town.GraveCarving.messageKey(result)),
+                        false);
+                return;
+            }
+            var grave = data.find(payload.who());
+            data.bindSlot(pos, grave.id());
+            player.displayClientMessage(
+                    Component.translatable("grave.bmfstown.carved", grave.name()), false);
+            level.playSound(null, pos, net.minecraft.sounds.SoundEvents.STONE_PLACE,
+                    net.minecraft.sounds.SoundSource.BLOCKS, 1.0F, 0.8F);
+            // 刻完立刻把碑文<b>开成界面</b>给玩家看。
+            //
+            // 2026-11-28 用户实测打回："刻上之后就没有 ui 了……以后墓志铭会很长，
+            // 你也要就这样放聊天框吗，蠢死了，顾头不顾尾。"
+            // 聊天栏是流水账：碑文越长越会把对话顶掉，而且滚走就看不到了。
+            // 碑文是一件"东西"，要有一个能停下来读的地方 ⇒ 走 S→C 包开专用屏。
+            sendEpitaph(player, pos, grave);
+        });
+    }
+
+    /**
+     * 把这个镇所有待葬者发给玩家。
+     *
+     * <p>镇按<b>碑的位置</b>解析，不是按玩家站位——玩家常站在镇界外一格立碑
+     * （顺手、也合法），按站位解析会突然找不到镇、名单变空。
+     *
+     * <p>墓碑不在任何镇内（野外立的无名碑）时只列"不属于任何镇"的逝者，
+     * 不跨镇串名单——不然野外一块碑能刻到别镇的人，坟墓就串门了。
+     */
+    public static void sendGraveCandidates(ServerPlayer player,
+            net.minecraft.core.BlockPos pos, ServerLevel level) {
+        var data = com.bmf.bmfstown.town.GraveyardData.get(level);
+        var town = com.bmf.bmfstown.town.TownSaveData.get(level)
+                .findContaining(level.dimension().location().toString(), pos, pos);
+        java.util.UUID townId = town == null ? null : town.id();
+
+        // 纪元取一次（会顺带落锚），后面每条生平都用它把 deathDay 换算成日期。
+        long epochDay = com.bmf.bmfstown.calendar.TownCalendar.get(level).epochDay(level);
+        java.util.List<GraveCandidate> list = new java.util.ArrayList<>();
+        // 过滤规则只存在于 GraveyardData.unburiedOfTown（用例调的是同一个方法）
+        for (var g : data.unburiedOfTown(townId)) {
+            list.add(new GraveCandidate(g.id(), g.name(), g.deathDay(),
+                    com.bmf.bmfstown.town.GraveText.causeShortKey(g),
+                    profileOf(g, epochDay)));
+        }
+        player.connection.send(new GravePickListPayload(pos, java.util.List.copyOf(list)));
+    }
+
+    /**
+     * 把一块碑的碑文发给玩家，客户端开碑文界面显示（刻完 / 右键已刻碑）。
+     *
+     * <p><b>一个出口</b>：刻完那一刻和以后右键看，必须看到同一份东西。
+     * 原先两条路各写一遍（一条打聊天栏、一条打聊天栏），改一处漏一处
+     * 就会出现"刻的时候和看的时候不一样"。现在都走这里。
+     */
+    public static void sendEpitaph(ServerPlayer player,
+            net.minecraft.core.BlockPos pos,
+            com.bmf.bmfstown.town.GraveyardData.Grave grave) {
+        // 纪元必须在服务端取（客户端没有 ServerLevel），这里一次算好塞进行里。
+        long epochDay = com.bmf.bmfstown.calendar.TownCalendar
+                .get(player.serverLevel()).epochDay(player.serverLevel());
+        player.connection.send(new GraveEpitaphPayload(pos, grave.name(),
+                java.util.List.copyOf(
+                        com.bmf.bmfstown.town.GraveText.epitaphLines(grave, epochDay))));
+    }
+
     /**
      * 服务端把镇民的想法日志与偏好摘要发给玩家（打开面板时调用）。
      */
@@ -2019,6 +2577,10 @@ public final class ModNetworking {
                 ModNetworking::handleWorkerToggle);
         registrar.playToServer(CensusRequestPayload.TYPE, CensusRequestPayload.STREAM_CODEC,
                 ModNetworking::handleCensusRequest);
+        registrar.playToServer(LedgerRequestPayload.TYPE, LedgerRequestPayload.STREAM_CODEC,
+                ModNetworking::handleLedgerRequest);
+        registrar.playToClient(LedgerDataPayload.TYPE, LedgerDataPayload.STREAM_CODEC,
+                ModNetworking::handleLedgerData);
         registrar.playToServer(ResidentRenamePayload.TYPE, ResidentRenamePayload.STREAM_CODEC,
                 ModNetworking::handleResidentRename);
         registrar.playToServer(OpenResidentFromHandbookPayload.TYPE,
@@ -2056,6 +2618,17 @@ public final class ModNetworking {
                 ModNetworking::handleTimeSpeedSync);
         registrar.playToClient(MoodSyncPayload.TYPE, MoodSyncPayload.STREAM_CODEC,
                 ModNetworking::handleMoodSync);
+        registrar.playToServer(GravePickRequestPayload.TYPE,
+                GravePickRequestPayload.STREAM_CODEC,
+                ModNetworking::handleGravePickRequest);
+        registrar.playToClient(GravePickListPayload.TYPE,
+                GravePickListPayload.STREAM_CODEC,
+                ModNetworking::handleGravePickList);
+        registrar.playToClient(GraveEpitaphPayload.TYPE,
+                GraveEpitaphPayload.STREAM_CODEC,
+                ModNetworking::handleGraveEpitaph);
+        registrar.playToServer(GraveCarvePayload.TYPE, GraveCarvePayload.STREAM_CODEC,
+                ModNetworking::handleGraveCarve);
     }
 
     private ModNetworking() {

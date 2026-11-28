@@ -90,6 +90,22 @@ public final class ModItems {
             ITEMS.registerSimpleBlockItem(com.bmf.bmfstown.block.ModBlocks.TAVERN_MENU_BOARD);
 
     /**
+     * 墓碑（2026-11-28 决策 #143 / #144）：8 种材质共用<b>一个</b>物品，
+     * 具体材质存在原版 {@code block_state} 组件里（由切石机配方写入）。
+     *
+     * <p><b>为什么不是 {@code registerSimpleBlockItem}</b>：原版 {@code BlockItem}
+     * 的名字恒为"墓碑"，不看组件 ⇒ 物品栏 8 个条目长得一模一样、名字也一样，
+     * 玩家分不出哪个是深板岩。{@link com.bmf.bmfstown.block.GraveStoneItem}
+     * 按组件取名字，图标由客户端 {@code overrides} 分派（见 {@code BmfTownClient}）。
+     * 物品本身<b>仍然只有一个</b>，只是"同一个物品的不同变体"能看出区别了。
+     */
+    public static final DeferredItem<com.bmf.bmfstown.block.GraveStoneItem> GRAVE_STONE =
+            ITEMS.registerItem("grave_stone",
+                    props -> new com.bmf.bmfstown.block.GraveStoneItem(
+                            com.bmf.bmfstown.block.ModBlocks.GRAVE_STONE.get(), props),
+                    new Item.Properties());
+
+    /**
      * 写作中的书（v0.11 学者）：开写即抽定内容，进度/实践计数/作者链全在
      * 组件 NBT 里——死亡掉落、换人续写、销毁退池都随书走。
      * 名字恒为"未完成的书"，玩家打不开（内容保密）。

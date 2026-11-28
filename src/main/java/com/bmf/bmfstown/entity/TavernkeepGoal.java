@@ -597,6 +597,9 @@ public class TavernkeepGoal extends net.minecraft.world.entity.ai.goal.Goal {
                 // 自我闭环分支（酒保自己就是客人）不算
                 int xp = Config.TAVERN_XP_PER_SERVE.get();
                 this.resident.addSkillXp(SkillType.COOKING, xp);
+                // 终身统计（2026-11-28）：一杯算一次（与经验同一结算点、同一口径）
+                this.resident.getLedger().add(
+                        com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.DRINKS_SERVED, 1);
                 level.playSound(null, ppos, SoundEvents.ITEM_PICKUP,
                         SoundSource.NEUTRAL, 0.6F, 1.0F);
             } else {

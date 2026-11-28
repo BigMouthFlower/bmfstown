@@ -536,6 +536,37 @@ public final class Status {
         settleSleep(resident, level);
         settleMemory(resident, level);
         resident.getMemoryState().dailyDecay(); // 印象每日衰减：归零即遗忘（v0.9.2 接上钩子）
+        settleOldAge(resident, level);          // 寿终：放在最后，别打断上面任何结算
+    }
+
+    /**
+     * 寿终：年龄到了寿命那天走。<b>整个 mod 唯一的自然死因。</b>
+     *
+     * <h2>为什么走 hurt 而不是 setHealth(0) 或 discard()</h2>
+     * 走 {@code hurt} 才能触发原版 {@code LivingDeathEvent}——{@code WarriorCombatHandler}
+     * 的击杀入账、{@code PersonalityEventHandler.onLivingDeath} 的死者名册
+     * 全都挂在那上面。直接 {@code discard()} 会让"他死了但名册里没有他"，
+     * 那块碑就永远立不起来。
+     *
+     * <p>用 {@code genericKill} 作为伤害源是为了让死因可判（{@code msgId}），
+     * 与 {@code /kill} 同源——已知误差：玩家用 {@code /kill} 杀的居民会被记成老死。
+     * 这个误差可以接受（后台命令不是玩法路径），而且比"另造一个伤害类型"便宜得多。
+     *
+     * <h2>为什么在这里而不是实体 tick</h2>
+     * 每日结算天然一天只跑一次，寿命判定本来就是"天"粒度的；
+     * 挂在实体 tick 里等于每 tick 判一次同样的东西。
+     */
+    private void settleOldAge(Resident resident, ServerLevel level) {
+        var identity = resident.getIdentity();
+        if (!identity.hasAging()) {
+            return; // 老档还没生成（ensureGenerated 在上面已经补过，正常不会走到）
+        }
+        long today = com.bmf.bmfstown.calendar.TownCalendar.absoluteDay(level);
+        long deathDay = identity.birthDay() + identity.lifespanDays();
+        if (today < deathDay || resident.isDeadOrDying()) {
+            return;
+        }
+        resident.hurt(level.damageSources().genericKill(), Float.MAX_VALUE);
     }
 
     /** 结算 1：职业喜欢。判定基准是当前职业（数据驱动，新职业自动参与）。 */
@@ -558,6 +589,14 @@ public final class Status {
         }
         int need = Config.MOOD_TRAIT_WARLIKE_NO_KILL_DAYS.get();
         int since = this.lastKillDay < 0 ? Integer.MAX_VALUE : currentDay(level) - this.lastKillDay;
+        // 回拨保护（2026-11-28，坑97）：时间往回拨后 `currentDay - lastKillDay`
+        // 变成负数 ⇒ 好战的人"很久没杀东西"这段憋闷**先被静默**，
+        // 要等世界时间重新走到原来的日期才恢复。不是永久卡死，但确实丢了几天情绪。
+        // 判据同 {@link #elapsed}：差值小于 0 只可能是时间被拨过，视为"重置"放行。
+        // 代价是回拨那一刻可能误报一次"很久没杀"，比整段沉默轻。
+        if (since < 0) {
+            since = Integer.MAX_VALUE;
+        }
         if (since >= need) {
             Events.happen(resident, level, EventType.KILL_NONE, base);
         }
@@ -935,6 +974,24 @@ public final class Status {
      */
     public void ensureGenerated(Resident resident, ServerLevel level) {
         ensureAxes(resident); // 轴先行：抽"喜欢的职业"要按勇气轴过滤（胆小不喜战士）
+        // 年龄与寿命（2026-11-28）：必须放在下面那个 early return <b>之前</b>。
+        // prefs 一旦生成过就走 return，挂在 return 后面等于对老居民永不生效。
+        // 幂等由 Identity.ensureAging 自己判（hasAging()），这里每天过一遍无害。
+        //
+        // 只在服务端抽：客户端也会调 ensureGenerated（面板渲染前），
+        // 但客户端 RandomSource 与服务端不同源、两边各抽一次就分叉。
+        // 客户端的 Identity 不落档（每帧重建），所以不会写坏档，但会显示错年龄。
+        if (resident.getIdentity() != null) {
+            // 返回 true = 这次才补上 ⇒ 必须推一次快照。
+            // 不推的话客户端拿到的 ageYears 还是 -1，面板"年龄"那一行不画
+            // （2026-11-28 用户实测："npc 的 UI 里面也是年龄什么的要啥啥没有"）。
+            // 这里一天只可能命中一次（hasAging 幂等），代价可忽略。
+            if (resident.getIdentity().ensureAging(
+                    com.bmf.bmfstown.calendar.TownCalendar.absoluteDay(level),
+                    resident.getRandom())) {
+                resident.syncClient();
+            }
+        }
         if (resident.getPrefs().generated()) {
             reconcileLikedProfession(resident);
             return;

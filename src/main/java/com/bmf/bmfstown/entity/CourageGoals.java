@@ -180,7 +180,8 @@ public final class CourageGoals {
             Vec3 away = this.resident.position().subtract(this.threat.position());
             away = (away.lengthSqr() < 1.0E-4 ? new Vec3(0.0D, 0.0D, 1.0D) : away.normalize()).scale(6.0D);
             Vec3 target = this.resident.position().add(away);
-            this.resident.getNavigation().moveTo(target.x, target.y, target.z, 1.15D);
+            this.resident.getNavigation().moveTo(target.x, target.y, target.z,
+                    com.bmf.bmfstown.config.Speeds.hurry());
         }
     }
 

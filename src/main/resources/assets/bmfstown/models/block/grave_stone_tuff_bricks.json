@@ -1,0 +1,6 @@
+{
+  "parent": "bmfstown:block/grave_stone_base",
+  "textures": {
+    "stone": "minecraft:block/tuff_bricks"
+  }
+}

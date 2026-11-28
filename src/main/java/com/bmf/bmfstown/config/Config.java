@@ -45,15 +45,18 @@ public final class Config {
             .defineInRange("residentAttributes.followRange", 32.0D, 4.0D, 256.0D);
 
     /**
-     * 领地内漫步速度。与睡觉同速（0.6 = 村民步速的 60%）。
+     * 领地内漫步速度 = <b>正常档</b>（0.6 = 村民步速的 60%）。
      *
-     * <p>用户定稿：闲逛压到和回家睡觉一样慢——漫步是常态行为，
-     * 太快会显得满地图瞎窜很吵；赶路类的回家（1.15）和跟随（1.3）
-     * 保持比这快，速度差本身就是信息（"他在赶路" vs "他在瞎溜达"）。
+     * <p>2026-11-27 用户拍板统一为三档（见 {@link Speeds}）：<b>日常一切走动都是这一档</b>
+     * ——漫步、睡觉、进酒馆、还杯、取书、送货、进镇、站岗。用户原话：
+     * <i>"其他的我觉得都应该是 0.6……别的就是你突然一个快走，就是很突兀很奇怪"</i>。
+     *
+     * <p>速度差现在只用来说明"他这会儿有事"：逃跑/回领地是急促档，
+     * 跟随是奔跑档。<b>不许再出现第四种日常速度。</b>
      */
     public static final ModConfigSpec.DoubleValue STROLL_SPEED = BUILDER
-            .comment("镇民在领地内漫步的速度（0.6 = 村民步速的六成，与睡觉同速）",
-                    "Resident stroll speed inside territory (0.6 = 60% of villager pace, same as walking to bed)")
+            .comment("镇民日常走动速度（正常档，0.6 = 村民步速的六成）",
+                    "Resident normal-pace walk speed (0.6 = 60% of villager pace)")
             .defineInRange("residentAttributes.strollSpeed", 0.6D, 0.05D, 4.0D);
 
     // ==========================================================
@@ -392,10 +395,15 @@ public final class Config {
             .comment("领地逃逸检查的频率（tick）", "Territory escape check interval (ticks)")
             .defineInRange("ai.townCheckIntervalTicks", 20, 1, 200);
 
-    /** 逃逸后返回领地的速度（比漫步快一点）。 */
+    /**
+     * <b>急促档</b>（1.15）：逃跑 / 逃逸后回领地 / 追击。
+     *
+     * <p>2026-11-27 起不再单独表示"回领地"，而是三档里"他这会儿有事"的那一档
+     * （见 {@link Speeds#hurry()}）。键名与配置路径保留（玩家的 toml 不断档）。
+     */
     public static final ModConfigSpec.DoubleValue RETURN_HOME_SPEED = BUILDER
-            .comment("逃逸后返回领地的速度（介于走路与疾跑之间的赶路速度）",
-                    "Speed when returning to territory after escaping (between walk and sprint)")
+            .comment("急促档移速：逃跑 / 逃逸后回领地 / 追击（介于常速与奔跑之间）",
+                    "Hurry pace: fleeing, returning to territory, chasing (between normal and sprint)")
             .defineInRange("ai.returnHomeSpeed", 1.15D, 0.05D, 4.0D);
 
     /** 觅食一次从箱子里拿几个食物。 */
@@ -467,17 +475,23 @@ public final class Config {
             .comment("站岗活动半径（格）", "Guard post patrol radius (blocks)")
             .defineInRange("warrior.guardRadius", 10, 2, 64);
 
-    /** 跟随玩家时的移速。 */
+    /**
+     * <b>奔跑档</b>（1.3 ≈ 玩家疾跑）：<b>只给跟随</b>。
+     *
+     * <p>跟的是会动的东西，慢一档就永远追不上（战士跟随玩家、学者跟随同行、
+     * 追击敌对生物都读这一档，见 {@link Speeds#follow()}）。键名保留历史名，
+     * 玩家已有 toml 不受影响。
+     */
     public static final ModConfigSpec.DoubleValue WARRIOR_FOLLOW_SPEED = BUILDER
-            .comment("跟随玩家时的移速（1.3 ≈ 玩家疾跑速度 5.6 格/秒）",
-                    "Speed when following a player (1.3 ~ player sprint, 5.6 m/s)")
+            .comment("奔跑档移速：跟随玩家 / 跟随同行 / 追击生物（1.3 ≈ 玩家疾跑）",
+                    "Sprint pace: following a player or resident, chasing mobs (1.3 ~ player sprint)")
             .defineInRange("warrior.followSpeed", 1.3D, 0.05D, 4.0D);
 
-    /** 站岗巡逻的移速。 */
-    public static final ModConfigSpec.DoubleValue WARRIOR_GUARD_SPEED = BUILDER
-            .comment("站岗巡逻的移速（1.0 = 村民快步走）",
-                    "Speed when patrolling a guard post (1.0 = villager walking pace)")
-            .defineInRange("warrior.guardSpeed", 1.0D, 0.05D, 4.0D);
+    // 站岗巡逻移速已归入正常档（2026-11-27 用户拍板"站岗 0.6 也够了"），
+    // warrior.guardSpeed 这个键<b>已删除</b>：调用点全改读 Speeds.normal()。
+    // 不能"留键保兼容"——老玩家 toml 里写死 1.0，改默认值对他无效，
+    // 结果就是"看得见、调了没反应"，比删键更糟（一个约束只放一处，坑54）。
+    // 删键后旧 toml 里的孤儿条目 NeoForge 会忽略，不报错。
 
     /** 离跟随目标超过这个距离（格）时直接传送归队。 */
     public static final ModConfigSpec.IntValue WARRIOR_TELEPORT_DIST = BUILDER
@@ -1009,6 +1023,51 @@ public final class Config {
             .comment("不再受苦时铭记进度的每日衰减量（归零清空；已固化的不受影响）",
                     "Daily decay of unfirmed memory progress when the suffering stops; firm memories unaffected")
             .defineInRange("memory.decay", 5, 0, 1000);
+
+    // ==========================================================
+    //  年龄与寿命（v0.18 涌现层，决策 #139/#140）
+    // ==========================================================
+
+    /**
+     * 寿命均值（<b>公元纪年</b>，本 mod 历法的年，不是现实年）。
+     *
+     * <p>用户 2026-11-28 拍板："按照我 mod 的历法去算年份，一个 npc 平均寿命 70 岁"。
+     * 一个公元纪年 = 96 游戏日，所以 70 年 ≈ 6720 天。**别写死 6720**，
+     * 历法一改（`TownCalendar.DAYS_PER_YEAR`）要跟着走。
+     */
+    public static final ModConfigSpec.DoubleValue LIFESPAN_MEAN_YEARS = BUILDER
+            .comment("寿命均值（公元纪年，本 mod 历法的年）。默认 70 —— 96 游戏日一年，不是现实年",
+                    "Mean lifespan in mod-calendar years. 70 by default")
+            .defineInRange("aging.lifespanMeanYears", 70.0D, 20.0D, 200.0D);
+
+    /**
+     * 寿命标准差。**不设上限截断**——用户明确否掉了 ±2.5σ 截断：
+     * "正态分布有小概率事件发生，让他们发生呗。"
+     *
+     * <p>sd=8 时约 3% 在 50 岁前走、3% 活过 90，这是特性不是缺陷。
+     * 填 0 会让所有人 70 岁整走（不推荐，失去叙事）。
+     */
+    public static final ModConfigSpec.DoubleValue LIFESPAN_SD_YEARS = BUILDER
+            .comment("寿命标准差（公元纪年）。0 = 人人 70 岁整；默认 8（约 3% 早逝、3% 长寿，不做截断）",
+                    "Lifespan standard deviation. 0 = everyone dies at exactly the mean; 8 by default")
+            .defineInRange("aging.lifespanSdYears", 8.0D, 0.0D, 30.0D);
+
+    /** 出现年龄的硬上限（岁）。集中青年，右偏。 */
+    public static final ModConfigSpec.IntValue AGE_CAP_YEARS = BUILDER
+            .comment("出现时年龄的硬上限（岁）。默认 55",
+                    "Hard cap on age at appearance, in years. 55 by default")
+            .defineInRange("aging.ageCapYears", 55, 18, 120);
+
+    /**
+     * 出现时<b>至少还能活几年</b>。
+     *
+     * <p>防"刚进镇就死"——若抽到 18 岁而寿命只有 20 年，年龄会被压低。
+     * 默认 5 年 = 480 游戏日。
+     */
+    public static final ModConfigSpec.IntValue MIN_REMAINING_YEARS = BUILDER
+            .comment("出现时至少还能活几年（防刚进镇就到寿）。默认 5",
+                    "Minimum remaining lifespan at appearance, in years. 5 by default")
+            .defineInRange("aging.minRemainingYears", 5, 0, 50);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 

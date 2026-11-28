@@ -171,6 +171,15 @@ public class Resident extends PathfinderMob {
     private final com.bmf.bmfstown.entity.domain.KnowledgeState knowledge =
             new com.bmf.bmfstown.entity.domain.KnowledgeState();
 
+    /**
+     * 终身统计账本（2026-11-28）：这辈子干了多少活。
+     *
+     * <p>与 {@link #status} 的每日计数<b>语义完全不同</b>——那边每日清零算心情，
+     * 这边永不清零刻墓碑。见 {@link com.bmf.bmfstown.entity.domain.ResidentLedger}。
+     */
+    private final com.bmf.bmfstown.entity.domain.ResidentLedger ledger =
+            new com.bmf.bmfstown.entity.domain.ResidentLedger();
+
     /** 写作中的书（学者工作页专属格子；非学者恒空）。进度全在书组件里。 */
     private ItemStack writingBook = ItemStack.EMPTY;
 
@@ -601,7 +610,10 @@ public class Resident extends PathfinderMob {
         // ---- 战士工作（只在 workMode 对应时激活，见 WarriorGoals） ----
         // 移动战（近战攻击）优先级 3，能打断漫步；
         // 跟随/站岗两个移动 Goal 优先级 4，由 workMode 互斥，同时只活一个。
-        this.goalSelector.addGoal(3, new MeleeAttackGoal(this, 1.0D, true));
+        // 追击敌对生物：目标是动的，跟"跟随"同一档（1.3）。
+        // 改前这里裸写 1.0，比目标的移动还慢，容易永远追不上。
+        this.goalSelector.addGoal(3, new MeleeAttackGoal(this,
+                com.bmf.bmfstown.config.Speeds.follow(), true));
         this.goalSelector.addGoal(4, new WarriorGoals.FollowPlayerGoal(this));
         this.goalSelector.addGoal(4, new WarriorGoals.GuardPostGoal(this));
         // ---- 工人工作（只在职业=工人且白天激活，见 WorkerGoal） ----
@@ -685,7 +697,19 @@ public class Resident extends PathfinderMob {
         int copyingPercent = wipPercent(this.copyingBook);
         this.entityData.set(DATA_ARCHIVE, ResidentSnapshot.of(
                 this.identity, this.growth, this.prefs, this.status, this.knowledge,
-                writingPercent, copyingPercent));
+                writingPercent, copyingPercent,
+                // 年龄 / 在镇天数：<b>服务端算好再发</b>。客户端没有 ServerLevel，
+                // 让它拿 birthDay/arrivalDay 自己算会每帧跳（§3.5 的取舍）。
+                //
+                // ⚠ 这两个量的"未知"是 **-1**，不是 UNKNOWN_DAY：
+                // 客户端渲染只认 -1（见 ResidentScreen 的 `>= 0` 判定），
+                // 而 server 端内部哨兵是 Long.MIN_VALUE。转换在下面 done。
+                this.identity.ageYears(com.bmf.bmfstown.calendar.TownCalendar
+                        .absoluteDay((net.minecraft.server.level.ServerLevel) this.level())),
+                com.bmf.bmfstown.entity.domain.AgingRolls.daysSince(
+                        com.bmf.bmfstown.calendar.TownCalendar
+                                .absoluteDay((net.minecraft.server.level.ServerLevel) this.level()),
+                        this.identity.arrivalDay())));
         // 武器偏好（读档后域对象可能带档位而实体通道还是初值——顺路校正；
         // SynchedEntityData diff 推送，无变化零流量）
         this.entityData.set(DATA_WEAPONPREF_SYNC, this.jobState.weaponPref().ordinal());
@@ -740,6 +764,11 @@ public class Resident extends PathfinderMob {
 
     public com.bmf.bmfstown.entity.domain.KnowledgeState getKnowledge() {
         return this.knowledge;
+    }
+
+    /** 终身统计账本（一辈子干了多少活；履历页与墓碑共用）。 */
+    public com.bmf.bmfstown.entity.domain.ResidentLedger getLedger() {
+        return this.ledger;
     }
 
     /** 睡眠状态机是否在跑（GO_HOME/FIND_BED/SLEEPING 任一）——闲暇让位用。 */
@@ -1533,7 +1562,9 @@ public class Resident extends PathfinderMob {
         if (this.eatingSlot >= 0) {
             this.settleBite();
         }
-        // 六域整体存成一个子 Compound，各域字段增加时这里不用改
+        // 十域整体存成一个子 Compound，各域字段增加时这里不用改
+        // （Identity / Growth / Prefs / Status / Trait / Job / Memory /
+        //   Knowledge / Title / Ledger）
         CompoundTag domains = new CompoundTag();
         domains.put("Identity", this.identity.save());
         domains.put("Growth", this.growth.save());
@@ -1544,6 +1575,7 @@ public class Resident extends PathfinderMob {
         domains.put("Memory", this.memoryState.save());
         domains.put("Knowledge", this.knowledge.save());
         domains.put("Title", this.titleState.save());
+        domains.put("Ledger", this.ledger.save());
         tag.put("Domains", domains);
         // 背包（需要注册表来保存物品的数据组件）
         tag.put("ResidentInventory", this.inventory.save(this.registryAccess()));
@@ -1591,6 +1623,8 @@ public class Resident extends PathfinderMob {
             this.memoryState.loadFrom(domains.getCompound("Memory"));
             this.knowledge.loadFrom(domains.getCompound("Knowledge"));
             this.titleState.loadFrom(domains.getCompound("Title"));
+            // 老档没有 Ledger 子标签：getCompound 返回空 Compound，loadFrom 清成空表（正常）
+            this.ledger.loadFrom(domains.getCompound("Ledger"));
         } else {
             // 老存档（六域重构前）：从 ResidentProfile/MoodState 旧键迁移
             CompoundTag profileTag = tag.contains("ResidentProfile", Tag.TAG_COMPOUND)
@@ -1837,7 +1871,7 @@ public class Resident extends PathfinderMob {
     /** 检查间隔已配置化：{@link com.bmf.bmfstown.config.Config#TOWN_CHECK_INTERVAL}。 */
 
     /** 被关在外面（被推走/传送）后回家用的速度。比漫步（0.6）快一点，别让玩家等太久。 */
-    /** 回家速度已配置化：{@link com.bmf.bmfstown.config.Config#RETURN_HOME_SPEED}。 */
+    /** 回家速度已配置化：{@link com.bmf.bmfstown.config.Speeds#hurry()}（急促档 1.15）。 */
 
     /**
      * 归属约束的核心逻辑，每 {@link Config#TOWN_CHECK_INTERVAL} tick 跑一次：
@@ -1945,7 +1979,7 @@ public class Resident extends PathfinderMob {
             return;
         }
         NavOps.Nav nav = NavOps.approach(this, center, 2.0D,
-                Config.RETURN_HOME_SPEED.get());
+                com.bmf.bmfstown.config.Speeds.hurry());
         switch (nav) {
             case ARRIVED -> this.returnLogTarget = null; // 到了，下轮 contains 会放行
             case MOVING -> {
@@ -1960,7 +1994,7 @@ public class Resident extends PathfinderMob {
                 BlockPos alt = randomStandableInTown(serverLevel, town);
                 if (alt != null
                         && NavOps.approach(this, alt, 2.0D,
-                                Config.RETURN_HOME_SPEED.get()) != NavOps.Nav.STUCK) {
+                                com.bmf.bmfstown.config.Speeds.hurry()) != NavOps.Nav.STUCK) {
                     this.returnLogTarget = alt;
                     LOGGER.debug("[BmfTown] {} 回城目标 {} 到不了，换点 ({})",
                             this.getName().getString(), center.toShortString(),

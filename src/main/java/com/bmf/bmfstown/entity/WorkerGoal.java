@@ -446,6 +446,9 @@ public class WorkerGoal extends Goal {
         }
         this.resident.getInventory().addItem(new ItemStack(this.craft.result(), count));
         this.resident.addSkillXp(SkillType.CRAFTING, Config.CRAFT_XP_PER_ITEM.get());
+        // 终身统计（2026-11-28）：按实际件数记（含开源 perk 多出的那一份）
+        this.resident.getLedger().add(
+                com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.ITEMS_CRAFTED, count);
         this.craftRemaining--;
 
         if (this.craftRemaining > 0) {

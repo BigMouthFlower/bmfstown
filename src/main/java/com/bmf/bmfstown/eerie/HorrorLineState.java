@@ -64,6 +64,19 @@ public final class HorrorLineState extends SavedData {
         final Map<String, Long> verifyDueDay = new HashMap<>();
         /** 每日配额记账：上次推进的游戏日。 */
         long lastProgressDay = Long.MIN_VALUE;
+        /**
+         * 回拨探针：本镇历来看见过的<b>最大</b>游戏日。
+         *
+         * <p><b>为什么不直接拿"应验日 vs 今天"判断时间被拨过</b>：应验日本来就在未来
+         * （{@code today + 2~6 天}），今天小于它是<b>常态</b>。而"差了多少天"
+         * 也与回拨无关——正常过了一天，差值同样会变。两个数都比不出真假。
+         *
+         * <p>真正能分的只有一件事：<b>时间是否曾经倒退</b>。
+         * 正常游玩 {@code today} 单调不减，所以这个最大值只增不减；
+         * 一旦出现 {@code today < seenMaxDay}，唯一解释就是时间被往回拨了
+         * （{@code /time set} 或读了一个更早的存档）。
+         */
+        long seenMaxDay = Long.MIN_VALUE;
     }
 
     // ==========================================================
@@ -181,6 +194,12 @@ public final class HorrorLineState extends SavedData {
         }
 
         st.lastProgressDay = today;
+        // 探针同步：advance 是每天最早拿到 today 的地方之一，在这里顺手推进
+        // 最大值。正常游玩单调不减；真回拨时保持旧值不动（留给
+        // pollVerifications 那次比对用）。
+        if (today > st.seenMaxDay) {
+            st.seenMaxDay = today;
+        }
 
         // 写齐该线的章数（按线声明，不再固定 10）：解锁 + 掷应验日 + 释放锁定
         boolean unlockedNow = chapter >= line.chapters();
@@ -230,10 +249,31 @@ public final class HorrorLineState extends SavedData {
      */
     public java.util.List<HorrorLines.HorrorLine> pollVerifications(ServerLevel level, UUID townId) {
         TownState st = this.towns.get(townId);
-        if (st == null || st.verifyDueDay.isEmpty()) {
+        if (st == null) {
             return java.util.List.of();
         }
         long today = level.getDayTime() / 24000L;
+        // ---- 回拨检测（坑97）----
+        // 先判"时间是否倒退过"，再谈应验。顺序不能换：探针要在处理之前读，
+        // 处理完立刻把它对齐到 today，否则下一次 poll 会把同一段回拨再算一遍。
+        if (today < st.seenMaxDay) {
+            long rewind = st.seenMaxDay - today;
+            // 应验日整体按回拨量平移：等待期原样保留。
+            // 例：第 100 天解锁、应验日排到 105；玩家拨回第 50 天 ⇒ 应验日变 55，
+            // 还要等 5 天。<b>不选"立刻应验"</b>是因为那等于让玩家拿回拨换免费解锁；
+            // 也<b>不选"什么都不做"</b>——那样 105 这个日期再也追不上
+            // （除非玩家正好又玩到第 105 天），反复回拨就永久不触发。
+            if (!st.verifyDueDay.isEmpty()) {
+                st.verifyDueDay.replaceAll((k, dueDay) -> dueDay - rewind);
+                this.setDirty();
+            }
+            st.seenMaxDay = today;
+        } else {
+            st.seenMaxDay = today;
+        }
+        if (st.verifyDueDay.isEmpty()) {
+            return java.util.List.of();
+        }
         List<HorrorLines.HorrorLine> due = new java.util.ArrayList<>();
         for (var it = st.verifyDueDay.entrySet().iterator(); it.hasNext(); ) {
             var e = it.next();
@@ -348,6 +388,9 @@ public final class HorrorLineState extends SavedData {
             }
             t.put("VerifyDue", due);
             t.putLong("LastDay", st.lastProgressDay);
+            // 探针必须落档：否则每次重进世界都从 MIN_VALUE 起步，
+            // 读档发生在时间倒退之后（读了个更早的存档）就再也看不出来。
+            t.putLong("SeenMaxDay", st.seenMaxDay);
             tag.put(e.getKey().toString(), t);
         }
         return tag;
@@ -376,6 +419,8 @@ public final class HorrorLineState extends SavedData {
                 st.verifyDueDay.put(dt.getString("Line"), dt.getLong("Day"));
             }
             st.lastProgressDay = t.getLong("LastDay");
+            st.seenMaxDay = t.contains("SeenMaxDay")
+                    ? t.getLong("SeenMaxDay") : st.lastProgressDay;
             try {
                 state.towns.put(UUID.fromString(key), st);
             } catch (IllegalArgumentException ignored) {

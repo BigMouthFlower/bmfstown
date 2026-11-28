@@ -173,12 +173,115 @@ public class ResidentMenu extends AbstractContainerMenu {
     /** 页编号：工作页（职业分配 + 战士工作模式）。 */
     public static final int PAGE_WORK = 2;
     /** 页编号：喜好页（口味 + 好恶职业一览，v0.7.1 拆页后不再带想法）。 */
-    public static final int PAGE_HOBBY = 3;
+    public static final int PAGE_HOBBY = 4;
     /** 页编号：想法页（心情想法日志，整页深色列表，v0.7.1 从喜好页拆出）。 */
-    public static final int PAGE_THOUGHTS = 4;
+    public static final int PAGE_THOUGHTS = 5;
 
     /** 知识页（v0.11 学者）：书槽/已学列表/研读进度。 */
-    public static final int PAGE_KNOWLEDGE = 5;
+    public static final int PAGE_KNOWLEDGE = 6;
+
+    /**
+     * 履历页（2026-11-28）：在镇多久 + 一生干了多少活。
+     *
+     * <p><b>为什么插在工作页后面</b>：页编号与页签顺序一致，而"工作"和"履历"
+     * 说的是一件事的两面（现在在做什么 / 一共做过多少）。中间插页会推后
+     * HOBBY/THOUGHTS/KNOWLEDGE 的编号——三处 switch 都是按常量写的，不受影响，
+     * 但外部若有人存了裸数字（没有）会错位，所以只在这里插一次、以后只 append。
+     *
+     * <p><b>履历数据走自己的网络包，不进快照</b>：统计项会越做越多（每加一种职业
+     * 就多几条），塞进 {@code ResidentSnapshot} 等于让每次名字/心情同步都拖着
+     * 一整张统计表走。而且履历页是<b>打开时才需要</b>的按需数据，不是随帧同步的活状态。
+     */
+    public static final int PAGE_STATS = 3;
+
+    // ==========================================================
+    //  页签几何（Screen 画，GameTest 校验；常量放这里是为了"只有一份"）
+    // ==========================================================
+
+    /** 页签带起点（相对 GUI 左边）。 */
+    public static final int TAB_START_X = 6;
+    /** 相邻页签之间的缝（px）。 */
+    public static final int TAB_GAP = 2;
+
+    /**
+     * 页签宽度（px），下标即页编号。
+     *
+     * <p><b>七个页签必须塞进面板宽度 176px。</b>起点 x=6，每片后面留 2px 缝：
+     * 总宽 = 6 + Σw + 2×(n−1) = 6 + Σw + 12 ≤ 176 ⇒ Σw ≤ 158。
+     * 实测 23×6 + 20 = 158，右缘正好落在 176，零余量但也零溢出。
+     *
+     * <p>⚠ 之前是 {34,30,30,30,30,30}，六个页签算下来右缘 200，
+     * <b>已经溢出面板 24px</b>——只是浅色页签压在浅灰右上角、不显眼才没人报。
+     * 加到第七个必须一并收窄，否则溢出 44px 会明显跑到面板外面（坑83）。
+     *
+     * <p><b>为什么放 {@code ResidentMenu} 而不是 {@code ResidentScreen}</b>：
+     * 只有放这里 GameTest 才能读到<b>真常量</b>。原先 {@code tabWidthsFitPanel}
+     * 在测试里复刻了一份算式，改了真数组测试照样绿——坑72 的原型。
+     */
+    public static final int[] TAB_WIDTHS = {23, 23, 23, 23, 23, 23, 20};
+
+    /** 页签带右缘（相对 GUI 左边）。用例断言的唯一口径。 */
+    public static int tabsRightEdge() {
+        int total = TAB_START_X;
+        for (int i = 0; i < TAB_WIDTHS.length; i++) {
+            total += TAB_WIDTHS[i];
+            if (i < TAB_WIDTHS.length - 1) {
+                total += TAB_GAP;
+            }
+        }
+        return total;
+    }
+
+    // ==========================================================
+    //  履历页纵向账（与上面页签同一理由：常量放这里用例才读得到）
+    // ==========================================================
+
+    /** 履历页统计区可见行数（超出由服务端裁掉，客户端不滚）。 */
+    public static final int STATS_VISIBLE_ROWS = 12;
+    /**
+     * 履历页头部行数：名字 + 年龄 + 生日 + 在镇。
+     *
+     * <p>⚠ 2026-11-28 换过一次内容但<b>行数没变</b>（原本是
+     * 名字 + 活了 + 在镇 + 年龄）："活了多久"那一栏被<b>删掉</b>换成了生日，
+     * 因为年龄已经答了同一个问题（#148，用户第二次打回）。
+     * 所以这里的 4 依然成立——但<b>别把"行数没变"当成"内容也没变"</b>。
+     */
+    public static final int STATS_HEADER_ROWS = 4;
+    /** 履历页分隔线的上留白（px）。 */
+    public static final int STATS_DIVIDER_TOP = 2;
+    /** 履历页分隔线的下留白（px）。 */
+    public static final int STATS_DIVIDER_BOTTOM = 4;
+    /** 履历页头部与统计区之间的分隔总高：上留 + 线 1px + 下留。 */
+    public static final int STATS_DIVIDER_H =
+            STATS_DIVIDER_TOP + 1 + STATS_DIVIDER_BOTTOM;
+    /** 履历页行高（px）。 */
+    public static final int STATS_ROW_H = 13;
+    /** 履历页底部留白。 */
+    public static final int STATS_BOTTOM_PAD = 6;
+
+    /**
+     * 履历页面板高度。<b>必须由内容算出来，不能拍一个数。</b>
+     *
+     * <p>纵向账：起始 `PANEL_Y + 2` → 头部 {@link #STATS_HEADER_ROWS} 行 →
+     * 分隔 {@link #STATS_DIVIDER_H}px → 统计 {@link #STATS_VISIBLE_ROWS} 行 →
+     * 底留 {@link #STATS_BOTTOM_PAD}px。实测 239。
+     *
+     * <p>⚠ 初版写成 `PANEL_Y + 12*13 + 6` = **178**，只算统计行、
+     * 把 4 行头部漏在外面 ⇒ 最后两三行统计画到面板外（深灰字落在更深背景上，
+     * 不刺眼但确实丢了）。这与页签溢出同源（坑83）：**面板高度是各段的账，不是拍脑袋**。
+     */
+    public static final int STATS_GUI_HEIGHT = STATS_CONTENT_BOTTOM() + STATS_BOTTOM_PAD;
+
+    /** 履历页内容顶边的偏移（相对面板顶）。绘制与算式共用这一个数。 */
+    public static final int STATS_TOP_PAD = 2;
+
+    /** 履历页内容底边（相对 GUI 顶）。用例断言"内容不超面板"用它。 */
+    public static int STATS_CONTENT_BOTTOM() {
+        return PANEL_Y + STATS_TOP_PAD
+                + STATS_HEADER_ROWS * STATS_ROW_H
+                + STATS_DIVIDER_H
+                + STATS_VISIBLE_ROWS * STATS_ROW_H;
+    }
 
     /**
      * 客户端当前页（0=资料页）。

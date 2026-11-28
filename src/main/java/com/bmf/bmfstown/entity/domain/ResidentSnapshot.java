@@ -87,6 +87,23 @@ public final class ResidentSnapshot {
     /** 累计读完的书（闲书 + 技能书）。 */
     private final int totalBooksRead;
 
+    /**
+     * 年龄（整岁，-1 = 未生成/老档）。
+     *
+     * <p><b>放"算好的年龄"不放 {@code birthDay}</b>：客户端没有 {@code ServerLevel}，
+     * 拿不到权威的"今天"，自己算会随本地时间跳变。
+     */
+    private final int ageYears;
+
+    /**
+     * 在镇天数（{@code today − arrivalDay}）。-1 = 未知（过客/老档/刷怪蛋）。
+     *
+     * <p><b>和 {@link #ageYears} 同理放"算好的值"</b>：客户端没有权威 today，
+     * 自己算会随本地时间跳。这个字段只供资料页"在镇"一行显示——
+     * 精确统计仍在履历页（走 {@code LedgerDataPayload}，按需拉）。
+     */
+    private final int daysInTown;
+
     private ResidentSnapshot(int hunger, int mood,
             ProfessionType profession, UUID townId, BlockPos homePos,
             UUID housingZoneId, long housingAssignedAt,
@@ -97,7 +114,7 @@ public final class ResidentSnapshot {
             int[] axes,
             String equippedBookId, List<String> learnedBooks, Map<String, Long> learnProgress,
             int writingPercent, int copyingPercent,
-            int literacy, int totalBooksRead) {
+            int literacy, int totalBooksRead, int ageYears, int daysInTown) {
         this.hunger = hunger;
         this.mood = mood;
         this.profession = profession;
@@ -123,12 +140,35 @@ public final class ResidentSnapshot {
         this.copyingPercent = copyingPercent;
         this.literacy = literacy;
         this.totalBooksRead = totalBooksRead;
+        this.ageYears = ageYears;
+        this.daysInTown = daysInTown;
     }
 
     /** 服务端：从六域中的四域构建同步快照（附知识域与写作/抄写进度）。 */
     public static ResidentSnapshot of(Identity identity, Growth growth,
             Prefs prefs, Status status, KnowledgeState knowledge, int writingPercent,
             int copyingPercent) {
+        return of(identity, growth, prefs, status, knowledge,
+                writingPercent, copyingPercent, -1, -1);
+    }
+
+    /** 只带年龄的重载（在镇天数留 -1 = 未知）。 */
+    public static ResidentSnapshot of(Identity identity, Growth growth,
+            Prefs prefs, Status status, KnowledgeState knowledge, int writingPercent,
+            int copyingPercent, int ageYears) {
+        return of(identity, growth, prefs, status, knowledge,
+                writingPercent, copyingPercent, ageYears, -1);
+    }
+
+    /**
+     * 全参重载：服务端把 {@code ageYears} 与 {@code daysInTown} 都<b>算好</b>再进快照。
+     *
+     * <p><b>为什么天数是"天数"不是"年数"</b>：资料页要与履历页口径一致
+     * （都报天），而已知未知的判定统一是 -1。
+     */
+    public static ResidentSnapshot of(Identity identity, Growth growth,
+            Prefs prefs, Status status, KnowledgeState knowledge, int writingPercent,
+            int copyingPercent, int ageYears, int daysInTown) {
         return new ResidentSnapshot(
                 status.hunger(), status.mood(),
                 identity.profession(), identity.townId(), identity.homePos(),
@@ -141,7 +181,7 @@ public final class ResidentSnapshot {
                 knowledge.equippedBookId(), knowledge.learnedSorted(),
                 knowledge.progressView(),
                 writingPercent, copyingPercent,
-                knowledge.literacy(), knowledge.totalBooksRead());
+                knowledge.literacy(), knowledge.totalBooksRead(), ageYears, daysInTown);
     }
 
     /** 客户端兜底默认（readNbt 返回 null / 新实体 define 时）。轴全中性 → 显示"平稳"。 */
@@ -152,7 +192,7 @@ public final class ResidentSnapshot {
                 Hobbies.Food.SWEET, ProfessionType.NONE,
                 List.of(), null, null, false, null, null,
                 neutralAxes(),
-                "", List.of(), Map.of(), -1, -1, 0, 0);
+                "", List.of(), Map.of(), -1, -1, 0, 0, -1, -1);
     }
 
     /** 全中性轴数组（兜底展示用）。 */
@@ -413,6 +453,8 @@ public final class ResidentSnapshot {
         tag.put("Knowledge", knowledge);
         tag.putInt("WritingPercent", this.writingPercent);
         tag.putInt("CopyingPercent", this.copyingPercent);
+        tag.putInt("AgeYears", this.ageYears);
+        tag.putInt("DaysInTown", this.daysInTown);
         return tag;
     }
 
@@ -436,6 +478,16 @@ public final class ResidentSnapshot {
     /** 累计读完的书（闲书 + 技能书）。 */
     public int totalBooksRead() {
         return this.totalBooksRead;
+    }
+
+    /** 年龄（整岁）。-1 = 未生成/老档（面板不显示这一行）。 */
+    public int ageYears() {
+        return this.ageYears;
+    }
+
+    /** 在镇天数。-1 = 未知（过客/老档/刷怪蛋）。 */
+    public int daysInTown() {
+        return this.daysInTown;
     }
 
     /** 写作进度百分比（0~100；-1 = 没有写作中的书）。 */
@@ -526,7 +578,9 @@ public final class ResidentSnapshot {
                 equippedBook, learnedBooks, learnProgress,
                 tag.contains("WritingPercent") ? tag.getInt("WritingPercent") : -1,
                 tag.contains("CopyingPercent") ? tag.getInt("CopyingPercent") : -1,
-                literacy, totalBooksRead);
+                literacy, totalBooksRead,
+                tag.contains("AgeYears") ? tag.getInt("AgeYears") : -1,
+                tag.contains("DaysInTown") ? tag.getInt("DaysInTown") : -1);
     }
 
     private static <E extends Enum<E>> E getEnum(CompoundTag tag, String key,

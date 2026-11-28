@@ -50,6 +50,16 @@ public final class PersonalityEventHandler {
         // ---- 过客死在半路（决策 #61）：世界级新闻，全镇可见 ----
         if (event.getEntity() instanceof Resident dead) {
             com.bmf.bmfstown.town.Wanderers.onWandererDied(dead, level);
+            // ---- 死者名册（2026-11-28）：<b>必须在这里写，不能延后</b>----
+            // 这一刻实体还在，名字/职业/段位/终身统计全读得到；
+            // 拖到 afterDeath 或下一 tick，实体已被移除，名字就是空的。
+            //
+            // 过客不进（用户 2026-11-28 拍板"他不属于这个城镇"）：
+            // 用 townId 判——没入镇的人 townId 是 null。
+            if (dead.getIdentity().townId() != null) {
+                com.bmf.bmfstown.town.GraveyardData.get(level)
+                        .record(dead, level, event.getSource());
+            }
         }
         AABB box = event.getEntity().getBoundingBox().inflate(NOTICE_RADIUS);
         List<Resident> residents = level.getEntitiesOfClass(Resident.class, box);

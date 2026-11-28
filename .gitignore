@@ -2,6 +2,7 @@
 build/
 out/
 bin/
+dist/
 !gradle/wrapper/gradle-wrapper.jar
 
 # ===== Gradle =====

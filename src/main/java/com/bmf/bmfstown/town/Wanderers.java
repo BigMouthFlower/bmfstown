@@ -355,6 +355,11 @@ public final class Wanderers {
         if (!resident.getIdentity().isWanderer()) {
             return;
         }
+        // 入镇日（2026-11-28）：<b>必须在 clearWanderer 之前</b>——那句会把
+        // wandererSince 清零，顺序反了就拿不到时间了（用例 32 守）。
+        // 记的是"被领养的那天"而不是"野外刷出那天"：过客能游荡 2~8 天，
+        // 按刷出算会让履历凭空多出他不在镇上的那些天（§3.8.6）。
+        resident.getIdentity().markArrivalFromWanderer();
         resident.getIdentity().clearWanderer();
         resident.syncClient();
 
@@ -370,7 +375,8 @@ public final class Wanderers {
                 (town.min().getZ() + town.max().getZ()) / 2);
         BlockPos target = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING, center);
         resident.getNavigation().moveTo(
-                target.getX() + 0.5, target.getY(), target.getZ() + 0.5, 1.0D);
+                target.getX() + 0.5, target.getY(), target.getZ() + 0.5,
+                com.bmf.bmfstown.config.Speeds.normal());
 
         checkCap(level, town);
     }

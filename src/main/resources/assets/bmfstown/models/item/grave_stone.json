@@ -1,0 +1,47 @@
+{
+  "parent": "bmfstown:block/grave_stone_stone_bricks",
+  "overrides": [
+    {
+      "predicate": {
+        "bmfstown:grave_variant": 1
+      },
+      "model": "bmfstown:item/grave_stone_deepslate_bricks"
+    },
+    {
+      "predicate": {
+        "bmfstown:grave_variant": 2
+      },
+      "model": "bmfstown:item/grave_stone_tuff_bricks"
+    },
+    {
+      "predicate": {
+        "bmfstown:grave_variant": 3
+      },
+      "model": "bmfstown:item/grave_stone_blackstone_bricks"
+    },
+    {
+      "predicate": {
+        "bmfstown:grave_variant": 4
+      },
+      "model": "bmfstown:item/grave_stone_polished_granite"
+    },
+    {
+      "predicate": {
+        "bmfstown:grave_variant": 5
+      },
+      "model": "bmfstown:item/grave_stone_polished_diorite"
+    },
+    {
+      "predicate": {
+        "bmfstown:grave_variant": 6
+      },
+      "model": "bmfstown:item/grave_stone_polished_andesite"
+    },
+    {
+      "predicate": {
+        "bmfstown:grave_variant": 7
+      },
+      "model": "bmfstown:item/grave_stone_smooth_stone"
+    }
+  ]
+}

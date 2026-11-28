@@ -615,6 +615,9 @@ public class StonemasonGoal extends Goal {
         ItemStack out = ex.line().stack(ex.output());
         this.pending.add(out);
         this.resident.addSkillXp(SkillType.CRAFTING, ex.output() * Config.SALVAGE_XP_PER_UNIT.get());
+        // 终身统计（2026-11-28）：按拆出的份数记（与经验同一口径）
+        this.resident.getLedger().add(
+                com.bmf.bmfstown.entity.domain.ResidentLedger.Keys.MATERIALS_SAVED, ex.output());
 
         LOGGER.debug("[BmfTown][石匠] {} 拆了 {}×{} → {}×{}",
                 this.resident.getName().getString(),
